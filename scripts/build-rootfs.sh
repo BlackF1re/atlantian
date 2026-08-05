@@ -182,11 +182,11 @@ xargs -r apt-get install -y --no-install-recommends < /usr/local/share/atlantian
 # Use Debian's maintained zram-tools integration.  Write our policy after
 # package installation so dpkg never prompts about a locally-created conffile.
 # One third of RAM is configured; no disk-backed swap exists.
-cat > /etc/default/zramswap <<'EOF'
+cat > /etc/default/zramswap <<'ZRAM_EOF'
 ALGO=lz4
 PERCENT=33
 PRIORITY=100
-EOF
+ZRAM_EOF
 command -v sfdisk
 command -v resize2fs
 command -v mkimage
