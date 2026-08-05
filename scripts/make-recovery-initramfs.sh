@@ -14,7 +14,10 @@ cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 mkdir -p "$WORK"/{bin,dev,proc,sys,newroot}
 install -m 0755 "$BUSYBOX" "$WORK/bin/busybox"
-for applet in sh mount umount sleep ip ifconfig route udhcpc wget dd sha256sum sync watchdog dmesg sed head awk; do
+# Keep every external command used by /init and atlantian-update-leds in the
+# recovery image.  In particular, the indicator creates /run itself: recovery
+# starts before the ordinary tmpfs mounts and cannot rely on coreutils.
+for applet in sh mount umount sleep ip ifconfig route udhcpc wget dd sha256sum sync watchdog dmesg sed head awk rm mkdir reboot; do
   ln -s busybox "$WORK/bin/$applet"
 done
 
@@ -34,6 +37,9 @@ esac
 EOF
 chmod 0755 "$WORK/udhcpc.script"
 
+install -D -m 0755 "$ROOTFS/usr/local/sbin/atlantian-update-leds" \
+  "$WORK/usr/local/sbin/atlantian-update-leds"
+
 cat >"$WORK/init" <<'EOF'
 #!/bin/sh
 set -eu
@@ -52,6 +58,21 @@ SYSTEM_URL=$(arg atlantian.system_url)
 SYSTEM_EXPECTED=$(arg atlantian.system_sha256)
 say() { echo "[atlantian-recovery] $*"; }
 fail() { say "FATAL: $*"; exec sh; }
+LED_PID=
+start_leds() {
+  if [ -x /usr/local/sbin/atlantian-update-leds ]; then
+    /usr/local/sbin/atlantian-update-leds >/dev/null 2>&1 &
+    LED_PID=$!
+  fi
+}
+stop_leds() {
+  if [ -n "${LED_PID:-}" ]; then
+    kill "$LED_PID" 2>/dev/null || true
+    wait "$LED_PID" 2>/dev/null || true
+    LED_PID=
+  fi
+}
+trap 'stop_leds' INT TERM EXIT
 
 if [ "$MODE" = system ]; then
   case "$SYSTEM_URL" in http://*) ;; *) fail "missing or unsafe system URL" ;; esac
@@ -78,17 +99,21 @@ test -b /dev/mmcblk0 || fail "SD device not found"
 
 if [ "$MODE" = system ]; then
   say "writing system partition only; /data is preserved"
+  start_leds
   wget -q -O - "$SYSTEM_URL" | dd of=/dev/mmcblk0p2 bs=1M oflag=direct conv=fsync || fail "download or system write failed"
   ACTUAL=$(dd if=/dev/mmcblk0p2 bs=1M iflag=direct 2>/dev/null | sha256sum | awk '{print $1}') || fail "system read-back failed"
   [ "$ACTUAL" = "$SYSTEM_EXPECTED" ] || fail "system SHA-256 mismatch: $ACTUAL"
+  stop_leds
 else
 say "writing image to SD with direct I/O; do not remove power"
 # Writing via tee fills the recovery kernel's page cache until 496 MiB RAM is
 # exhausted; that can corrupt a successfully downloaded image.  The fixed-size
 # AtlANTian image is MiB-aligned, so direct I/O keeps it out of page cache.
-wget -q -O - "$URL" | dd of=/dev/mmcblk0 bs=1M oflag=direct conv=fsync || fail "download or direct SD write failed"
-ACTUAL=$(dd if=/dev/mmcblk0 bs=1M count="$BLOCKS" iflag=direct 2>/dev/null | sha256sum | awk '{print $1}') || fail "SD read-back failed"
-[ "$ACTUAL" = "$EXPECTED" ] || fail "SHA-256 mismatch: $ACTUAL"
+  start_leds
+  wget -q -O - "$URL" | dd of=/dev/mmcblk0 bs=1M oflag=direct conv=fsync || fail "download or direct SD write failed"
+  ACTUAL=$(dd if=/dev/mmcblk0 bs=1M count="$BLOCKS" iflag=direct 2>/dev/null | sha256sum | awk '{print $1}') || fail "SD read-back failed"
+  [ "$ACTUAL" = "$EXPECTED" ] || fail "SHA-256 mismatch: $ACTUAL"
+  stop_leds
 fi
 say "verified; rebooting into deployed system"
 # A normal reboot from the RAM-only recovery kernel intermittently leaves this

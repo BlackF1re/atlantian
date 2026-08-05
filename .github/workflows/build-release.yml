@@ -44,6 +44,7 @@ jobs:
           test -n "$image" -a -n "$payload"
           bash scripts/test-build.sh "$image" "$payload" artifacts/current/SHA256SUMS
           bash -n scripts/*.sh
+          bash scripts/test-update-leds.sh
       - name: Generate concise release notes
         if: startsWith(github.ref, 'refs/tags/v')
         run: bash scripts/generate-release-notes.sh "$GITHUB_REF_NAME"

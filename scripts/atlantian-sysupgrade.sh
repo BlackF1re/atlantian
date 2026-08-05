@@ -7,6 +7,7 @@ URL=${1:-}
 SHA=${2:-}
 BOOT=/run/atlantian-boot
 KERNEL=/mnt/atlantian-boot
+LOCK=/run/atlantian-update-leds.lock
 if [ -z "$URL" ] || [ -z "$SHA" ]; then
     echo "usage: atlantian-sysupgrade SYSTEM_EXT4_URL SYSTEM_EXT4_SHA256" >&2
     exit 64
@@ -17,6 +18,9 @@ case "$SHA" in *[!0-9a-fA-F]*|'') echo 'invalid SHA256' >&2; exit 65;; esac
 [ "$(id -u)" -eq 0 ] || { echo 'run as root' >&2; exit 77; }
 mkdir -p "$BOOT" "$KERNEL"
 mountpoint -q "$KERNEL" || mount /dev/mmcblk0p1 "$KERNEL"
+mkdir -p /run
+: >"$LOCK"
+systemctl stop atlantian-status-leds.service atlantian-fpga-status-leds.service >/dev/null 2>&1 || true
 
 # The factory U-Boot environment on CTRL_C41 is persistent in NAND and does
 # not reliably consume uEnv.txt.  Therefore use kexec as the primary path:

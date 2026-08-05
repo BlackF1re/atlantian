@@ -105,6 +105,9 @@ FSFREEZE=/usr/sbin/fsfreeze
 [ -x /bin/busybox ] && [ -x "$FSFREEZE" ] && [ -w /proc/sysrq-trigger ]
 mkdir -p "$R"
 cp /bin/busybox "$R/busybox"
+LED_SCRIPT=/usr/local/sbin/atlantian-update-leds
+[ -x /root/atlantian-update-leds.sh ] && LED_SCRIPT=/root/atlantian-update-leds.sh
+export LED_SCRIPT
 cat >"$R/flash" <<'FLASH'
 #!/run/atlantian-netflash/busybox sh
 set -eu
@@ -113,12 +116,27 @@ R=/run/atlantian-netflash
 bb() { "$R/busybox" "$@"; }
 bb sleep 3
 bb sync
+touch /run/atlantian-update-leds.lock
+systemctl stop atlantian-status-leds.service atlantian-fpga-status-leds.service >/dev/null 2>&1 || true
 "$FSFREEZE" -f /
 # Everything below is a static BusyBox process in tmpfs.  Direct I/O keeps the
 # 576-MiB image out of the board's 512-MiB RAM page cache.
+LED_PID=
+"$LED_SCRIPT" >/dev/null 2>&1 &
+LED_PID=$!
+cleanup() {
+  if [ -n "${LED_PID:-}" ]; then
+    kill "$LED_PID" 2>/dev/null || true
+    wait "$LED_PID" 2>/dev/null || true
+  fi
+  rm -f /run/atlantian-update-leds.lock 2>/dev/null || true
+  "$FSFREEZE" -u / 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
 bb wget -q -O - "$URL" | bb dd of=/dev/mmcblk0 bs=1M oflag=direct conv=fsync
 ACTUAL=$(bb dd if=/dev/mmcblk0 bs=1M count="$BLOCKS" iflag=direct 2>/dev/null | bb sha256sum | bb awk '{print $1}')
 [ "$ACTUAL" = "$EXPECTED" ] || exit 91
+cleanup
 bb sync
 # CTRL_C41 sometimes hangs after a normal Linux reboot.  SysRq-b bypasses
 # userspace shutdown and resets the PS immediately; the next boot comes from

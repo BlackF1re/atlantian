@@ -6,8 +6,10 @@ set -eu
 
 red=/sys/class/leds/atlantian:red:status/brightness
 green=/sys/class/leds/atlantian:green:activity/brightness
+lock=/run/atlantian-update-leds.lock
 
 [ -e "$red" ] && [ -e "$green" ] || exit 0
+[ -e "$lock" ] && exit 0
 
 off() { printf '0\n' >"$1"; }
 on()  { printf '1\n' >"$1"; }
@@ -30,6 +32,7 @@ set -- $(mmc_sample); old_read=$1; old_write=$2
 off "$red"; off "$green"
 
 while :; do
+  [ -e "$lock" ] && exit 0
   set -- $(cpu_sample); total=$1; idle=$2
   dt=$((total - old_total)); di=$((idle - old_idle))
   old_total=$total; old_idle=$idle
