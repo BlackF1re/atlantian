@@ -29,11 +29,14 @@ jobs:
       - name: Record metadata and start build
         if: steps.debian.outputs.changed == 'true'
         run: |
+          set -eu
+          . config/release.env
+          next_build=$((ATLANTIAN_BUILD + 1))
+          sed -i -E "s/^ATLANTIAN_BUILD=.*/ATLANTIAN_BUILD=${next_build}/" config/release.env
           git config user.name github-actions
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add debian-release.sha256
-          git commit -m "chore: refresh Debian trixie release metadata"
-          git push
-          gh workflow run build-release.yml --ref main
-        env:
-          GH_TOKEN: ${{ github.token }}
+          git add debian-release.sha256 config/release.env
+          git commit -m "chore: refresh Debian trixie metadata (AtlANTian ${DEBIAN_MAJOR}.${next_build})"
+          git tag -a "v${DEBIAN_MAJOR}.${next_build}" -m "AtlANTian ${DEBIAN_MAJOR}.${next_build}"
+          git push origin main
+          git push origin "v${DEBIAN_MAJOR}.${next_build}"
