@@ -160,15 +160,6 @@ install -D -m 0644 "$PROJECT/systemd/atlantian-grow-rootfs.service" \
   "$ROOT/etc/systemd/system/atlantian-grow-rootfs.service"
 install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade.sh" \
   "$ROOT/usr/local/sbin/atlantian-sysupgrade"
-# Use Debian's maintained zram-tools integration.  It provides the standard
-# zramswap.service and keeps the implementation replaceable by normal apt
-# updates.  One third of RAM is configured below; no disk-backed swap exists.
-install -D -m 0644 /dev/null "$ROOT/etc/default/zramswap"
-cat >"$ROOT/etc/default/zramswap" <<'EOF'
-ALGO=lz4
-PERCENT=33
-PRIORITY=100
-EOF
 install -D -m 0755 "$PROJECT/scripts/atlantian-release-check.sh" \
   "$ROOT/usr/local/sbin/atlantian-release-check"
 install -D -m 0644 "$PROJECT/systemd/atlantian-release-check.service" \
@@ -188,6 +179,14 @@ chroot "$ROOT" /bin/bash -eux <<'EOF'
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 xargs -r apt-get install -y --no-install-recommends < /usr/local/share/atlantian/packages.base
+# Use Debian's maintained zram-tools integration.  Write our policy after
+# package installation so dpkg never prompts about a locally-created conffile.
+# One third of RAM is configured; no disk-backed swap exists.
+cat > /etc/default/zramswap <<'EOF'
+ALGO=lz4
+PERCENT=33
+PRIORITY=100
+EOF
 command -v sfdisk
 command -v resize2fs
 command -v mkimage
