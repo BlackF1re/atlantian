@@ -1,0 +1,13 @@
+# Build state belongs on grey-subdevice, never on Crate or in Git.
+out/
+work/
+logs/
+releases/
+artifacts/
+*.img
+*.img.xz
+*.zst
+SHA256SUMS
+
+# Documentation is kept local until it has been reviewed for publication.
+*.md

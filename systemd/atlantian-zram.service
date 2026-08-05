@@ -1,0 +1,14 @@
+[Unit]
+Description=AtlANTian compressed RAM swap (one third of RAM)
+DefaultDependencies=no
+After=systemd-modules-load.service
+Before=swap.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/atlantian-zram start
+ExecStop=/usr/local/sbin/atlantian-zram stop
+
+[Install]
+WantedBy=swap.target

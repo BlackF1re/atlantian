@@ -1,0 +1,59 @@
+name: Build and release AtlANTian
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross-build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debootstrap qemu-user-static binfmt-support \
+            gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
+            bc bison flex libssl-dev libncurses-dev device-tree-compiler \
+            u-boot-tools kmod cpio rsync pigz xz-utils e2fsprogs dosfstools \
+            git curl ca-certificates sudo
+      - name: Build rootfs, kernel, recovery and SD image
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          JOBS: 2
+        run: |
+          sudo ./scripts/build-incremental.sh all
+          sudo chown -R "$USER:$USER" out artifacts
+      - name: Verify release artifacts
+        run: |
+          image=$(find artifacts/current -maxdepth 1 -name '*.img' -type f | head -n1)
+          payload=$(find artifacts/current -maxdepth 1 -name '*.system.ext4' -type f | head -n1)
+          test -n "$image" -a -n "$payload"
+          bash scripts/test-build.sh "$image" "$payload" artifacts/current/SHA256SUMS
+          bash -n scripts/*.sh
+      - name: Verify tag matches source version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          . config/release.env
+          expected="v${DEBIAN_MAJOR}.${ATLANTIAN_BUILD}"
+          test "$GITHUB_REF_NAME" = "$expected"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atlantian-image-${{ github.ref_name }}
+          path: |
+            artifacts/current/*.img
+            artifacts/current/*.system.ext4
+            artifacts/current/SHA256SUMS
+      - name: Publish GitHub release for a version tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/current/*.img
+            artifacts/current/*.system.ext4
+            artifacts/current/SHA256SUMS

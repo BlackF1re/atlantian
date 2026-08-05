@@ -1,0 +1,39 @@
+name: Watch Debian base updates
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect Debian Release metadata
+        id: debian
+        run: |
+          set -eu
+          curl -fsSL https://deb.debian.org/debian/dists/trixie/Release -o /tmp/debian-release
+          sha256sum /tmp/debian-release | cut -d' ' -f1 > debian-release.sha256
+          if git show HEAD:debian-release.sha256 > /tmp/old 2>/dev/null && cmp -s debian-release.sha256 /tmp/old; then
+            echo changed=false >> "$GITHUB_OUTPUT"
+          else
+            echo changed=true >> "$GITHUB_OUTPUT"
+          fi
+      - name: Record metadata and start build
+        if: steps.debian.outputs.changed == 'true'
+        run: |
+          git config user.name github-actions
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add debian-release.sha256
+          git commit -m "chore: refresh Debian trixie release metadata"
+          git push
+          gh workflow run build-release.yml --ref main
+        env:
+          GH_TOKEN: ${{ github.token }}
