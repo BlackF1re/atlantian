@@ -20,7 +20,14 @@ jobs:
             gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
             bc bison flex libssl-dev libncurses-dev device-tree-compiler \
             u-boot-tools kmod cpio rsync pigz xz-utils e2fsprogs dosfstools \
-            git curl ca-certificates sudo
+            libelf-dev libdw-dev git curl ca-certificates sudo
+      - name: Fetch pinned Linux source
+        run: |
+          set -eu
+          mkdir -p out
+          git clone --depth 1 --branch v6.12.100 \
+            https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git \
+            out/linux-src
       - name: Build rootfs, kernel, recovery and SD image
         env:
           DEBIAN_FRONTEND: noninteractive
