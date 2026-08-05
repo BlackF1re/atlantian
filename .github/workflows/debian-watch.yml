@@ -37,6 +37,10 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add debian-release.sha256 config/release.env
           git commit -m "chore: refresh Debian trixie metadata (AtlANTian ${DEBIAN_MAJOR}.${next_build})"
-          git tag -a "v${DEBIAN_MAJOR}.${next_build}" -m "AtlANTian ${DEBIAN_MAJOR}.${next_build}"
           git push origin main
-          git push origin "v${DEBIAN_MAJOR}.${next_build}"
+          # Pushes made with GITHUB_TOKEN do not trigger another push workflow.
+          # Start the normal release workflow explicitly; it derives the commit
+          # hash and creates the immutable release tag itself.
+          gh workflow run 'Build and release AtlANTian' --ref main
+        env:
+          GH_TOKEN: ${{ github.token }}

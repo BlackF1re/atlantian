@@ -5,6 +5,7 @@ set -euo pipefail
 
 TARGET=${1:-all}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+cd "$ROOT"
 # shellcheck source=../config/release.env
 . "$ROOT/config/release.env"
 RELEASE_DIR=${RELEASE_DIR:-$ROOT/artifacts/current}
