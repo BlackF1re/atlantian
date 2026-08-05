@@ -16,6 +16,8 @@ case "$URL" in http://*) ;; *) echo 'only http:// URLs are accepted' >&2; exit 6
 case "$SHA" in *[!0-9a-fA-F]*|'') echo 'invalid SHA256' >&2; exit 65;; esac
 [ "${#SHA}" -eq 64 ] || { echo 'invalid SHA256 length' >&2; exit 65; }
 [ "$(id -u)" -eq 0 ] || { echo 'run as root' >&2; exit 77; }
+# Materialise p3-backed administrator state before RAM recovery replaces p2.
+systemctl start atlantian-persist-state.service >/dev/null 2>&1 || true
 mkdir -p "$BOOT" "$KERNEL"
 mountpoint -q "$KERNEL" || mount /dev/mmcblk0p1 "$KERNEL"
 mkdir -p /run

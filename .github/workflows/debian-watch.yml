@@ -12,18 +12,40 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
-      - name: Detect Debian Release metadata
+      - name: Detect and freeze Debian Release metadata
         id: debian
         run: |
           set -eu
-          curl -fsSL https://deb.debian.org/debian/dists/trixie/Release -o /tmp/debian-release
-          sha256sum /tmp/debian-release | cut -d' ' -f1 > debian-release.sha256
-          if git show HEAD:debian-release.sha256 > /tmp/old 2>/dev/null && cmp -s debian-release.sha256 /tmp/old; then
+          . config/release.env
+          curl -fsSL "https://deb.debian.org/debian/dists/$DEBIAN_CODENAME/Release" -o /tmp/current-release
+          current_sha=$(sha256sum /tmp/current-release | awk '{print $1}')
+          old_sha=$(tr -d '\\r\\n' < debian-release.sha256)
+          if [ "$current_sha" = "$old_sha" ]; then
+            echo changed=false >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Debian Snapshot is sometimes a few minutes behind the mirror. Do
+          # not publish a moving-mirror build: wait until the snapshot archive
+          # contains exactly the Release file which triggered this update.
+          timestamp=$(curl -fsSL https://snapshot.debian.org/mr/timestamp/ | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["debian"][-1])')
+          snapshot_url="https://snapshot.debian.org/archive/debian/${timestamp}"
+          curl -fsSL "$snapshot_url/dists/$DEBIAN_CODENAME/Release" -o /tmp/snapshot-release
+          snapshot_sha=$(sha256sum /tmp/snapshot-release | awk '{print $1}')
+          if [ "$snapshot_sha" != "$current_sha" ]; then
+            echo "Snapshot $timestamp has not caught up with Debian mirror; retrying on the next scheduled run."
             echo changed=false >> "$GITHUB_OUTPUT"
           else
+            printf '%s\\n' "$snapshot_sha" > debian-release.sha256
+            cat > config/debian-snapshot.env <<EOF
+# Reproducible Debian rootfs input.  Updated only by the Debian watcher after
+# it has verified that this archive snapshot contains the observed Release.
+DEBIAN_SNAPSHOT_TIMESTAMP=$timestamp
+DEBIAN_SNAPSHOT_MIRROR=$snapshot_url
+EOF
             echo changed=true >> "$GITHUB_OUTPUT"
           fi
       - name: Record metadata and start build
@@ -35,8 +57,8 @@ jobs:
           sed -i -E "s/^ATLANTIAN_BUILD=.*/ATLANTIAN_BUILD=${next_build}/" config/release.env
           git config user.name github-actions
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add debian-release.sha256 config/release.env
-          git commit -m "chore: refresh Debian trixie metadata (AtlANTian ${DEBIAN_MAJOR}.${next_build})"
+          git add debian-release.sha256 config/debian-snapshot.env config/release.env
+          git commit -m "chore: freeze Debian trixie snapshot (AtlANTian ${DEBIAN_MAJOR}.${next_build})"
           git push origin main
           # Pushes made with GITHUB_TOKEN do not trigger another push workflow.
           # Start the normal release workflow explicitly; it derives the commit

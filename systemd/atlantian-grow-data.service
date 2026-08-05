@@ -1,0 +1,12 @@
+[Unit]
+Description=Expand AtlANTian persistent data partition to card capacity
+Requires=data.mount
+After=data.mount
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/atlantian-grow-data
+
+[Install]
+WantedBy=multi-user.target

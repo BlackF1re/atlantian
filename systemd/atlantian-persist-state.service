@@ -1,0 +1,14 @@
+[Unit]
+Description=Mount AtlANTian persistent configuration and user state
+DefaultDependencies=no
+Requires=data.mount
+After=data.mount
+Before=local-fs.target ssh.service systemd-networkd.service atlantian-ssh-hostkeys.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/atlantian-persist-state
+RemainAfterExit=yes
+
+[Install]
+WantedBy=local-fs.target

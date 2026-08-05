@@ -47,18 +47,22 @@ mount -o ro "${LOOP}p3" "$DATA"
 for file in BOOT.bin devicetree.dtb zImage uImage atlantian-recovery.cpio.gz uInitrd uEnv.txt; do
   [[ -s $BOOT/$file ]] || { echo "boot artifact missing: $file" >&2; exit 3; }
 done
-fdtget "$BOOT/devicetree.dtb" / compatible | tr ' ' '\n' | grep -qx 'bitmain,antminer-s9'
+fdtget "$BOOT/devicetree.dtb" / compatible | tr ' ' '\n' | grep -qx 'bitmain,antminer-s9' || {
+  echo 'device-tree is not for bitmain,antminer-s9' >&2; exit 3;
+}
 
 # Rootfs must expose the boot-critical board interfaces and upgrade ABI.
 for path in \
   etc/atlantian-release etc/fstab etc/ssh/sshd_config.d/10-atlantian-root.conf \
   usr/local/sbin/atlantian-fpga usr/local/sbin/atlantian-sysupgrade \
   usr/local/sbin/atlantian-status-leds usr/local/sbin/atlantian-update-leds \
+  usr/local/sbin/atlantian-persist-state usr/local/sbin/atlantian-grow-data \
+  usr/share/atlantian/debian-package-manifest.tsv usr/share/atlantian/debian-snapshot.txt \
   lib/firmware/atlantian/status-leds/atlantian-status-leds.bin; do
   [[ -e $ROOT/$path ]] || { echo "rootfs contract missing: $path" >&2; exit 3; }
 done
 for unit in ssh.service systemd-networkd.service atlantian-status-leds.service \
-  atlantian-fpga-status-leds.service zramswap.service; do
+  atlantian-fpga-status-leds.service atlantian-grow-data.service zramswap.service; do
   # Unit links may point to an absolute /usr/lib path. Test the link itself:
   # resolving it on the build host would incorrectly resolve outside $ROOT.
   link="$ROOT/etc/systemd/system/multi-user.target.wants/$unit"
@@ -66,8 +70,25 @@ for unit in ssh.service systemd-networkd.service atlantian-status-leds.service \
     echo "required enabled unit missing: $unit" >&2; exit 3;
   }
 done
-grep -qx '/dev/mmcblk0p3 /data ext4 defaults,nofail 0 2' "$ROOT/etc/fstab"
-[[ -d $DATA/home && -d $DATA/etc && -d $DATA/var && -d $DATA/fpga && -d $DATA/user ]]
+link="$ROOT/etc/systemd/system/local-fs.target.wants/atlantian-persist-state.service"
+[[ -L $link && $(readlink "$link") == */atlantian-persist-state.service ]] || {
+  echo 'required early persistent-state unit missing' >&2; exit 3;
+}
+grep -qx '/dev/mmcblk0p3 /data ext4 defaults,nofail 0 2' "$ROOT/etc/fstab" || {
+  echo 'persistent /data mount missing from fstab' >&2; exit 3;
+}
+[[ -d $DATA/system && -d $DATA/fpga && -d $DATA/user ]] || {
+  echo 'initial persistent-data layout missing' >&2; exit 3;
+}
+grep -q 'lowerdir=/etc' "$ROOT/usr/local/sbin/atlantian-persist-state" || {
+  echo 'persistent /etc overlay contract missing' >&2; exit 3;
+}
+grep -q '^state=\$data/system/atlantian/persist$' "$ROOT/usr/local/sbin/atlantian-persist-state" || {
+  echo 'persistent-state location contract missing' >&2; exit 3;
+}
+grep -q 'atlantian-persist-state.service' "$ROOT/usr/local/sbin/atlantian-sysupgrade" || {
+  echo 'updater does not flush persistent state' >&2; exit 3;
+}
 
 # Recovery must contain the updater and every applet its documented route needs.
 gzip -cd "$BOOT/atlantian-recovery.cpio.gz" | cpio -it 2>/dev/null >"$WORK/recovery.list"

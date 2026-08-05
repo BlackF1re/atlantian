@@ -31,8 +31,9 @@ SHORT_COMMIT=$(git rev-parse --short=12 "$REF")
     :
   else
     printf '\n## Debian base\n\n'
-    printf '%s\n' '- Debian repository metadata changed; the root filesystem was rebuilt from the current Debian release.'
-    printf '%s\n' '- Official sources: [Debian Release files](https://deb.debian.org/debian/dists/trixie/Release), [Debian package tracker](https://tracker.debian.org/).'
+    . config/debian-snapshot.env
+    printf '%s\n' "- Debian repository metadata changed; the root filesystem was rebuilt from snapshot \`${DEBIAN_SNAPSHOT_TIMESTAMP}\`."
+    printf '%s\n' "- Source archive: [Debian Snapshot](${DEBIAN_SNAPSHOT_MIRROR}/dists/${DEBIAN_CODENAME}/Release); package versions are attached to this release."
   fi
 
   printf '\n## Downloads\n\n'

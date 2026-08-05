@@ -60,9 +60,18 @@ The release image contains three partitions:
 | --- | --- |
 | `p1` | FAT boot partition |
 | `p2` | replaceable system partition used by updates |
-| `p3` | writable Debian root filesystem and user data |
+| `p3` | persistent data and the writable state layer |
 
-On its first successful boot, the grow service enlarges `p3` to fill the inserted card and then reboots once. This means the image can be written directly with Rufus, `dd`, Raspberry Pi Imager, or a similar raw-image writer. No manual partitioning is required.
+On its first successful boot, `atlantian-grow-data` enlarges `p3` to fill the inserted card and then reboots once. This means the image can be written directly with Rufus, `dd`, Raspberry Pi Imager, or a similar raw-image writer. No manual partitioning is required.
+
+`p2` is intentionally replaceable.  At boot, AtlANTian mounts a persistent
+overlay for `/etc` from `p3`, and persistent bind mounts for `/root`, `/home`,
+and `/var/local`.  This preserves normal configuration, SSH host and user
+keys, root and user files, and locally managed data across a system update.
+The package database, `/usr`, and the rest of `/var` remain part of the
+system release on purpose: carrying an old dpkg database into a new base
+system is unsafe.  Packages installed with `apt` must therefore be declared
+again or reinstalled after an image-level upgrade.
 
 The NAND is separate from the SD installation. AtlANTian exposes it, but does not overwrite it as part of normal booting or updating. A raw NAND backup must retain the bad-block information as well as the contents; copying a mounted filesystem is not a replacement for an MTD-aware backup.
 
@@ -98,7 +107,7 @@ The PS I2C and SPI controllers are available in the kernel but intentionally dis
 
 ## Updating
 
-`atlantian-sysupgrade` updates an installed board from an AtlANTian release image. It verifies the supplied SHA-256 checksum, writes only the system partition (`p2`), and preserves the boot partition and writable root/data partition. User files and normal Debian configuration therefore survive an update.
+`atlantian-sysupgrade` updates an installed board from an AtlANTian release image. It verifies the supplied SHA-256 checksum and writes only the system partition (`p2`).  It preserves the boot partition and `p3`, including the persistent `/etc`, `/root`, `/home`, and `/var/local` state described above.
 
 The updater switches into a small recovery environment running from RAM before it rewrites the system partition. It is not a permanent recovery partition and does not consume a reserved part of the SD card.
 
@@ -137,9 +146,9 @@ Use `all` when the relationship between changes is unclear. A Debian base update
 
 ## Releases and automation
 
-Releases are built on GitHub Actions. A commit to `main` and a manual workflow run both create an immutable build. The release version follows the Debian major version and AtlANTian build number, with the twelve-character source commit suffix included for traceability, for example `v13.11+g0123456789ab`.
+Releases are built on GitHub Actions. A commit to `main` and a manual workflow run both create a source-addressed release. The release version follows the Debian major version and AtlANTian build number, with the twelve-character source commit suffix included for traceability, for example `v13.11+g0123456789ab`.
 
-Each release contains the SD image, the system payload used by `atlantian-sysupgrade`, SHA-256 sums, and build metadata. The workflow performs layout, checksum, filesystem, boot-artifact, and release-payload checks before publishing. A scheduled Debian watcher records a changed upstream `Release` file, increments the AtlANTian build metadata, and starts the same release workflow.
+Each release contains the SD image, the system payload used by `atlantian-sysupgrade`, SHA-256 sums, a resolved Debian package manifest, Debian snapshot metadata, and build metadata. The root filesystem is built from an explicit Debian Snapshot archive; the scheduled watcher advances that snapshot only after it verifies the archived `Release` file matches the Debian update it detected. GitHub Actions are pinned to immutable commit IDs. The workflow performs layout, checksum, filesystem, boot-artifact, release-payload, and persistent-state checks before publishing.
 
 The project uses Conventional Commits. Release notes are intentionally concise: they describe the Debian change that triggered an automated rebuild or the commits that have landed since the previous AtlANTian release.
 

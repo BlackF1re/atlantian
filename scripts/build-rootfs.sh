@@ -4,9 +4,10 @@ set -euo pipefail
 
 PROJECT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 . "$PROJECT/config/release.env"
+. "$PROJECT/config/debian-snapshot.env"
 ROOT="${ROOT:-$PROJECT/out/rootfs}"
 SUITE="${SUITE:-$DEBIAN_CODENAME}"
-MIRROR="${MIRROR:-https://deb.debian.org/debian}"
+MIRROR="${MIRROR:-$DEBIAN_SNAPSHOT_MIRROR}"
 ARCH="armhf"
 ATLANTIAN_RELEASE=${ATLANTIAN_RELEASE:-$ATLANTIAN_RELEASE_ID}
 CACHE_DIR=${ATLANTIAN_DEBOOTSTRAP_CACHE:-/var/cache/atlantian/debootstrap}
@@ -33,9 +34,7 @@ EOF
 
 install -D -m 0644 "$PROJECT/config/packages.base" "$ROOT/usr/local/share/atlantian/packages.base"
 cat >"$ROOT/etc/apt/sources.list" <<EOF
-deb $MIRROR $SUITE main non-free-firmware
-deb $MIRROR $SUITE-updates main non-free-firmware
-deb http://security.debian.org/debian-security $SUITE-security main non-free-firmware
+deb [check-valid-until=no] $MIRROR $SUITE main non-free-firmware
 EOF
 
 cat >"$ROOT/etc/hostname" <<'EOF'
@@ -159,10 +158,14 @@ install -D -m 0755 "$PROJECT/scripts/atlantian-fpga-status-leds.sh" \
   "$ROOT/usr/local/sbin/atlantian-fpga-status-leds"
 install -D -m 0644 "$PROJECT/systemd/atlantian-fpga-status-leds.service" \
   "$ROOT/etc/systemd/system/atlantian-fpga-status-leds.service"
-install -D -m 0755 "$PROJECT/scripts/atlantian-grow-rootfs.sh" \
-  "$ROOT/usr/local/sbin/atlantian-grow-rootfs"
-install -D -m 0644 "$PROJECT/systemd/atlantian-grow-rootfs.service" \
-  "$ROOT/etc/systemd/system/atlantian-grow-rootfs.service"
+install -D -m 0755 "$PROJECT/scripts/atlantian-persist-state.sh" \
+  "$ROOT/usr/local/sbin/atlantian-persist-state"
+install -D -m 0644 "$PROJECT/systemd/atlantian-persist-state.service" \
+  "$ROOT/etc/systemd/system/atlantian-persist-state.service"
+install -D -m 0755 "$PROJECT/scripts/atlantian-grow-data.sh" \
+  "$ROOT/usr/local/sbin/atlantian-grow-data"
+install -D -m 0644 "$PROJECT/systemd/atlantian-grow-data.service" \
+  "$ROOT/etc/systemd/system/atlantian-grow-data.service"
 install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade.sh" \
   "$ROOT/usr/local/sbin/atlantian-sysupgrade"
 install -D -m 0755 "$PROJECT/scripts/atlantian-release-check.sh" \
@@ -203,7 +206,7 @@ find /usr/share/doc -mindepth 2 -type f ! -name copyright -delete
 find /usr/share/doc -depth -type d -empty -delete
 rm -rf /usr/share/man/* /usr/share/info/* /usr/share/locale/*
 ln -sfn /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-systemctl enable ssh systemd-networkd systemd-timesyncd systemd-resolved serial-getty@ttyPS0.service atlantian-status-leds.service atlantian-fpga-status-leds.service atlantian-grow-rootfs.service zramswap.service atlantian-release-check.timer
+systemctl enable ssh systemd-networkd systemd-timesyncd systemd-resolved serial-getty@ttyPS0.service atlantian-status-leds.service atlantian-fpga-status-leds.service atlantian-persist-state.service atlantian-grow-data.service zramswap.service atlantian-release-check.timer
 systemctl set-default multi-user.target
 EOF
 
@@ -219,6 +222,14 @@ PasswordAuthentication yes
 PermitEmptyPasswords yes
 EOF
 chmod 0644 "$ROOT/etc/ssh/sshd_config.d/10-atlantian-root.conf"
+
+# The Debian snapshot pins the package universe; this sorted manifest records
+# the exact resolved package set embedded in a release for independent audit.
+mkdir -p "$ROOT/usr/share/atlantian"
+chroot "$ROOT" /usr/bin/dpkg-query -W -f='${binary:Package}\t${Version}\n' \
+  | LC_ALL=C sort >"$ROOT/usr/share/atlantian/debian-package-manifest.tsv"
+printf 'snapshot=%s\nmirror=%s\n' "$DEBIAN_SNAPSHOT_TIMESTAMP" "$MIRROR" \
+  >"$ROOT/usr/share/atlantian/debian-snapshot.txt"
 
 # The bind mounts expose host-owned pseudo-filesystems.  Drop them before
 # walking the target tree; otherwise chown would both touch host state and

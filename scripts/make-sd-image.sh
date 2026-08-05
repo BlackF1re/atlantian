@@ -10,14 +10,13 @@ SYSTEM_OUT=${SYSTEM_OUT:-${OUT%.img}.system.ext4}
 BOOT_BIN=${BOOT_BIN:?set BOOT_BIN to the validated S9 BOOT.bin}
 DTB=${DTB:?set DTB to the validated S9 device-tree blob}
 UENV=${UENV:-}
-# This is only the transport size.  First boot expands partition 2 and ext4
-# to the full capacity of the inserted SD card.
+# This is only the transport size.  First boot expands p3 (/data) and its
+# filesystem to the full capacity of the inserted SD card.  p2 stays fixed
+# and is the replaceable system payload for sysupgrade.
 # The actual boot payload is about 27 MiB.  A 64-MiB FAT volume leaves a
 # substantial margin for a recovery request and avoids shipping 192 MiB of
-# permanently empty space.  Partition 2 retains the previous 511-MiB initial
-# capacity, so the current rootfs has exactly the same installation
-# margin.  No capacity is reserved after first boot: partition 2 and ext4 are
-# grown to the whole inserted SD card.
+# permanently empty space.  Partition 2 is sized from the actual payload;
+# p3 receives the remaining card capacity on first boot.
 SIZE_MIB=${SIZE_MIB:-auto}
 DATA_MIB=${DATA_MIB:-16}
 
@@ -25,7 +24,7 @@ if [[ $SIZE_MIB = auto ]]; then
   # Size the transport image from actual rootfs contents. Keep 25%
   # proportional slack and at least 64 MiB absolute slack for ext4 metadata,
   # and first-boot package work, then round to a 16-MiB boundary.  The first
-  # boot grow service still consumes the entire physical SD card.
+  # data grow service still consumes the entire physical SD card.
   ROOT_USED_KIB=$(du -sk "$ROOTFS" | awk '{print $1}')
   ROOT_USED_MIB=$(((ROOT_USED_KIB + 1023) / 1024))
   ROOT_BY_RATIO=$(((ROOT_USED_MIB * 125 + 99) / 100))
@@ -90,7 +89,7 @@ mount "${LOOP}p2" "$ROOT_MNT"
 mount "${LOOP}p3" "$DATA_MNT"
 
 rsync -aHAX --numeric-ids "$ROOTFS/" "$ROOT_MNT/"
-mkdir -p "$DATA_MNT"/{home,etc,var,fpga,user}
+mkdir -p "$DATA_MNT"/{system,fpga,user}
 cp "$BOOT_BIN" "$BOOT_MNT/BOOT.bin"
 cp "$DTB" "$BOOT_MNT/devicetree.dtb"
 cp "$ZIMAGE" "$BOOT_MNT/zImage"
@@ -117,5 +116,7 @@ EOF
 fi
 sync
 dd if="${LOOP}p2" of="$SYSTEM_OUT" bs=1M status=none
+cp "$ROOTFS/usr/share/atlantian/debian-package-manifest.tsv" "${SYSTEM_OUT%.ext4}.packages.tsv"
+cp "$ROOTFS/usr/share/atlantian/debian-snapshot.txt" "${SYSTEM_OUT%.ext4}.snapshot.txt"
 echo "Created system payload: $SYSTEM_OUT"
 echo "Created test image: $OUT"

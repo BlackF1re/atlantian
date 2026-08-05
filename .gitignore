@@ -9,5 +9,7 @@ artifacts/
 *.zst
 SHA256SUMS
 
-# Documentation is kept local until it has been reviewed for publication.
-*.md
+# Published project documentation is tracked.  Scratch Markdown can live
+# outside this repository; hiding docs here made README links silently rot.
+!README.md
+!docs/*.md
