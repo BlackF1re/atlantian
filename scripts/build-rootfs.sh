@@ -160,8 +160,15 @@ install -D -m 0644 "$PROJECT/systemd/atlantian-grow-rootfs.service" \
   "$ROOT/etc/systemd/system/atlantian-grow-rootfs.service"
 install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade.sh" \
   "$ROOT/usr/local/sbin/atlantian-sysupgrade"
-install -D -m 0755 "$PROJECT/scripts/atlantian-zram.sh" "$ROOT/usr/local/sbin/atlantian-zram"
-install -D -m 0644 "$PROJECT/systemd/atlantian-zram.service" "$ROOT/etc/systemd/system/atlantian-zram.service"
+# Use Debian's maintained zram-tools integration.  It provides the standard
+# zramswap.service and keeps the implementation replaceable by normal apt
+# updates.  One third of RAM is configured below; no disk-backed swap exists.
+install -D -m 0644 /dev/null "$ROOT/etc/default/zramswap"
+cat >"$ROOT/etc/default/zramswap" <<'EOF'
+ALGO=lz4
+PERCENT=33
+PRIORITY=100
+EOF
 install -D -m 0755 "$PROJECT/scripts/atlantian-release-check.sh" \
   "$ROOT/usr/local/sbin/atlantian-release-check"
 install -D -m 0644 "$PROJECT/systemd/atlantian-release-check.service" \
@@ -192,7 +199,7 @@ find /usr/share/doc -mindepth 2 -type f ! -name copyright -delete
 find /usr/share/doc -depth -type d -empty -delete
 rm -rf /usr/share/man/* /usr/share/info/* /usr/share/locale/*
 ln -sfn /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-systemctl enable ssh systemd-networkd systemd-timesyncd systemd-resolved serial-getty@ttyPS0.service atlantian-status-leds.service atlantian-fpga-status-leds.service atlantian-grow-rootfs.service atlantian-zram.service atlantian-release-check.timer
+systemctl enable ssh systemd-networkd systemd-timesyncd systemd-resolved serial-getty@ttyPS0.service atlantian-status-leds.service atlantian-fpga-status-leds.service atlantian-grow-rootfs.service zramswap.service atlantian-release-check.timer
 systemctl set-default multi-user.target
 EOF
 

@@ -28,6 +28,7 @@ kmod
 file
 procps
 htop
+zram-tools
 util-linux
 tzdata
 fdisk
