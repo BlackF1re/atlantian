@@ -1,4 +1,4 @@
 # Set OWNER/REPOSITORY after publishing the GitHub repository.
-ATLANTIAN_GITHUB_REPO=
+ATLANTIAN_GITHUB_REPO=BlackF1re/atlantian
 # Keep advisory-only checks by default. Set to 1 only after local validation.
 ATLANTIAN_AUTO_APPLY=0
