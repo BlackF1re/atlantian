@@ -5,7 +5,8 @@ IMAGE=${1:?image path required}
 PAYLOAD=${2:?system payload path required}
 SUMS=${3:?checksum file required}
 [ -s "$IMAGE" ] && [ -s "$PAYLOAD" ] && [ -s "$SUMS" ]
-sha256sum -c "$SUMS"
+SUM_DIR=$(cd "$(dirname "$SUMS")" && pwd)
+( cd "$SUM_DIR" && sha256sum -c "$(basename "$SUMS")" )
 command -v sfdisk >/dev/null
 command -v file >/dev/null
 file "$IMAGE" | grep -qi 'DOS/MBR\|boot sector'
