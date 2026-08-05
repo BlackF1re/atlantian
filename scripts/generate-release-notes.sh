@@ -14,7 +14,7 @@ PREVIOUS=$(git tag --sort=-version:refname | awk -v t="$TAG" '$0 != t {print; ex
   if [[ -n "$PREVIOUS" ]]; then
     printf '## Changes since `%s`\n\n' "$PREVIOUS"
     git log --no-merges --format='- %s (%h)' "$PREVIOUS..$TAG" \
-      | sed -E 's|^- (feat|feature): |- **Feature:** |; s|^- (fix|bugfix): |- **Fix:** |; s|^- (perf): |- **Performance:** |; s|^- (docs): |- **Documentation:** |; s|^- (refactor): |- **Refactor:** |; s|^- (ci|build|chore): |- **Build/CI:** |'
+      | sed -E 's#^- (feat|feature): #- **Feature:** #; s#^- (fix|bugfix): #- **Fix:** #; s#^- (perf): #- **Performance:** #; s#^- (docs): #- **Documentation:** #; s#^- (refactor): #- **Refactor:** #; s#^- (ci|build|chore): #- **Build/CI:** #'
   else
     printf '%s\n' '- Initial AtlANTian release.'
   fi
