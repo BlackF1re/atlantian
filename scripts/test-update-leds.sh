@@ -25,7 +25,7 @@ ATLANTIAN_UPDATE_GREEN_LED=$green \
 ATLANTIAN_UPDATE_LOCK=$lock \
 ATLANTIAN_UPDATE_PULSE_TIME=0.01 \
 ATLANTIAN_UPDATE_GAP_TIME=0.01 \
-  "$ROOT/scripts/atlantian-update-leds.sh" &
+  bash "$ROOT/scripts/atlantian-update-leds.sh" &
 PID=$!
 
 # Within one 80-ms cycle both LEDs must have been actively driven.  Sampling
