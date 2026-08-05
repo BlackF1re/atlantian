@@ -2,14 +2,78 @@ name: Build and release AtlANTian
 
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: 'Build scope; auto detects the changed components on push.'
+        required: true
+        default: all
+        type: choice
+        options: [all, rootfs-image, kernel-image, image]
   push:
     branches: [main]
+    # Documentation, README, licensing, and release-note edits do not produce
+    # a new operating-system image. Every path listed here can affect the
+    # booted system or the release contract.
+    paths:
+      - 'board/**'
+      - 'boot-candidate/**'
+      - 'config/**'
+      - 'debian-release.sha256'
+      - 'fpga/**'
+      - 'kernel-overlay/**'
+      - 'scripts/**'
+      - 'systemd/**'
 
 permissions:
   contents: write
 
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      scope: ${{ steps.scope.outputs.scope }}
+      reason: ${{ steps.scope.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Select the smallest safe build scope
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          scope=all
+          reason='manual full build'
+          if [[ '${{ github.event_name }}' = push ]]; then
+            changed=$(git diff --name-only '${{ github.event.before }}' '${{ github.sha }}')
+            rootfs=false kernel=false image=false
+            if grep -qE '^(debian-release\.sha256|config/release\.env|scripts/build-incremental\.sh)$' <<<"$changed"; then
+              scope=all; reason='base, release, workflow, or build-logic change'
+            else
+              grep -qE '^(config/packages\.base|config/atlantian-release-check\.default|fpga/|systemd/|scripts/(atlantian-|build-rootfs|configure-rootfs-access))' <<<"$changed" && rootfs=true || true
+              grep -qE '^(board/|config/kernel-c41|kernel-overlay/|scripts/build-kernel\.sh)' <<<"$changed" && kernel=true || true
+              grep -qE '^(boot-candidate/|scripts/(make-sd-image|make-recovery-initramfs)\.sh)' <<<"$changed" && image=true || true
+              if [[ $rootfs = true && $kernel = true ]]; then
+                scope=all; reason='root filesystem and kernel inputs changed together'
+              elif [[ $rootfs = true ]]; then
+                scope=rootfs-image; reason='root filesystem or bundled FPGA change'
+              elif [[ $kernel = true ]]; then
+                scope=kernel-image; reason='kernel or board-description change'
+              elif [[ $image = true ]]; then
+                scope=image; reason='boot, recovery, or image-assembly change'
+              else
+                scope=all; reason='unclassified system input'
+              fi
+            fi
+          else
+            scope='${{ inputs.scope }}'
+            reason='manual selection'
+          fi
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          echo "Selected \`$scope\`: $reason" >> "$GITHUB_STEP_SUMMARY"
   build:
+    needs: plan
     runs-on: ubuntu-24.04
     # The native GitHub failure email links directly to the failed step. Keep
     # failure domains separate, so build, image-contract and test failures are
@@ -52,6 +116,21 @@ jobs:
           # Otherwise this tree is reusable only when every kernel input is
           # byte-for-byte identical.
           key: linux-6.12.100-${{ hashFiles('debian-release.sha256', 'board/**', 'config/kernel-c41*.fragment', 'kernel-overlay/**', 'scripts/build-kernel.sh') }}
+      - name: Restore root filesystem cache
+        id: rootfs-cache
+        uses: actions/cache@v4
+        with:
+          path: out/rootfs
+          # Kernel modules are replaced by build-kernel.sh when the kernel
+          # changes, so the base rootfs cache deliberately tracks only inputs
+          # which affect rootfs construction itself.
+          key: rootfs-${{ hashFiles('debian-release.sha256', 'config/packages.base', 'config/atlantian-release-check.default', 'fpga/**', 'systemd/**', 'scripts/atlantian-*.sh', 'scripts/build-rootfs.sh', 'scripts/configure-rootfs-access.sh') }}
+      - name: Restore boot artefacts
+        id: boot-cache
+        uses: actions/cache@v4
+        with:
+          path: out/boot
+          key: boot-6.12.100-${{ hashFiles('debian-release.sha256', 'board/**', 'config/kernel-c41*.fragment', 'kernel-overlay/**', 'scripts/build-kernel.sh') }}
       - name: Fetch pinned Linux source
         id: kernel-source
         run: |
@@ -64,13 +143,29 @@ jobs:
           fi
           git -C out/linux-src fetch --depth 1 origin v6.12.100
           git -C out/linux-src checkout --detach FETCH_HEAD
-      - name: Build rootfs, kernel, recovery and SD image
+      - name: Build the selected release scope
         id: build
         env:
           DEBIAN_FRONTEND: noninteractive
           JOBS: 2
         run: |
-          sudo ./scripts/build-incremental.sh all
+          scope='${{ needs.plan.outputs.scope }}'
+          # A cache eviction must never produce a partial release. A rootfs
+          # change builds both its own rootfs and the kernel; a kernel change
+          # builds fresh boot artefacts but needs the cached rootfs as the
+          # modules-install destination. Image-only work needs both caches.
+          case "$scope" in
+            kernel-image)
+              [[ -d out/rootfs ]] || { echo 'Rootfs cache unavailable; using a complete build.'; scope=all; }
+              ;;
+            image)
+              [[ -d out/rootfs && -f out/boot/zImage && -f out/boot/devicetree.dtb ]] || {
+                echo 'Rootfs or boot cache unavailable; using a complete build.'; scope=all;
+              }
+              ;;
+          esac
+          echo "Scope: $scope (${{ needs.plan.outputs.reason }})"
+          sudo ./scripts/build-incremental.sh "$scope"
           sudo chown -R "$USER:$USER" out artifacts
       - name: Verify release artifacts
         id: artifact-check

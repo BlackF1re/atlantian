@@ -57,8 +57,13 @@ case "$TARGET" in
   dtb) dtb ;;
   image) image ;;
   recovery) recovery ;;
+  # Complete release paths. The image always needs a root filesystem and
+  # kernel artefacts; the CI cache lets make reuse an unchanged kernel tree.
+  rootfs-image) rootfs; kernel; image ;;
+  kernel-image) kernel; image ;;
+  dtb-image) dtb; image ;;
   all) rootfs; kernel; image ;;
-  *) echo "usage: $0 {rootfs|kernel|dtb|recovery|image|all}" >&2; exit 64 ;;
+  *) echo "usage: $0 {rootfs|kernel|dtb|recovery|rootfs-image|kernel-image|dtb-image|image|all}" >&2; exit 64 ;;
 esac
 
 notify "AtlANTian build complete" "$TARGET: $(basename "$IMAGE")"
