@@ -59,7 +59,10 @@ for path in \
 done
 for unit in ssh.service systemd-networkd.service atlantian-status-leds.service \
   atlantian-fpga-status-leds.service zramswap.service; do
-  [[ -e $ROOT/etc/systemd/system/multi-user.target.wants/$unit ]] || {
+  # Unit links may point to an absolute /usr/lib path. Test the link itself:
+  # resolving it on the build host would incorrectly resolve outside $ROOT.
+  link="$ROOT/etc/systemd/system/multi-user.target.wants/$unit"
+  [[ -L $link && $(readlink "$link") == */"$unit" ]] || {
     echo "required enabled unit missing: $unit" >&2; exit 3;
   }
 done
