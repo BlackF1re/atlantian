@@ -11,26 +11,46 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    # The native GitHub failure email links directly to the failed step. Keep
+    # failure domains separate, so build, image-contract and test failures are
+    # immediately distinguishable without a custom mailer.
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Install cross-build dependencies
+        id: dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y debootstrap qemu-user-static binfmt-support \
             gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
             bc bison flex libssl-dev libncurses-dev device-tree-compiler \
-            u-boot-tools kmod cpio rsync pigz xz-utils e2fsprogs dosfstools \
+            u-boot-tools kmod cpio rsync pigz xz-utils e2fsprogs dosfstools parted \
             libelf-dev libdw-dev git curl ca-certificates sudo
+      - name: Restore Linux source and build cache
+        id: kernel-cache
+        uses: actions/cache@v4
+        with:
+          path: out/linux-src
+          # Debian metadata is deliberately part of the key: when Debian
+          # changes, the release is a clean full rebuild, including kernel.
+          # Otherwise this tree is reusable only when every kernel input is
+          # byte-for-byte identical.
+          key: linux-6.12.100-${{ hashFiles('debian-release.sha256', 'board/**', 'config/kernel-c41*.fragment', 'kernel-overlay/**', 'scripts/build-kernel.sh') }}
       - name: Fetch pinned Linux source
+        id: kernel-source
         run: |
           set -eu
           mkdir -p out
-          git clone --depth 1 --branch v6.12.100 \
-            https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git \
-            out/linux-src
+          if [ ! -d out/linux-src/.git ]; then
+            git clone --depth 1 --branch v6.12.100 \
+              https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git \
+              out/linux-src
+          fi
+          git -C out/linux-src fetch --depth 1 origin v6.12.100
+          git -C out/linux-src checkout --detach FETCH_HEAD
       - name: Build rootfs, kernel, recovery and SD image
+        id: build
         env:
           DEBIAN_FRONTEND: noninteractive
           JOBS: 2
@@ -38,13 +58,38 @@ jobs:
           sudo ./scripts/build-incremental.sh all
           sudo chown -R "$USER:$USER" out artifacts
       - name: Verify release artifacts
+        id: artifact-check
         run: |
           image=$(find artifacts/current -maxdepth 1 -name '*.img' -type f | head -n1)
           payload=$(find artifacts/current -maxdepth 1 -name '*.system.ext4' -type f | head -n1)
           test -n "$image" -a -n "$payload"
           bash scripts/test-build.sh "$image" "$payload" artifacts/current/SHA256SUMS
+          sudo bash scripts/test-image-layout.sh "$image"
+      - name: Validate shell programs
+        id: shell-check
+        run: |
           bash -n scripts/*.sh
+      - name: Verify update-state contract
+        id: update-check
+        run: |
           bash scripts/test-update-leds.sh
+      - name: Publish CI outcome summary
+        if: always()
+        run: |
+          {
+            echo '## AtlANTian CI outcome'
+            echo
+            echo '| Domain | Outcome |'
+            echo '|---|---|'
+            echo '| Dependencies | ${{ steps.dependencies.outcome }} |'
+            echo '| Kernel source/cache | ${{ steps.kernel-source.outcome }} (cache: ${{ steps.kernel-cache.outputs.cache-hit }}) |'
+            echo '| Build | ${{ steps.build.outcome }} |'
+            echo '| Artifact, partition and rootfs contracts | ${{ steps.artifact-check.outcome }} |'
+            echo '| Shell syntax | ${{ steps.shell-check.outcome }} |'
+            echo '| Update-state contract | ${{ steps.update-check.outcome }} |'
+            echo
+            echo 'The GitHub notification links to this run; the first failed named step is the failure class.'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Generate concise release notes
         if: startsWith(github.ref, 'refs/tags/v')
         run: bash scripts/generate-release-notes.sh "$GITHUB_REF_NAME"
