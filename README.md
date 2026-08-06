@@ -54,46 +54,20 @@ The board has no battery-backed RTC. Once a network is available, systemd-timesy
 
 ## Storage layout and first boot
 
-The release image contains three partitions:
+The release image contains two ordinary partitions:
 
 | Partition | Purpose |
 | --- | --- |
 | `p1` | FAT boot partition |
-| `p2` | replaceable system partition used by updates |
-| `p3` | persistent data and the writable state layer |
+| `p2` | normal ext4 root filesystem (`/`) |
 
-On its first successful boot, `atlantian-grow-data` enlarges `p3` to fill the inserted card and then reboots once. This means the image can be written directly with Rufus, `dd`, Raspberry Pi Imager, or a similar raw-image writer. No manual partitioning is required.
+On its first successful boot, `atlantian-grow-rootfs` enlarges `p2` to fill the inserted card and then reboots once. This means the image can be written directly with Rufus, `dd`, Raspberry Pi Imager, or a similar raw-image writer. No manual partitioning is required.
 
-`p2` is intentionally replaceable.  At boot, AtlANTian mounts a persistent
-overlay for `/etc` from `p3`, and persistent bind mounts for `/root`, `/home`,
-and `/var/local`.  This preserves normal configuration, SSH host and user
-keys, root and user files, and locally managed data across a system update.
-The package database, `/usr`, and the rest of `/var` remain part of the
-system release on purpose: carrying an old dpkg database into a new base
-system is unsafe.  Packages installed with `apt` must therefore be declared
-again or reinstalled after an image-level upgrade.
-
-APT's package indexes and downloaded `.deb` archives live under
-`/data/system/atlantian/apt`, not on the fixed system partition. This makes
-`apt update` safe on the installed image; it does not make package installation
-persistent across a system release.
-
-### Write-state policy
-
-The system partition is deliberately compact and replaced as a release unit.
-It is therefore not a general-purpose place for runtime state. AtlANTian
-handles the common write-heavy paths explicitly: `/tmp`, `/var/tmp`, and
-`/var/log` are bounded tmpfs mounts; the system journal is volatile and capped
-at 8 MiB; and `/var/cache` is bind-mounted from
-`/data/system/atlantian/cache`. APT keeps its larger indexes and package cache
-under `/data/system/atlantian/apt`.
-
-Only intentional user/configuration state survives an upgrade: the `/etc`
-overlay and persistent `/root`, `/home`, `/var/local`, and `/data` trees.
-AtlANTian does **not** persist `/var/lib` wholesale: retaining `dpkg` and
-service databases while replacing the root filesystem would combine unrelated
-release states. A service that genuinely needs durable data must use `/data`
-or receive an explicit, reviewed persistent path.
+After that first boot, AtlANTian has a conventional Debian filesystem. `/etc`,
+`/root`, `/home`, `/var`, installed packages, logs and APT state live on `/`.
+There are no overlays, bind mounts, hidden state directories, or special APT
+cache paths. This is deliberately the same persistence model used by Debian
+and Ubuntu.
 
 The NAND is separate from the SD installation. AtlANTian exposes it, but does not overwrite it as part of normal booting or updating. A raw NAND backup must retain the bad-block information as well as the contents; copying a mounted filesystem is not a replacement for an MTD-aware backup.
 
@@ -129,11 +103,19 @@ The PS I2C and SPI controllers are available in the kernel but intentionally dis
 
 ## Updating
 
-`atlantian-sysupgrade` updates an installed board from a published AtlANTian release. It checks the release over HTTPS, downloads and verifies its SHA-256 checksum into persistent staging, then replaces the boot (`p1`) and immutable system (`p2`) partitions as one bundle. It never writes `p3`, including the persistent `/etc`, `/root`, `/home`, and `/var/local` state described above.
+`atlantian-sysupgrade` updates an installed board from a published AtlANTian
+release using normal APT/dpkg transactions. It installs the release's three
+AtlANTian packages (platform policy, kernel and release metadata), after
+verifying them against the release's `SHA256SUMS`, then runs
+`apt full-upgrade` against the pinned Debian Snapshot. It does not rewrite
+partitions or use a recovery environment. Local files and normal Debian
+configuration persist: `/etc`, SSH keys, `/root`, `/home`, `/var`, package
+databases and packages installed by the user remain in place. Modified Debian
+conffiles are retained by default.
 
-The updater switches into a small recovery environment running from RAM before it rewrites the system partition. It is not a permanent recovery partition and does not consume a reserved part of the SD card.
-
-While the filesystem is frozen and the write has begun, the normal LED services are stopped and the update pattern owns the LEDs exclusively: three red flashes, then three green flashes, repeating.
+During the package transaction the normal LED services are stopped and the
+update pattern owns the LEDs exclusively: three red flashes, then three green
+flashes, repeating.
 
 The normal command form is:
 
@@ -141,7 +123,11 @@ The normal command form is:
 atlantian-sysupgrade --latest atlantian-<release-version-and-commit>
 ```
 
-`atlantian-release-check` runs after boot and daily. It records a newer release on `/data`; SSH logins repeat the exact `atlantian-sysupgrade --latest …` command until that release is installed. Automatic application is off by default. Its configuration lives in `/etc/default/atlantian-release-check`.
+`atlantian-release-check` runs after boot and daily. It records a newer release
+under `/var/lib/atlantian/update`; SSH logins repeat the exact
+`atlantian-sysupgrade --latest …` command until that release is installed.
+Automatic application is off by default. Its configuration lives in
+`/etc/default/atlantian-release-check`.
 
 ## Building locally
 
@@ -159,8 +145,6 @@ The incremental builder has narrower targets when only one part changed:
 ```sh
 ./scripts/build-incremental.sh rootfs
 ./scripts/build-incremental.sh kernel
-./scripts/build-incremental.sh dtb
-./scripts/build-incremental.sh recovery
 ./scripts/build-incremental.sh image
 ```
 
@@ -170,7 +154,12 @@ Use `all` when the relationship between changes is unclear. A Debian base update
 
 Releases are built on GitHub Actions. A commit to `main` and a manual workflow run both create a source-addressed release. The release version follows the Debian major version and AtlANTian build number, with the twelve-character source commit suffix included for traceability, for example `v13.11+g0123456789ab`.
 
-Each release contains the SD image, the system payload used by `atlantian-sysupgrade`, SHA-256 sums, a resolved Debian package manifest, Debian snapshot metadata, and build metadata. The root filesystem is built from an explicit Debian Snapshot archive; the scheduled watcher advances that snapshot only after it verifies the archived `Release` file matches the Debian update it detected. GitHub Actions are pinned to immutable commit IDs. The workflow performs layout, checksum, filesystem, boot-artifact, release-payload, and persistent-state checks before publishing.
+Each release contains the SD image, the three `.deb` packages used by
+`atlantian-sysupgrade`, SHA-256 sums, a resolved Debian package manifest,
+Debian snapshot metadata, and build metadata. The root filesystem is built
+from an explicit Debian Snapshot archive; the scheduled watcher advances that
+snapshot only after it verifies the archived `Release` file matches the Debian
+update it detected. GitHub Actions are pinned to immutable commit IDs.
 
 The project uses Conventional Commits. Release notes are intentionally concise: they describe the Debian change that triggered an automated rebuild or the commits that have landed since the previous AtlANTian release.
 
@@ -182,7 +171,7 @@ The base image includes `htop`, `pigz`, `gpiod`, `i2c-tools`, `spi-tools`, `lm-s
 
 AtlANTian is a board distribution built on Debian, not a replacement for Debian itself or a new upstream kernel. Its value is the board description, sensible defaults, tested image layout, FPGA-profile plumbing, and a reproducible way to build and update the system. Debian remains responsible for the overwhelming majority of user-space software and security maintenance.
 
-For pin assignments, electrical notes, and the current support boundary, see `docs/hardware-support-matrix.md`. For the deployment and recovery flow, see `docs/PIPELINE.md`.
+For pin assignments, electrical notes, and the current support boundary, see `docs/hardware-support-matrix.md`. For the factory-install and update flow, see `docs/PIPELINE.md`.
 
 ## Licensing and rights
 

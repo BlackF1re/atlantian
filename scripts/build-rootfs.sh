@@ -42,13 +42,6 @@ deb [check-valid-until=no] $MIRROR $SUITE main non-free-firmware
 deb [check-valid-until=no] $MIRROR ${SUITE}-updates main non-free-firmware
 deb [check-valid-until=no] $DEBIAN_SECURITY_SNAPSHOT_MIRROR ${SUITE}-security main non-free-firmware
 EOF
-# p2 is intentionally a compact, replaceable root filesystem.  APT's index
-# files are transient but can exceed the available free space on it (notably
-# the English translation index).  Keep those files and downloaded packages on
-# persistent p3 instead.  This configuration is read only after
-# atlantian-persist-state mounts /data, which happens before SSH is started.
-install -D -m 0644 "$PROJECT/config/apt/10-atlantian-persistent-cache" \
-  "$ROOT/etc/apt/apt.conf.d/10-atlantian-persistent-cache"
 
 printf '%s\n' "$HOSTNAME" >"$ROOT/etc/hostname"
 printf '%s\n' "$ATLANTIAN_RELEASE" >"$ROOT/etc/atlantian-release"
@@ -76,26 +69,9 @@ EOF
 # after the Zynq boot loader's initial mount.
 cat >"$ROOT/etc/fstab" <<'EOF'
 /dev/mmcblk0p2 / ext4 defaults 0 1
-/dev/mmcblk0p3 /data ext4 defaults,nofail 0 2
-# Transient scratch and traditional logs must never fill the compact p2 root.
-# /data and the persistence service are available before normal network/SSH
-# services start; durable, explicitly whitelisted state is mounted from there.
-tmpfs /tmp tmpfs mode=1777,nosuid,nodev,size=32M 0 0
-tmpfs /var/tmp tmpfs mode=1777,nosuid,nodev,size=16M 0 0
-tmpfs /var/log tmpfs mode=0755,nosuid,nodev,size=16M 0 0
+/dev/mmcblk0p1 /boot vfat defaults 0 2
 EOF
-mkdir -p "$ROOT/data" "$ROOT/etc/atlantian"
-mkdir -p "$ROOT/etc/systemd/journald.conf.d"
-cat >"$ROOT/etc/systemd/journald.conf.d/10-atlantian-volatile.conf" <<'EOF'
-[Journal]
-# The release root is deliberately small and replaceable.  Keep diagnostics
-# for the current boot in /run, bounded by RAM, rather than silently filling
-# p2.  Operators needing retained logs may explicitly configure a data-backed
-# journal after installation.
-Storage=volatile
-RuntimeMaxUse=8M
-RuntimeKeepFree=4M
-EOF
+mkdir -p "$ROOT/etc/atlantian"
 mkdir -p "$ROOT/etc/systemd/network" "$ROOT/etc/systemd/system/serial-getty@ttyPS0.service.d"
 cat >"$ROOT/etc/systemd/network/20-ethernet.network" <<'EOF'
 [Match]
@@ -186,14 +162,10 @@ install -D -m 0755 "$PROJECT/scripts/atlantian-fpga-status-leds.sh" \
   "$ROOT/usr/local/sbin/atlantian-fpga-status-leds"
 install -D -m 0644 "$PROJECT/systemd/atlantian-fpga-status-leds.service" \
   "$ROOT/etc/systemd/system/atlantian-fpga-status-leds.service"
-install -D -m 0755 "$PROJECT/scripts/atlantian-persist-state.sh" \
-  "$ROOT/usr/local/sbin/atlantian-persist-state"
-install -D -m 0644 "$PROJECT/systemd/atlantian-persist-state.service" \
-  "$ROOT/etc/systemd/system/atlantian-persist-state.service"
-install -D -m 0755 "$PROJECT/scripts/atlantian-grow-data.sh" \
-  "$ROOT/usr/local/sbin/atlantian-grow-data"
-install -D -m 0644 "$PROJECT/systemd/atlantian-grow-data.service" \
-  "$ROOT/etc/systemd/system/atlantian-grow-data.service"
+install -D -m 0755 "$PROJECT/scripts/atlantian-grow-rootfs.sh" \
+  "$ROOT/usr/local/sbin/atlantian-grow-rootfs"
+install -D -m 0644 "$PROJECT/systemd/atlantian-grow-rootfs.service" \
+  "$ROOT/etc/systemd/system/atlantian-grow-rootfs.service"
 install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade.sh" \
   "$ROOT/usr/local/sbin/atlantian-sysupgrade"
 install -D -m 0755 "$PROJECT/scripts/atlantian-release-check.sh" \
@@ -225,7 +197,6 @@ PRIORITY=100
 ZRAM_EOF
 command -v sfdisk
 command -v resize2fs
-command -v mkimage
 apt-get clean
 rm -rf /var/lib/apt/lists/*
 # debootstrap populated part of /usr/share before the exclusions existed.
@@ -234,7 +205,7 @@ find /usr/share/doc -mindepth 2 -type f ! -name copyright -delete
 find /usr/share/doc -depth -type d -empty -delete
 rm -rf /usr/share/man/* /usr/share/info/* /usr/share/locale/*
 ln -sfn /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-systemctl enable ssh systemd-networkd systemd-timesyncd systemd-resolved serial-getty@ttyPS0.service atlantian-status-leds.service atlantian-fpga-status-leds.service atlantian-persist-state.service atlantian-grow-data.service zramswap.service atlantian-release-check.timer
+systemctl enable ssh systemd-networkd systemd-timesyncd systemd-resolved serial-getty@ttyPS0.service atlantian-status-leds.service atlantian-fpga-status-leds.service atlantian-grow-rootfs.service zramswap.service atlantian-release-check.timer
 systemctl set-default multi-user.target
 EOF
 

@@ -1,11 +1,11 @@
-# Persistent state boundary
+# Persistent state
 
-`/data` (`mmcblk0p3`) is the only partition never overwritten by a normal
-release update. AtlANTian mounts an overlay for `/etc` and bind mounts for
-`/root`, `/home`, and `/var/local` from `/data/system/atlantian/persist`.
+AtlANTian uses a normal Debian root filesystem. The factory image has a FAT
+boot partition (`p1`) and an ext4 root filesystem (`p2`). On first boot, `p2`
+is expanded to the remaining SD-card capacity and the board reboots once.
 
-The persistent mount is activated before normal local filesystems, networking,
-SSH, and host-key generation. It is not an initramfs overlay: settings consumed
-by PID 1 before `atlantian-persist-state.service` starts are release defaults.
-That limitation is deliberate and documented until an initramfs-based overlay
-is introduced.
+There is no data partition, overlay filesystem, bind mount or special APT
+cache path. `/etc`, `/root`, `/home`, `/var`, logs, SSH keys, package metadata
+and locally installed packages all persist exactly as on an ordinary Debian
+installation. `atlantian-sysupgrade` uses APT/dpkg and follows Debian conffile
+rules: locally modified configuration is retained by default.

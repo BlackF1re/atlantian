@@ -23,15 +23,14 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Validate shell programs
         run: bash -n scripts/*.sh
-      - name: Validate persistent-state integration
-        run: sudo bash scripts/test-persistent-state.sh
       - name: Validate release/update contracts
         run: |
           bash scripts/test-update-leds.sh
-          grep -q 'update.bundle' scripts/atlantian-sysupgrade.sh
-          grep -q -- '--factory-reset' scripts/deploy-via-network.sh
-      - name: Validate fixed image contract
+          grep -q 'apt-get.*full-upgrade' scripts/atlantian-sysupgrade.sh
+          grep -q 'SHA256SUMS' scripts/atlantian-sysupgrade.sh
+      - name: Validate two-partition image contract
         run: |
           . config/image-layout.env
           test "$ATLANTIAN_BOOT_MIB" = 64
-          test "$ATLANTIAN_SYSTEM_MIB" = 336
+          test "$ATLANTIAN_INITIAL_ROOT_SLACK_MIB" -gt 0
+          ! grep -q 'mmcblk0p3\|/data' scripts/make-sd-image.sh scripts/build-rootfs.sh

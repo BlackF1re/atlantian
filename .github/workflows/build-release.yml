@@ -57,12 +57,12 @@ jobs:
               reason='previous push tip is unavailable; safe full build'
             fi
             rootfs=false kernel=false image=false
-            if grep -qE '^(debian-release\.sha256|config/(release|debian-snapshot)\.env|scripts/build-incremental\.sh)$' <<<"$changed"; then
+            if grep -qE '^(debian-release\.sha256|config/(release|debian-snapshot|image-layout)\.env|scripts/(build-incremental|build-atlantian-debs|make-sd-image)\.sh)$' <<<"$changed"; then
               scope=all; reason='base, release, workflow, or build-logic change'
             else
               grep -qE '^(config/packages\.base|config/atlantian-release-check\.default|fpga/|systemd/|scripts/(atlantian-|build-rootfs|configure-rootfs-access))' <<<"$changed" && rootfs=true || true
               grep -qE '^(board/|config/kernel-c41|kernel-overlay/|scripts/build-kernel\.sh)' <<<"$changed" && kernel=true || true
-              grep -qE '^(boot-candidate/|scripts/(make-sd-image|make-recovery-initramfs)\.sh)' <<<"$changed" && image=true || true
+              grep -qE '^(boot-candidate/|scripts/(make-sd-image|build-atlantian-debs)\.sh)' <<<"$changed" && image=true || true
               if [[ $rootfs = true && $kernel = true ]]; then
                 scope=all; reason='root filesystem and kernel inputs changed together'
               elif [[ $rootfs = true ]]; then
@@ -70,7 +70,7 @@ jobs:
               elif [[ $kernel = true ]]; then
                 scope=kernel-image; reason='kernel or board-description change'
               elif [[ $image = true ]]; then
-                scope=image; reason='boot, recovery, or image-assembly change'
+                scope=image; reason='boot, package, or image-assembly change'
               else
                 scope=all; reason='unclassified system input'
               fi
@@ -173,9 +173,6 @@ jobs:
           git -C out/linux-src fetch --depth 1 origin "$ATLANTIAN_KERNEL_COMMIT"
           git -C out/linux-src checkout --detach FETCH_HEAD
           test "$(git -C out/linux-src rev-parse HEAD)" = "$ATLANTIAN_KERNEL_COMMIT"
-      - name: Verify persistent-state contract
-        id: persistence-check
-        run: bash scripts/test-persistent-state.sh
       - name: Build the selected release scope
         id: build
         env:
@@ -204,14 +201,12 @@ jobs:
         id: artifact-check
         run: |
           image=$(find artifacts/current -maxdepth 1 -name '*.img' -type f | head -n1)
-          payload=$(find artifacts/current -maxdepth 1 -name '*.system.ext4' -type f | head -n1)
-          boot=$(find artifacts/current -maxdepth 1 -name '*.boot.vfat' -type f | head -n1)
-          bundle=$(find artifacts/current -maxdepth 1 -name '*.update.bundle' -type f | head -n1)
-          test -n "$image" -a -n "$payload" -a -n "$boot" -a -n "$bundle"
-          bash scripts/test-build.sh "$image" "$payload" artifacts/current/SHA256SUMS
+          test -n "$image"
+          test "$(find artifacts/current -maxdepth 1 -name '*.deb' -type f | wc -l)" -eq 3
+          bash scripts/test-build.sh "$image" artifacts/current/SHA256SUMS
           sudo bash scripts/test-image-layout.sh "$image"
-          test -s "${payload%.ext4}.packages.tsv"
-          test -s "${payload%.ext4}.snapshot.txt"
+          test -s "${image%.img}.packages.tsv"
+          test -s "${image%.img}.snapshot.txt"
       - name: Validate shell programs
         id: shell-check
         run: |
@@ -234,7 +229,6 @@ jobs:
             echo '| Artifact, partition and rootfs contracts | ${{ steps.artifact-check.outcome }} |'
             echo '| Shell syntax | ${{ steps.shell-check.outcome }} |'
             echo '| Update-state contract | ${{ steps.update-check.outcome }} |'
-            echo '| Persistent-state contract | ${{ steps.persistence-check.outcome }} |'
             echo
             echo 'The GitHub notification links to this run; the first failed named step is the failure class.'
           } >> "$GITHUB_STEP_SUMMARY"
@@ -244,9 +238,7 @@ jobs:
         run: |
           test "$RELEASE_TAG" = "v$ATLANTIAN_VERSION"
           test -f "artifacts/current/$ATLANTIAN_IMAGE_NAME.img"
-          test -f "artifacts/current/$ATLANTIAN_IMAGE_NAME.system.ext4"
-          test -f "artifacts/current/$ATLANTIAN_IMAGE_NAME.boot.vfat"
-          test -f "artifacts/current/$ATLANTIAN_IMAGE_NAME.update.bundle"
+          test "$(find artifacts/current -maxdepth 1 -name '*.deb' -type f | wc -l)" -eq 3
       - name: Write build metadata
         run: |
           . config/release.env
@@ -267,9 +259,7 @@ jobs:
           name: atlantian-image-${{ env.ATLANTIAN_VERSION }}
           path: |
             artifacts/current/*.img
-            artifacts/current/*.boot.vfat
-            artifacts/current/*.update.bundle
-            artifacts/current/*.system.ext4
+            artifacts/current/*.deb
             artifacts/current/*.packages.tsv
             artifacts/current/*.snapshot.txt
             artifacts/current/SHA256SUMS
@@ -284,9 +274,7 @@ jobs:
           body_path: release-notes.md
           files: |
             artifacts/current/*.img
-            artifacts/current/*.boot.vfat
-            artifacts/current/*.update.bundle
-            artifacts/current/*.system.ext4
+            artifacts/current/*.deb
             artifacts/current/*.packages.tsv
             artifacts/current/*.snapshot.txt
             artifacts/current/SHA256SUMS

@@ -1,6 +1,6 @@
 [Unit]
 Description=Check for AtlANTian system releases
-After=network-online.target atlantian-persist-state.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]

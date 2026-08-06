@@ -1,17 +1,19 @@
 # Quick start
 
-1. Write the released `.img` to an SD card with a raw-image writer.
-2. Select SD boot on the CTRL_C41 board and boot it.
-3. Log in on `ttyPS0` or SSH as `root`, then immediately run `passwd`.
-4. The first boot expands only `/data` (`mmcblk0p3`) to the remaining card
-   capacity. The immutable system is `mmcblk0p2`; boot files are `mmcblk0p1`.
+1. Write the released `.img` to a microSD card with Rufus, Raspberry Pi Imager
+   or `dd`.
+2. Set the board jumper for SD boot and power it on.
+3. The first boot expands `/dev/mmcblk0p2` to the rest of the card, reboots
+   once, and then starts SSH and the UART getty.
+4. Log in as `root`, set a password with `passwd`, and configure the board as
+   ordinary Debian GNU/Linux.
 
-`atlantian-release-check` discovers published releases after boot and daily.
-If an update is available, its exact installation command is shown at SSH
-login. Run `atlantian-sysupgrade --latest <release-id>`, read the warning, and
-type `UPDATE` to confirm. It downloads an HTTPS-verified `*.update.bundle`
-into `/data`, then replaces `p1` and `p2` in RAM recovery. It never formats or
-writes `p3`.
+To apply a newer AtlANTian release, run the command printed at SSH login:
 
-`scripts/deploy-via-network.sh` is not an update mechanism. It is an explicit
-factory reset and requires the `--factory-reset` confirmation argument.
+```sh
+atlantian-sysupgrade --latest <release-id>
+```
+
+It installs the published AtlANTian packages and performs a normal
+`apt full-upgrade`; it preserves the conventional Debian filesystem and then
+reboots the board.

@@ -39,8 +39,10 @@ SHORT_COMMIT=$(git rev-parse --short=12 "$REF")
   printf '\n## Downloads\n\n'
   printf '| File | Purpose |\n|---|---|\n'
   printf '| `%s.img` | Initial SD-card installation image. |\n' "$ATLANTIAN_IMAGE_NAME"
-  printf '| `%s.system.ext4` | System-only payload for `atlantian-sysupgrade`; `/data` is preserved. |\n' "$ATLANTIAN_IMAGE_NAME"
-  printf '| `SHA256SUMS` | SHA-256 verification for both payloads. |\n'
+  printf '| `atlantian-platform_*.deb` | Board policy, tools and release configuration. |\n'
+  printf '| `atlantian-kernel_*.deb` | Kernel, device tree and modules. |\n'
+  printf '| `atlantian-release_*.deb` | Exact release meta-package. |\n'
+  printf '| `SHA256SUMS` | SHA-256 verification for image and packages. |\n'
   printf '\n## Verification\n\n'
   printf '%s\n' '- Built from the source commit above; image, partition, boot, rootfs, shell and update-state contracts passed in GitHub Actions.'
 } > release-notes.md

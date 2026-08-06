@@ -33,6 +33,3 @@ util-linux
 tzdata
 fdisk
 e2fsprogs
-kexec-tools
-busybox-static
-u-boot-tools
