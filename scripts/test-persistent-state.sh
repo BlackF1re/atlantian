@@ -9,10 +9,10 @@ unshare --mount --propagation private bash -eu <<EOF
 mount --make-rprivate /
 mkdir -p /data /var/local
 mount -t tmpfs tmpfs /data
-"$ROOT/scripts/atlantian-persist-state.sh"
+sh "$ROOT/scripts/atlantian-persist-state.sh"
 printf 'retained\n' >/etc/atlantian-persistence-integration-test
 printf 'key\n' >/root/.atlantian-persistence-integration-test
-"$ROOT/scripts/atlantian-persist-state.sh"
+sh "$ROOT/scripts/atlantian-persist-state.sh"
 test "\$(cat /etc/atlantian-persistence-integration-test)" = retained
 test "\$(cat /root/.atlantian-persistence-integration-test)" = key
 test "\$(findmnt -n -o FSTYPE /etc)" = overlay
