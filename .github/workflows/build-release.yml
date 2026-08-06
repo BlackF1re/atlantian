@@ -173,6 +173,9 @@ jobs:
           git -C out/linux-src fetch --depth 1 origin "$ATLANTIAN_KERNEL_COMMIT"
           git -C out/linux-src checkout --detach FETCH_HEAD
           test "$(git -C out/linux-src rev-parse HEAD)" = "$ATLANTIAN_KERNEL_COMMIT"
+      - name: Verify persistent-state contract
+        id: persistence-check
+        run: bash scripts/test-persistent-state.sh
       - name: Build the selected release scope
         id: build
         env:
@@ -217,11 +220,6 @@ jobs:
         id: update-check
         run: |
           bash scripts/test-update-leds.sh
-      - name: Verify persistent-state contract
-        id: persistence-check
-        run: |
-          set -euo pipefail
-          bash scripts/test-persistent-state.sh
       - name: Publish CI outcome summary
         if: always()
         run: |
