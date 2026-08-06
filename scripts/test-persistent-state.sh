@@ -8,6 +8,9 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 unshare --mount --propagation private bash -eux <<EOF
 mount --make-rprivate /
 mkdir -p /data /var/local
+mount -t tmpfs tmpfs /root
+mount -t tmpfs tmpfs /home
+mount -t tmpfs tmpfs /var/local
 mount -t tmpfs tmpfs /data
 sh "$ROOT/scripts/atlantian-persist-state.sh"
 printf 'retained\n' >/etc/atlantian-persistence-integration-test
