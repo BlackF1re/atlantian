@@ -10,7 +10,8 @@ trap 'rm -f "$HELPER"' EXIT
 cp "$ROOT/scripts/atlantian-persist-state.sh" "$HELPER"
 unshare --mount --propagation private bash -eux <<EOF
 mount --make-rprivate /
-mkdir -p /data /var/local
+mkdir -p /data /var/local /var/cache /run
+mount -t tmpfs tmpfs /run
 mount -t tmpfs tmpfs /root
 mount -t tmpfs tmpfs /home
 mount -t tmpfs tmpfs /var/local
@@ -24,6 +25,9 @@ test "\$(cat /root/.atlantian-persistence-integration-test)" = key
 test "\$(cat /data/system/atlantian/persist/etc.upper/atlantian-persistence-integration-test)" = retained
 test "\$(cat /data/system/atlantian/persist/root/.atlantian-persistence-integration-test)" = key
 test "\$(findmnt -n -o FSTYPE /etc)" = overlay
+test -e /run/atlantian/var-cache-mounted
+printf 'cache\n' >/data/system/atlantian/cache/.atlantian-persistence-integration-test
+test "\$(cat /var/cache/.atlantian-persistence-integration-test)" = cache
 mountpoint -q /root
 EOF
 echo 'persistent-state integration test passed'

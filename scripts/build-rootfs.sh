@@ -77,8 +77,25 @@ EOF
 cat >"$ROOT/etc/fstab" <<'EOF'
 /dev/mmcblk0p2 / ext4 defaults 0 1
 /dev/mmcblk0p3 /data ext4 defaults,nofail 0 2
+# Transient scratch and traditional logs must never fill the compact p2 root.
+# /data and the persistence service are available before normal network/SSH
+# services start; durable, explicitly whitelisted state is mounted from there.
+tmpfs /tmp tmpfs mode=1777,nosuid,nodev,size=32M 0 0
+tmpfs /var/tmp tmpfs mode=1777,nosuid,nodev,size=16M 0 0
+tmpfs /var/log tmpfs mode=0755,nosuid,nodev,size=16M 0 0
 EOF
 mkdir -p "$ROOT/data" "$ROOT/etc/atlantian"
+mkdir -p "$ROOT/etc/systemd/journald.conf.d"
+cat >"$ROOT/etc/systemd/journald.conf.d/10-atlantian-volatile.conf" <<'EOF'
+[Journal]
+# The release root is deliberately small and replaceable.  Keep diagnostics
+# for the current boot in /run, bounded by RAM, rather than silently filling
+# p2.  Operators needing retained logs may explicitly configure a data-backed
+# journal after installation.
+Storage=volatile
+RuntimeMaxUse=8M
+RuntimeKeepFree=4M
+EOF
 mkdir -p "$ROOT/etc/systemd/network" "$ROOT/etc/systemd/system/serial-getty@ttyPS0.service.d"
 cat >"$ROOT/etc/systemd/network/20-ethernet.network" <<'EOF'
 [Match]

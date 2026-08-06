@@ -81,6 +81,20 @@ link="$ROOT/etc/systemd/system/local-fs.target.wants/atlantian-persist-state.ser
 grep -qx '/dev/mmcblk0p3 /data ext4 defaults,nofail 0 2' "$ROOT/etc/fstab" || {
   echo 'persistent /data mount missing from fstab' >&2; exit 3;
 }
+for entry in \
+  'tmpfs /tmp tmpfs mode=1777,nosuid,nodev,size=32M 0 0' \
+  'tmpfs /var/tmp tmpfs mode=1777,nosuid,nodev,size=16M 0 0' \
+  'tmpfs /var/log tmpfs mode=0755,nosuid,nodev,size=16M 0 0'; do
+  grep -qx "$entry" "$ROOT/etc/fstab" || {
+    echo "volatile filesystem policy missing: $entry" >&2; exit 3;
+  }
+done
+grep -qx 'Storage=volatile' "$ROOT/etc/systemd/journald.conf.d/10-atlantian-volatile.conf" || {
+  echo 'volatile journal policy missing' >&2; exit 3;
+}
+grep -q 'data/system/atlantian/cache' "$ROOT/usr/local/sbin/atlantian-persist-state" || {
+  echo 'persistent cache policy missing' >&2; exit 3;
+}
 grep -qx 'Acquire::Languages "none";' "$ROOT/etc/apt/apt.conf.d/10-atlantian-persistent-cache" || {
   echo 'APT language-index policy missing' >&2; exit 3;
 }

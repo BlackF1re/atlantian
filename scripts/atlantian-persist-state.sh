@@ -15,7 +15,8 @@ mountpoint -q "$data" || {
     exit 1
 }
 
-install -d -m 0755 "$state/etc.upper" "$state/etc.work" "$state/root" "$state/home" "$state/var-local"
+install -d -m 0755 "$state/etc.upper" "$state/etc.work" "$state/root" "$state/home" "$state/var-local" \
+    "$data/system/atlantian/cache"
 # APT indices and downloaded packages are deliberately transient, but too
 # large for the fixed-size immutable p2 partition.  They belong on p3, unlike
 # dpkg's database, which remains in the release rootfs by design.
@@ -46,3 +47,12 @@ for tree in root home var-local; do
         mount --bind "$source" "$target"
     fi
 done
+
+# /var/cache is disposable state.  Giving every cache a durable home on p3
+# prevents a normal utility from exhausting the fixed, replaceable rootfs,
+# without carrying package databases or service state across a release.
+install -d -m 0755 /run/atlantian
+if [ ! -e /run/atlantian/var-cache-mounted ]; then
+    mount --bind "$data/system/atlantian/cache" /var/cache
+    : >/run/atlantian/var-cache-mounted
+fi

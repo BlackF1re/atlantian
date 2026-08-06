@@ -78,6 +78,23 @@ APT's package indexes and downloaded `.deb` archives live under
 `apt update` safe on the installed image; it does not make package installation
 persistent across a system release.
 
+### Write-state policy
+
+The system partition is deliberately compact and replaced as a release unit.
+It is therefore not a general-purpose place for runtime state. AtlANTian
+handles the common write-heavy paths explicitly: `/tmp`, `/var/tmp`, and
+`/var/log` are bounded tmpfs mounts; the system journal is volatile and capped
+at 8 MiB; and `/var/cache` is bind-mounted from
+`/data/system/atlantian/cache`. APT keeps its larger indexes and package cache
+under `/data/system/atlantian/apt`.
+
+Only intentional user/configuration state survives an upgrade: the `/etc`
+overlay and persistent `/root`, `/home`, `/var/local`, and `/data` trees.
+AtlANTian does **not** persist `/var/lib` wholesale: retaining `dpkg` and
+service databases while replacing the root filesystem would combine unrelated
+release states. A service that genuinely needs durable data must use `/data`
+or receive an explicit, reviewed persistent path.
+
 The NAND is separate from the SD installation. AtlANTian exposes it, but does not overwrite it as part of normal booting or updating. A raw NAND backup must retain the bad-block information as well as the contents; copying a mounted filesystem is not a replacement for an MTD-aware backup.
 
 ## Interfaces which need an FPGA profile
