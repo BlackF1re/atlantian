@@ -7,6 +7,7 @@ PROJECT=$(cd "$(dirname "$0")/.." && pwd)
 ROOTFS=${ROOTFS:-$PROJECT/out/rootfs}
 OUT=${OUT:-$PROJECT/out/${ATLANTIAN_IMAGE_NAME}.img}
 SYSTEM_OUT=${SYSTEM_OUT:-${OUT%.img}.system.ext4}
+BOOT_OUT=${BOOT_OUT:-${OUT%.img}.boot.vfat}
 BOOT_BIN=${BOOT_BIN:?set BOOT_BIN to the validated S9 BOOT.bin}
 DTB=${DTB:?set DTB to the validated S9 device-tree blob}
 UENV=${UENV:-}
@@ -111,12 +112,14 @@ cat >"$BOOT_MNT/uEnv.txt" <<'EOF'
 # before recovery boots. A failed recovery boot therefore cannot trap the
 # board: the next reset takes the normal boot path.
 atlantian_normal_bootargs=mem=496M console=ttyPS0,115200n8 root=/dev/mmcblk0p2 rootfstype=ext4 rw rootwait
-bootcmd=setenv atlantian_update 0; if fatload mmc 0:1 0x01000000 atlantian-update.scr; then source 0x01000000; fi; if test "${atlantian_update}" = "1"; then echo "AtlANTian: one-shot recovery"; mw.b 0x01000000 0 1; fatwrite mmc 0:1 0x01000000 atlantian-update.scr 1; setenv bootargs mem=496M console=ttyPS0,115200n8 root=/dev/ram0 rdinit=/init atlantian.mode=${atlantian_mode} atlantian.flash_url=${atlantian_flash_url} atlantian.sha256=${atlantian_sha} atlantian.blocks=${atlantian_blocks} atlantian.system_url=${atlantian_system_url} atlantian.system_sha256=${atlantian_system_sha256}; if fatload mmc 0:1 0x03000000 uImage && fatload mmc 0:1 0x02000000 uInitrd && fatload mmc 0:1 0x02A00000 devicetree.dtb; then bootm 0x03000000 0x02000000 0x02A00000; fi; fi; setenv bootargs ${atlantian_normal_bootargs}; mmcinfo && fatload mmc 0:1 0x03000000 uImage && fatload mmc 0:1 0x02A00000 devicetree.dtb && bootm 0x03000000 - 0x02A00000
+bootcmd=setenv atlantian_update 0; if fatload mmc 0:1 0x01000000 atlantian-update.scr; then source 0x01000000; fi; if test "${atlantian_update}" = "1"; then echo "AtlANTian: one-shot recovery"; mw.b 0x01000000 0 1; fatwrite mmc 0:1 0x01000000 atlantian-update.scr 1; setenv bootargs mem=496M console=ttyPS0,115200n8 root=/dev/ram0 rdinit=/init atlantian.mode=${atlantian_mode} atlantian.flash_url=${atlantian_flash_url} atlantian.sha256=${atlantian_sha} atlantian.blocks=${atlantian_blocks} atlantian.system_url=${atlantian_system_url} atlantian.system_sha256=${atlantian_system_sha256} atlantian.boot_url=${atlantian_boot_url} atlantian.boot_sha256=${atlantian_boot_sha256}; if fatload mmc 0:1 0x03000000 uImage && fatload mmc 0:1 0x02000000 uInitrd && fatload mmc 0:1 0x02A00000 devicetree.dtb; then bootm 0x03000000 0x02000000 0x02A00000; fi; fi; setenv bootargs ${atlantian_normal_bootargs}; mmcinfo && fatload mmc 0:1 0x03000000 uImage && fatload mmc 0:1 0x02A00000 devicetree.dtb && bootm 0x03000000 - 0x02A00000
 EOF
 fi
 sync
 dd if="${LOOP}p2" of="$SYSTEM_OUT" bs=1M status=none
+dd if="${LOOP}p1" of="$BOOT_OUT" bs=1M status=none
 cp "$ROOTFS/usr/share/atlantian/debian-package-manifest.tsv" "${SYSTEM_OUT%.ext4}.packages.tsv"
 cp "$ROOTFS/usr/share/atlantian/debian-snapshot.txt" "${SYSTEM_OUT%.ext4}.snapshot.txt"
+echo "Created boot payload: $BOOT_OUT"
 echo "Created system payload: $SYSTEM_OUT"
 echo "Created test image: $OUT"

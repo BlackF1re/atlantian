@@ -198,7 +198,8 @@ jobs:
         run: |
           image=$(find artifacts/current -maxdepth 1 -name '*.img' -type f | head -n1)
           payload=$(find artifacts/current -maxdepth 1 -name '*.system.ext4' -type f | head -n1)
-          test -n "$image" -a -n "$payload"
+          boot=$(find artifacts/current -maxdepth 1 -name '*.boot.vfat' -type f | head -n1)
+          test -n "$image" -a -n "$payload" -a -n "$boot"
           bash scripts/test-build.sh "$image" "$payload" artifacts/current/SHA256SUMS
           sudo bash scripts/test-image-layout.sh "$image"
           test -s "${payload%.ext4}.packages.tsv"
@@ -241,6 +242,7 @@ jobs:
           test "$RELEASE_TAG" = "v$ATLANTIAN_VERSION"
           test -f "artifacts/current/$ATLANTIAN_IMAGE_NAME.img"
           test -f "artifacts/current/$ATLANTIAN_IMAGE_NAME.system.ext4"
+          test -f "artifacts/current/$ATLANTIAN_IMAGE_NAME.boot.vfat"
       - name: Write build metadata
         run: |
           . config/release.env
@@ -261,6 +263,7 @@ jobs:
           name: atlantian-image-${{ env.ATLANTIAN_VERSION }}
           path: |
             artifacts/current/*.img
+            artifacts/current/*.boot.vfat
             artifacts/current/*.system.ext4
             artifacts/current/*.packages.tsv
             artifacts/current/*.snapshot.txt
@@ -276,6 +279,7 @@ jobs:
           body_path: release-notes.md
           files: |
             artifacts/current/*.img
+            artifacts/current/*.boot.vfat
             artifacts/current/*.system.ext4
             artifacts/current/*.packages.tsv
             artifacts/current/*.snapshot.txt

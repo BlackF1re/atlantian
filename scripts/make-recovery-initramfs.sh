@@ -56,6 +56,10 @@ BLOCKS=$(arg atlantian.blocks)
 MODE=$(arg atlantian.mode)
 SYSTEM_URL=$(arg atlantian.system_url)
 SYSTEM_EXPECTED=$(arg atlantian.system_sha256)
+SYSTEM_FILE=$(arg atlantian.system_file)
+BOOT_URL=$(arg atlantian.boot_url)
+BOOT_EXPECTED=$(arg atlantian.boot_sha256)
+BOOT_FILE=$(arg atlantian.boot_file)
 say() { echo "[atlantian-recovery] $*"; }
 fail() { say "FATAL: $*"; exec sh; }
 LED_PID=
@@ -75,9 +79,20 @@ stop_leds() {
 trap 'stop_leds' INT TERM EXIT
 
 if [ "$MODE" = system ]; then
-  case "$SYSTEM_URL" in http://*) ;; *) fail "missing or unsafe system URL" ;; esac
+  [ -z "$SYSTEM_URL$SYSTEM_FILE" ] && fail "missing system payload"
+  [ -z "$SYSTEM_URL" ] || [ -z "$SYSTEM_FILE" ] || fail "ambiguous system payload"
+  case "$SYSTEM_URL" in ''|http://*) ;; *) fail "unsafe system URL" ;; esac
+  case "$SYSTEM_FILE" in ''|/data/system/atlantian/stage/*) ;; *) fail "unsafe staged system path" ;; esac
   case "$SYSTEM_EXPECTED" in *[!0-9a-fA-F]*|'') fail "invalid system SHA-256" ;; esac
   [ "${#SYSTEM_EXPECTED}" -eq 64 ] || fail "invalid system SHA-256 length"
+  if [ -n "$BOOT_URL$BOOT_FILE$BOOT_EXPECTED" ]; then
+    [ -n "$BOOT_URL$BOOT_FILE" ] && [ -n "$BOOT_EXPECTED" ] || fail "incomplete boot payload"
+    [ -z "$BOOT_URL" ] || [ -z "$BOOT_FILE" ] || fail "ambiguous boot payload"
+    case "$BOOT_URL" in ''|http://*) ;; *) fail "unsafe boot URL" ;; esac
+    case "$BOOT_FILE" in ''|/data/system/atlantian/stage/*) ;; *) fail "unsafe staged boot path" ;; esac
+    case "$BOOT_EXPECTED" in *[!0-9a-fA-F]*|'') fail "invalid boot SHA-256" ;; esac
+    [ "${#BOOT_EXPECTED}" -eq 64 ] || fail "invalid boot SHA-256 length"
+  fi
 else
   case "$URL" in http://*) ;; *) fail "missing or unsafe image URL" ;; esac
   case "$EXPECTED" in *[!0-9a-fA-F]*|'') fail "invalid SHA-256" ;; esac
@@ -98,11 +113,23 @@ udhcpc -i "$IFACE" -s /udhcpc.script -n -q -t 8 -T 3 || fail "DHCP failed on $IF
 test -b /dev/mmcblk0 || fail "SD device not found"
 
 if [ "$MODE" = system ]; then
-  say "writing system partition only; /data is preserved"
+  say "writing release partitions; /data is preserved"
+  if [ -n "$SYSTEM_FILE$BOOT_FILE" ]; then
+    mkdir -p /data
+    mount -o ro /dev/mmcblk0p3 /data || fail "cannot mount staged /data"
+    [ -r "$SYSTEM_FILE" ] || fail "staged system payload is unavailable"
+    [ -z "$BOOT_FILE" ] || [ -r "$BOOT_FILE" ] || fail "staged boot payload is unavailable"
+  fi
   start_leds
-  wget -q -O - "$SYSTEM_URL" | dd of=/dev/mmcblk0p2 bs=1M oflag=direct conv=fsync || fail "download or system write failed"
+  if [ -n "$SYSTEM_FILE" ]; then dd if="$SYSTEM_FILE" of=/dev/mmcblk0p2 bs=1M oflag=direct conv=fsync; else wget -q -O - "$SYSTEM_URL" | dd of=/dev/mmcblk0p2 bs=1M oflag=direct conv=fsync; fi || fail "download or system write failed"
   ACTUAL=$(dd if=/dev/mmcblk0p2 bs=1M iflag=direct 2>/dev/null | sha256sum | awk '{print $1}') || fail "system read-back failed"
   [ "$ACTUAL" = "$SYSTEM_EXPECTED" ] || fail "system SHA-256 mismatch: $ACTUAL"
+  if [ -n "$BOOT_URL$BOOT_FILE" ]; then
+    say "writing boot partition"
+    if [ -n "$BOOT_FILE" ]; then dd if="$BOOT_FILE" of=/dev/mmcblk0p1 bs=1M oflag=direct conv=fsync; else wget -q -O - "$BOOT_URL" | dd of=/dev/mmcblk0p1 bs=1M oflag=direct conv=fsync; fi || fail "download or boot write failed"
+    ACTUAL=$(dd if=/dev/mmcblk0p1 bs=1M count=64 iflag=direct 2>/dev/null | sha256sum | awk '{print $1}') || fail "boot read-back failed"
+    [ "$ACTUAL" = "$BOOT_EXPECTED" ] || fail "boot SHA-256 mismatch: $ACTUAL"
+  fi
   stop_leds
 else
 say "writing image to SD with direct I/O; do not remove power"

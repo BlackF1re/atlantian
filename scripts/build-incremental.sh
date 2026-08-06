@@ -11,6 +11,7 @@ cd "$ROOT"
 RELEASE_DIR=${RELEASE_DIR:-$ROOT/artifacts/current}
 IMAGE=${IMAGE:-$RELEASE_DIR/${ATLANTIAN_IMAGE_NAME}.img}
 SYSTEM_IMAGE=${SYSTEM_IMAGE:-$RELEASE_DIR/${ATLANTIAN_IMAGE_NAME}.system.ext4}
+BOOT_IMAGE=${BOOT_IMAGE:-$RELEASE_DIR/${ATLANTIAN_IMAGE_NAME}.boot.vfat}
 PACKAGE_MANIFEST=${PACKAGE_MANIFEST:-${SYSTEM_IMAGE%.ext4}.packages.tsv}
 SNAPSHOT_MANIFEST=${SNAPSHOT_MANIFEST:-${SYSTEM_IMAGE%.ext4}.snapshot.txt}
 BOOT_BIN=${BOOT_BIN:-$ROOT/boot-candidate/BOOT.bin}
@@ -45,11 +46,11 @@ image() {
   recovery
   mkdir -p "$RELEASE_DIR"
   sudo env BOOT_BIN="$BOOT_BIN" DTB="$ROOT/out/boot/devicetree.dtb" \
-    ZIMAGE="$ROOT/out/boot/zImage" OUT="$IMAGE" SYSTEM_OUT="$SYSTEM_IMAGE" \
+    ZIMAGE="$ROOT/out/boot/zImage" OUT="$IMAGE" SYSTEM_OUT="$SYSTEM_IMAGE" BOOT_OUT="$BOOT_IMAGE" \
     "$ROOT/scripts/make-sd-image.sh"
   # Store portable basenames: the same checksum file is uploaded to GitHub
   # and consumed by atlantian-sysupgrade after downloading into /tmp.
-  ( cd "$RELEASE_DIR" && sha256sum "$(basename "$IMAGE")" "$(basename "$SYSTEM_IMAGE")" "$(basename "$PACKAGE_MANIFEST")" "$(basename "$SNAPSHOT_MANIFEST")" > SHA256SUMS )
+  ( cd "$RELEASE_DIR" && sha256sum "$(basename "$IMAGE")" "$(basename "$BOOT_IMAGE")" "$(basename "$SYSTEM_IMAGE")" "$(basename "$PACKAGE_MANIFEST")" "$(basename "$SNAPSHOT_MANIFEST")" > SHA256SUMS )
   sudo chown "$(id -u):$(id -g)" "$RELEASE_DIR/SHA256SUMS"
 }
 

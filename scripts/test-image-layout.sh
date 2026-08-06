@@ -89,11 +89,21 @@ grep -q '^state=\$data/system/atlantian/persist$' "$ROOT/usr/local/sbin/atlantia
 grep -q 'atlantian-persist-state.service' "$ROOT/usr/local/sbin/atlantian-sysupgrade" || {
   echo 'updater does not flush persistent state' >&2; exit 3;
 }
+grep -q 'atlantian.boot_url' "$ROOT/usr/local/sbin/atlantian-sysupgrade" || {
+  echo 'updater cannot deliver boot artefacts' >&2; exit 3;
+}
+grep -q 'atlantian.system_file' "$ROOT/usr/local/sbin/atlantian-sysupgrade" || {
+  echo 'updater cannot use verified persistent staging' >&2; exit 3;
+}
 
 # Recovery must contain the updater and every applet its documented route needs.
 gzip -cd "$BOOT/atlantian-recovery.cpio.gz" | cpio -it 2>/dev/null >"$WORK/recovery.list"
 for path in init bin/busybox bin/wget bin/dd bin/sha256sum bin/mkdir usr/local/sbin/atlantian-update-leds; do
   grep -qx "$path" "$WORK/recovery.list" || { echo "recovery contract missing: $path" >&2; exit 3; }
 done
+mkdir -p "$WORK/recovery"
+gzip -cd "$BOOT/atlantian-recovery.cpio.gz" | cpio -i --quiet -D "$WORK/recovery" init
+grep -q 'atlantian.boot_url' "$WORK/recovery/init" || { echo 'recovery cannot update boot partition' >&2; exit 3; }
+grep -q 'atlantian.system_file' "$WORK/recovery/init" || { echo 'recovery cannot use staged payload' >&2; exit 3; }
 
 echo "image layout and boot/rootfs/recovery contracts passed"
