@@ -64,12 +64,12 @@ jobs:
             printf '%s\\n' "$snapshot_updates_sha" > debian-updates-release.sha256
             printf '%s\\n' "$snapshot_security_sha" > debian-security-release.sha256
             cat > config/debian-snapshot.env <<EOF
-# Reproducible Debian rootfs input.  Updated only by the Debian watcher after
-# it has verified that this archive snapshot contains the observed Release.
-DEBIAN_SNAPSHOT_TIMESTAMP=$main_timestamp
-DEBIAN_SNAPSHOT_MIRROR=$snapshot_url
-DEBIAN_SECURITY_SNAPSHOT_MIRROR=$security_snapshot_url
-EOF
+          # Reproducible Debian rootfs input.  Updated only by the Debian watcher after
+          # it has verified that this archive snapshot contains the observed Release.
+          DEBIAN_SNAPSHOT_TIMESTAMP=$main_timestamp
+          DEBIAN_SNAPSHOT_MIRROR=$snapshot_url
+          DEBIAN_SECURITY_SNAPSHOT_MIRROR=$security_snapshot_url
+          EOF
             echo changed=true >> "$GITHUB_OUTPUT"
           fi
       - name: Record metadata and start build
