@@ -21,30 +21,54 @@ jobs:
         run: |
           set -eu
           . config/release.env
-          curl -fsSL "https://deb.debian.org/debian/dists/$DEBIAN_CODENAME/Release" -o /tmp/current-release
-          current_sha=$(sha256sum /tmp/current-release | awk '{print $1}')
-          old_sha=$(tr -d '\\r\\n' < debian-release.sha256)
-          if [ "$current_sha" = "$old_sha" ]; then
+          main_suite="$DEBIAN_CODENAME"
+          updates_suite="$DEBIAN_CODENAME-updates"
+          security_suite="$DEBIAN_CODENAME-security"
+
+          curl -fsSL "https://deb.debian.org/debian/dists/$main_suite/Release" -o /tmp/current-main
+          curl -fsSL "https://deb.debian.org/debian/dists/$updates_suite/Release" -o /tmp/current-updates
+          curl -fsSL "https://security.debian.org/debian-security/dists/$security_suite/Release" -o /tmp/current-security
+          current_main_sha=$(sha256sum /tmp/current-main | awk '{print $1}')
+          current_updates_sha=$(sha256sum /tmp/current-updates | awk '{print $1}')
+          current_security_sha=$(sha256sum /tmp/current-security | awk '{print $1}')
+          old_main_sha=$(tr -d '\\r\\n' < debian-release.sha256)
+          old_updates_sha=$(tr -d '\\r\\n' < debian-updates-release.sha256)
+          old_security_sha=$(tr -d '\\r\\n' < debian-security-release.sha256)
+          if [ "$current_main_sha" = "$old_main_sha" ] && \
+             [ "$current_updates_sha" = "$old_updates_sha" ] && \
+             [ "$current_security_sha" = "$old_security_sha" ]; then
             echo changed=false >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # Debian Snapshot is sometimes a few minutes behind the mirror. Do
           # not publish a moving-mirror build: wait until the snapshot archive
           # contains exactly the Release file which triggered this update.
-          timestamp=$(curl -fsSL https://snapshot.debian.org/mr/timestamp/ | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["debian"][-1])')
-          snapshot_url="https://snapshot.debian.org/archive/debian/${timestamp}"
-          curl -fsSL "$snapshot_url/dists/$DEBIAN_CODENAME/Release" -o /tmp/snapshot-release
-          snapshot_sha=$(sha256sum /tmp/snapshot-release | awk '{print $1}')
-          if [ "$snapshot_sha" != "$current_sha" ]; then
-            echo "Snapshot $timestamp has not caught up with Debian mirror; retrying on the next scheduled run."
+          timestamps=$(curl -fsSL https://snapshot.debian.org/mr/timestamp/)
+          main_timestamp=$(printf '%s' "$timestamps" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["debian"][-1])')
+          security_timestamp=$(printf '%s' "$timestamps" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["debian-security"][-1])')
+          snapshot_url="https://snapshot.debian.org/archive/debian/${main_timestamp}"
+          security_snapshot_url="https://snapshot.debian.org/archive/debian-security/${security_timestamp}"
+          curl -fsSL "$snapshot_url/dists/$main_suite/Release" -o /tmp/snapshot-main
+          curl -fsSL "$snapshot_url/dists/$updates_suite/Release" -o /tmp/snapshot-updates
+          curl -fsSL "$security_snapshot_url/dists/$security_suite/Release" -o /tmp/snapshot-security
+          snapshot_main_sha=$(sha256sum /tmp/snapshot-main | awk '{print $1}')
+          snapshot_updates_sha=$(sha256sum /tmp/snapshot-updates | awk '{print $1}')
+          snapshot_security_sha=$(sha256sum /tmp/snapshot-security | awk '{print $1}')
+          if [ "$snapshot_main_sha" != "$current_main_sha" ] || \
+             [ "$snapshot_updates_sha" != "$current_updates_sha" ] || \
+             [ "$snapshot_security_sha" != "$current_security_sha" ]; then
+            echo "A Debian snapshot has not caught up with its observed mirror; retrying on the next scheduled run."
             echo changed=false >> "$GITHUB_OUTPUT"
           else
-            printf '%s\\n' "$snapshot_sha" > debian-release.sha256
+            printf '%s\\n' "$snapshot_main_sha" > debian-release.sha256
+            printf '%s\\n' "$snapshot_updates_sha" > debian-updates-release.sha256
+            printf '%s\\n' "$snapshot_security_sha" > debian-security-release.sha256
             cat > config/debian-snapshot.env <<EOF
 # Reproducible Debian rootfs input.  Updated only by the Debian watcher after
 # it has verified that this archive snapshot contains the observed Release.
-DEBIAN_SNAPSHOT_TIMESTAMP=$timestamp
+DEBIAN_SNAPSHOT_TIMESTAMP=$main_timestamp
 DEBIAN_SNAPSHOT_MIRROR=$snapshot_url
+DEBIAN_SECURITY_SNAPSHOT_MIRROR=$security_snapshot_url
 EOF
             echo changed=true >> "$GITHUB_OUTPUT"
           fi
@@ -57,7 +81,7 @@ EOF
           sed -i -E "s/^ATLANTIAN_BUILD=.*/ATLANTIAN_BUILD=${next_build}/" config/release.env
           git config user.name github-actions
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add debian-release.sha256 config/debian-snapshot.env config/release.env
+          git add debian-release.sha256 debian-updates-release.sha256 debian-security-release.sha256 config/debian-snapshot.env config/release.env
           git commit -m "chore: freeze Debian trixie snapshot (AtlANTian ${DEBIAN_MAJOR}.${next_build})"
           git push origin main
           # Pushes made with GITHUB_TOKEN do not trigger another push workflow.
