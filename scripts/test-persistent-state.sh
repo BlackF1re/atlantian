@@ -3,7 +3,7 @@
 # namespace and verify that its overlay and bind mounts retain a real value.
 set -euo pipefail
 
-[[ $(id -u) -eq 0 ]] || exec sudo "$0"
+[[ $(id -u) -eq 0 ]] || exec sudo "$(readlink -f "$0")"
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 unshare --mount --propagation private bash -eu <<EOF
 mount --make-rprivate /
