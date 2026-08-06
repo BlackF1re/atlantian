@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Replace the SD image without UART once AtlANTian itself is reachable.
+# Factory-reimage the complete SD without UART once AtlANTian is reachable.
+# This intentionally destroys p3. Ordinary updates must use
+# atlantian-release-check --apply / atlantian-sysupgrade instead.
 #
 # A static BusyBox flasher is copied to tmpfs, then the running root filesystem
 # is frozen.  The RAM-only flasher streams the image, verifies a direct-I/O
@@ -8,7 +10,9 @@
 # boundary and does not require UART or U-Boot interaction.
 set -euo pipefail
 
-[[ $# -ge 1 && $# -le 2 ]] || { echo 'usage: deploy-via-network.sh <image> [board-ip]' >&2; exit 64; }
+[[ ${1:-} = --factory-reset ]] || { echo 'refusing full-disk write: use --factory-reset <image> [board-ip]' >&2; exit 64; }
+shift
+[[ $# -ge 1 && $# -le 2 ]] || { echo 'usage: deploy-via-network.sh --factory-reset <image> [board-ip]' >&2; exit 64; }
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 IMAGE=$(readlink -f "$1")
 BOARD=${2:-$(<"$ROOT/state/board.address")}

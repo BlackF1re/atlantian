@@ -1,0 +1,37 @@
+name: AtlANTian pull-request CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'board/**'
+      - 'boot-candidate/**'
+      - 'config/**'
+      - 'debian-*.sha256'
+      - 'fpga/**'
+      - 'kernel-overlay/**'
+      - 'scripts/**'
+      - 'systemd/**'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Validate shell programs
+        run: bash -n scripts/*.sh
+      - name: Validate persistent-state integration
+        run: sudo bash scripts/test-persistent-state.sh
+      - name: Validate release/update contracts
+        run: |
+          bash scripts/test-update-leds.sh
+          grep -q 'update.bundle' scripts/atlantian-sysupgrade.sh
+          grep -q -- '--factory-reset' scripts/deploy-via-network.sh
+      - name: Validate fixed image contract
+        run: |
+          . config/image-layout.env
+          test "$ATLANTIAN_BOOT_MIB" = 64
+          test "$ATLANTIAN_SYSTEM_MIB" = 352

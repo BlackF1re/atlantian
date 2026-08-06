@@ -4,6 +4,8 @@
 set -euo pipefail
 
 IMAGE=${1:?image path required}
+PROJECT=$(cd "$(dirname "$0")/.." && pwd)
+. "$PROJECT/config/image-layout.env"
 [[ -s $IMAGE ]] || { echo "image is empty: $IMAGE" >&2; exit 2; }
 
 LOOP=
@@ -35,6 +37,8 @@ sleep 1
 [[ $(blkid -o value -s LABEL "${LOOP}p1") == BOOT ]]
 [[ $(blkid -o value -s LABEL "${LOOP}p2") == atlantian-root ]]
 [[ $(blkid -o value -s LABEL "${LOOP}p3") == atlantian-data ]]
+[[ $(blockdev --getsize64 "${LOOP}p1") -eq $((ATLANTIAN_BOOT_MIB * 1024 * 1024)) ]]
+[[ $(blockdev --getsize64 "${LOOP}p2") -eq $((ATLANTIAN_SYSTEM_MIB * 1024 * 1024)) ]]
 
 BOOT=$WORK/boot
 ROOT=$WORK/root
@@ -89,11 +93,8 @@ grep -q '^state=\$data/system/atlantian/persist$' "$ROOT/usr/local/sbin/atlantia
 grep -q 'atlantian-persist-state.service' "$ROOT/usr/local/sbin/atlantian-sysupgrade" || {
   echo 'updater does not flush persistent state' >&2; exit 3;
 }
-grep -q 'atlantian.boot_url' "$ROOT/usr/local/sbin/atlantian-sysupgrade" || {
-  echo 'updater cannot deliver boot artefacts' >&2; exit 3;
-}
-grep -q 'atlantian.system_file' "$ROOT/usr/local/sbin/atlantian-sysupgrade" || {
-  echo 'updater cannot use verified persistent staging' >&2; exit 3;
+grep -q 'update.bundle' "$ROOT/usr/local/sbin/atlantian-sysupgrade" || {
+  echo 'updater cannot consume a unified release bundle' >&2; exit 3;
 }
 
 # Recovery must contain the updater and every applet its documented route needs.
@@ -103,7 +104,6 @@ for path in init bin/busybox bin/wget bin/dd bin/sha256sum bin/mkdir usr/local/s
 done
 mkdir -p "$WORK/recovery"
 gzip -cd "$BOOT/atlantian-recovery.cpio.gz" | cpio -i --quiet -D "$WORK/recovery" init
-grep -q 'atlantian.boot_url' "$WORK/recovery/init" || { echo 'recovery cannot update boot partition' >&2; exit 3; }
-grep -q 'atlantian.system_file' "$WORK/recovery/init" || { echo 'recovery cannot use staged payload' >&2; exit 3; }
+grep -q 'atlantian.bundle_file' "$WORK/recovery/init" || { echo 'recovery cannot use the verified staged bundle' >&2; exit 3; }
 
 echo "image layout and boot/rootfs/recovery contracts passed"

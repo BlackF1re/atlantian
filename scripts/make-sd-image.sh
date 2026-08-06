@@ -4,10 +4,12 @@ set -euo pipefail
 
 PROJECT=$(cd "$(dirname "$0")/.." && pwd)
 . "$PROJECT/config/release.env"
+. "$PROJECT/config/image-layout.env"
 ROOTFS=${ROOTFS:-$PROJECT/out/rootfs}
 OUT=${OUT:-$PROJECT/out/${ATLANTIAN_IMAGE_NAME}.img}
 SYSTEM_OUT=${SYSTEM_OUT:-${OUT%.img}.system.ext4}
 BOOT_OUT=${BOOT_OUT:-${OUT%.img}.boot.vfat}
+BUNDLE_OUT=${BUNDLE_OUT:-${OUT%.img}.update.bundle}
 BOOT_BIN=${BOOT_BIN:?set BOOT_BIN to the validated S9 BOOT.bin}
 DTB=${DTB:?set DTB to the validated S9 device-tree blob}
 UENV=${UENV:-}
@@ -18,26 +20,9 @@ UENV=${UENV:-}
 # substantial margin for a recovery request and avoids shipping 192 MiB of
 # permanently empty space.  Partition 2 is sized from the actual payload;
 # p3 receives the remaining card capacity on first boot.
-SIZE_MIB=${SIZE_MIB:-auto}
-DATA_MIB=${DATA_MIB:-16}
-
-if [[ $SIZE_MIB = auto ]]; then
-  # Size the transport image from actual rootfs contents. Keep 25%
-  # proportional slack and at least 64 MiB absolute slack for ext4 metadata,
-  # and first-boot package work, then round to a 16-MiB boundary.  The first
-  # data grow service still consumes the entire physical SD card.
-  ROOT_USED_KIB=$(du -sk "$ROOTFS" | awk '{print $1}')
-  ROOT_USED_MIB=$(((ROOT_USED_KIB + 1023) / 1024))
-  ROOT_BY_RATIO=$(((ROOT_USED_MIB * 125 + 99) / 100))
-  ROOT_BY_MARGIN=$((ROOT_USED_MIB + 64))
-  (( ROOT_BY_RATIO > ROOT_BY_MARGIN )) && ROOT_MIB=$ROOT_BY_RATIO || ROOT_MIB=$ROOT_BY_MARGIN
-  ROOT_MIB=$((((ROOT_MIB + 15) / 16) * 16))
-  # Keep a small persistent data partition in the initial image.  It is
-  # expanded to the end of the physical SD on first boot; system upgrades
-  # replace only p2 and never touch p3.
-  SIZE_MIB=$((65 + ROOT_MIB + DATA_MIB))
-  SIZE_MIB=$((((SIZE_MIB + 15) / 16) * 16))
-fi
+SIZE_MIB=${SIZE_MIB:-$((1 + ATLANTIAN_BOOT_MIB + ATLANTIAN_SYSTEM_MIB + ATLANTIAN_INITIAL_DATA_MIB))}
+ROOT_MIB=$ATLANTIAN_SYSTEM_MIB
+DATA_MIB=$ATLANTIAN_INITIAL_DATA_MIB
 [[ $SIZE_MIB =~ ^[0-9]+$ && $SIZE_MIB -ge 192 ]] || {
   echo "invalid SIZE_MIB: $SIZE_MIB" >&2; exit 2;
 }
@@ -54,10 +39,11 @@ mkdir -p "$(dirname "$OUT")"
 rm -f "$OUT"
 truncate -s "${SIZE_MIB}M" "$OUT"
 parted -s "$OUT" mklabel msdos
-parted -s "$OUT" mkpart primary fat32 1MiB 65MiB
+parted -s "$OUT" mkpart primary fat32 1MiB "$((1 + ATLANTIAN_BOOT_MIB))MiB"
 parted -s "$OUT" set 1 boot on
-SYSTEM_END_MIB=$((65 + ROOT_MIB))
-parted -s "$OUT" mkpart primary ext4 65MiB "${SYSTEM_END_MIB}MiB"
+SYSTEM_START_MIB=$((1 + ATLANTIAN_BOOT_MIB))
+SYSTEM_END_MIB=$((SYSTEM_START_MIB + ROOT_MIB))
+parted -s "$OUT" mkpart primary ext4 "${SYSTEM_START_MIB}MiB" "${SYSTEM_END_MIB}MiB"
 parted -s "$OUT" mkpart primary ext4 "${SYSTEM_END_MIB}MiB" 100%
 
 LOOP=$(losetup --find --show --partscan "$OUT")
@@ -118,8 +104,10 @@ fi
 sync
 dd if="${LOOP}p2" of="$SYSTEM_OUT" bs=1M status=none
 dd if="${LOOP}p1" of="$BOOT_OUT" bs=1M status=none
+cat "$BOOT_OUT" "$SYSTEM_OUT" >"$BUNDLE_OUT"
 cp "$ROOTFS/usr/share/atlantian/debian-package-manifest.tsv" "${SYSTEM_OUT%.ext4}.packages.tsv"
 cp "$ROOTFS/usr/share/atlantian/debian-snapshot.txt" "${SYSTEM_OUT%.ext4}.snapshot.txt"
 echo "Created boot payload: $BOOT_OUT"
 echo "Created system payload: $SYSTEM_OUT"
+echo "Created atomic boot+system bundle: $BUNDLE_OUT"
 echo "Created test image: $OUT"

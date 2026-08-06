@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# Fast source-level contract test for the state which survives replacement of
-# p2.  Image-layout testing verifies installation; this catches a semantic
-# regression before the expensive image test is even relevant.
+# Integration test: run the actual persistence helper in a private mount
+# namespace and verify that its overlay and bind mounts retain a real value.
 set -euo pipefail
 
-grep -q 'state=\$data/system/atlantian/persist' scripts/atlantian-persist-state.sh
-grep -q 'lowerdir=/etc' scripts/atlantian-persist-state.sh
-grep -q 'seed_tree /root' scripts/atlantian-persist-state.sh
-grep -q 'seed_tree /home' scripts/atlantian-persist-state.sh
-grep -q 'seed_tree /var/local' scripts/atlantian-persist-state.sh
-grep -q 'Requires=data.mount' systemd/atlantian-persist-state.service
-grep -q 'atlantian-persist-state.service' scripts/build-rootfs.sh
-grep -q 'atlantian-persist-state.service' scripts/atlantian-sysupgrade.sh
-grep -q 'state=/data/system/atlantian/grow' scripts/atlantian-grow-data.sh
-! test -e scripts/atlantian-grow-rootfs.sh
-! test -e systemd/atlantian-grow-rootfs.service
-echo 'persistent-state contract passed'
+[[ $(id -u) -eq 0 ]] || exec sudo "$0"
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+unshare --mount --propagation private bash -eu <<EOF
+mount --make-rprivate /
+mkdir -p /data /var/local
+mount -t tmpfs tmpfs /data
+"$ROOT/scripts/atlantian-persist-state.sh"
+printf 'retained\n' >/etc/atlantian-persistence-integration-test
+printf 'key\n' >/root/.atlantian-persistence-integration-test
+"$ROOT/scripts/atlantian-persist-state.sh"
+test "\$(cat /etc/atlantian-persistence-integration-test)" = retained
+test "\$(cat /root/.atlantian-persistence-integration-test)" = key
+test "\$(findmnt -n -o FSTYPE /etc)" = overlay
+test "\$(findmnt -n -o SOURCE /root)" = /data/system/atlantian/persist/root
+EOF
+echo 'persistent-state integration test passed'

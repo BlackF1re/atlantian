@@ -119,6 +119,10 @@ jobs:
           test -s debian-release.sha256
           curl -fsSL "$DEBIAN_SNAPSHOT_MIRROR/dists/$DEBIAN_CODENAME/Release" -o /tmp/debian-release
           test "$(sha256sum /tmp/debian-release | awk '{print $1}')" = "$(tr -d '\\r\\n' < debian-release.sha256)"
+          curl -fsSL "$DEBIAN_SNAPSHOT_MIRROR/dists/${DEBIAN_CODENAME}-updates/Release" -o /tmp/debian-updates-release
+          test "$(sha256sum /tmp/debian-updates-release | awk '{print $1}')" = "$(tr -d '\\r\\n' < debian-updates-release.sha256)"
+          curl -fsSL "$DEBIAN_SECURITY_SNAPSHOT_MIRROR/dists/${DEBIAN_CODENAME}-security/Release" -o /tmp/debian-security-release
+          test "$(sha256sum /tmp/debian-security-release | awk '{print $1}')" = "$(tr -d '\\r\\n' < debian-security-release.sha256)"
       - name: Install cross-build dependencies
         id: dependencies
         run: |
@@ -199,7 +203,8 @@ jobs:
           image=$(find artifacts/current -maxdepth 1 -name '*.img' -type f | head -n1)
           payload=$(find artifacts/current -maxdepth 1 -name '*.system.ext4' -type f | head -n1)
           boot=$(find artifacts/current -maxdepth 1 -name '*.boot.vfat' -type f | head -n1)
-          test -n "$image" -a -n "$payload" -a -n "$boot"
+          bundle=$(find artifacts/current -maxdepth 1 -name '*.update.bundle' -type f | head -n1)
+          test -n "$image" -a -n "$payload" -a -n "$boot" -a -n "$bundle"
           bash scripts/test-build.sh "$image" "$payload" artifacts/current/SHA256SUMS
           sudo bash scripts/test-image-layout.sh "$image"
           test -s "${payload%.ext4}.packages.tsv"
@@ -243,6 +248,7 @@ jobs:
           test -f "artifacts/current/$ATLANTIAN_IMAGE_NAME.img"
           test -f "artifacts/current/$ATLANTIAN_IMAGE_NAME.system.ext4"
           test -f "artifacts/current/$ATLANTIAN_IMAGE_NAME.boot.vfat"
+          test -f "artifacts/current/$ATLANTIAN_IMAGE_NAME.update.bundle"
       - name: Write build metadata
         run: |
           . config/release.env
@@ -264,6 +270,7 @@ jobs:
           path: |
             artifacts/current/*.img
             artifacts/current/*.boot.vfat
+            artifacts/current/*.update.bundle
             artifacts/current/*.system.ext4
             artifacts/current/*.packages.tsv
             artifacts/current/*.snapshot.txt
@@ -280,6 +287,7 @@ jobs:
           files: |
             artifacts/current/*.img
             artifacts/current/*.boot.vfat
+            artifacts/current/*.update.bundle
             artifacts/current/*.system.ext4
             artifacts/current/*.packages.tsv
             artifacts/current/*.snapshot.txt

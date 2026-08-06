@@ -13,3 +13,4 @@ SHA256SUMS
 # outside this repository; hiding docs here made README links silently rot.
 !README.md
 !docs/*.md
+config/local.env

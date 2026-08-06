@@ -6,6 +6,8 @@ set -euo pipefail
 ROOTFS=${ROOTFS:-$PWD/out/rootfs}
 OUT=${OUT:-$PWD/out/boot/atlantian-recovery.cpio.gz}
 BUSYBOX=${BUSYBOX:-$ROOTFS/bin/busybox}
+PROJECT=$(cd "$(dirname "$0")/.." && pwd)
+. "$PROJECT/config/image-layout.env"
 
 [[ -x "$BUSYBOX" ]] || { echo "missing static BusyBox: $BUSYBOX" >&2; exit 2; }
 
@@ -17,7 +19,7 @@ install -m 0755 "$BUSYBOX" "$WORK/bin/busybox"
 # Keep every external command used by /init and atlantian-update-leds in the
 # recovery image.  In particular, the indicator creates /run itself: recovery
 # starts before the ordinary tmpfs mounts and cannot rely on coreutils.
-for applet in sh mount umount sleep ip ifconfig route udhcpc wget dd sha256sum sync watchdog dmesg sed head awk rm mkdir reboot; do
+for applet in sh mount umount sleep ip ifconfig route udhcpc wget dd sha256sum sync watchdog dmesg sed head awk rm mkdir reboot wc cat; do
   ln -s busybox "$WORK/bin/$applet"
 done
 
@@ -45,6 +47,8 @@ cat >"$WORK/init" <<'EOF'
 set -eu
 set -o pipefail
 PATH=/bin
+BOOT_MIB=@ATLANTIAN_BOOT_MIB@
+SYSTEM_MIB=@ATLANTIAN_SYSTEM_MIB@
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
@@ -54,12 +58,10 @@ URL=$(arg atlantian.flash_url)
 EXPECTED=$(arg atlantian.sha256)
 BLOCKS=$(arg atlantian.blocks)
 MODE=$(arg atlantian.mode)
-SYSTEM_URL=$(arg atlantian.system_url)
-SYSTEM_EXPECTED=$(arg atlantian.system_sha256)
-SYSTEM_FILE=$(arg atlantian.system_file)
-BOOT_URL=$(arg atlantian.boot_url)
-BOOT_EXPECTED=$(arg atlantian.boot_sha256)
-BOOT_FILE=$(arg atlantian.boot_file)
+BUNDLE_URL=$(arg atlantian.bundle_url)
+BUNDLE_EXPECTED=$(arg atlantian.bundle_sha256)
+BUNDLE_FILE=$(arg atlantian.bundle_file)
+BUNDLE_BYTES=$(arg atlantian.bundle_bytes)
 say() { echo "[atlantian-recovery] $*"; }
 fail() { say "FATAL: $*"; exec sh; }
 LED_PID=
@@ -79,20 +81,12 @@ stop_leds() {
 trap 'stop_leds' INT TERM EXIT
 
 if [ "$MODE" = system ]; then
-  [ -z "$SYSTEM_URL$SYSTEM_FILE" ] && fail "missing system payload"
-  [ -z "$SYSTEM_URL" ] || [ -z "$SYSTEM_FILE" ] || fail "ambiguous system payload"
-  case "$SYSTEM_URL" in ''|http://*) ;; *) fail "unsafe system URL" ;; esac
-  case "$SYSTEM_FILE" in ''|/data/system/atlantian/stage/*) ;; *) fail "unsafe staged system path" ;; esac
-  case "$SYSTEM_EXPECTED" in *[!0-9a-fA-F]*|'') fail "invalid system SHA-256" ;; esac
-  [ "${#SYSTEM_EXPECTED}" -eq 64 ] || fail "invalid system SHA-256 length"
-  if [ -n "$BOOT_URL$BOOT_FILE$BOOT_EXPECTED" ]; then
-    [ -n "$BOOT_URL$BOOT_FILE" ] && [ -n "$BOOT_EXPECTED" ] || fail "incomplete boot payload"
-    [ -z "$BOOT_URL" ] || [ -z "$BOOT_FILE" ] || fail "ambiguous boot payload"
-    case "$BOOT_URL" in ''|http://*) ;; *) fail "unsafe boot URL" ;; esac
-    case "$BOOT_FILE" in ''|/data/system/atlantian/stage/*) ;; *) fail "unsafe staged boot path" ;; esac
-    case "$BOOT_EXPECTED" in *[!0-9a-fA-F]*|'') fail "invalid boot SHA-256" ;; esac
-    [ "${#BOOT_EXPECTED}" -eq 64 ] || fail "invalid boot SHA-256 length"
-  fi
+  [ -n "$BUNDLE_FILE" ] && [ -z "$BUNDLE_URL" ] || fail "a local staged release bundle is required"
+  case "$BUNDLE_FILE" in /data/system/atlantian/stage/*.update.bundle) ;; *) fail "unsafe staged bundle path" ;; esac
+  case "$BUNDLE_EXPECTED" in *[!0-9a-fA-F]*|'') fail "invalid bundle SHA-256" ;; esac
+  [ "${#BUNDLE_EXPECTED}" -eq 64 ] || fail "invalid bundle SHA-256 length"
+  case "$BUNDLE_BYTES" in *[!0-9]*|'') fail "invalid bundle size" ;; esac
+  [ "$BUNDLE_BYTES" -gt 0 ] || fail "invalid bundle size"
 else
   case "$URL" in http://*) ;; *) fail "missing or unsafe image URL" ;; esac
   case "$EXPECTED" in *[!0-9a-fA-F]*|'') fail "invalid SHA-256" ;; esac
@@ -113,23 +107,21 @@ udhcpc -i "$IFACE" -s /udhcpc.script -n -q -t 8 -T 3 || fail "DHCP failed on $IF
 test -b /dev/mmcblk0 || fail "SD device not found"
 
 if [ "$MODE" = system ]; then
-  say "writing release partitions; /data is preserved"
-  if [ -n "$SYSTEM_FILE$BOOT_FILE" ]; then
+  say "writing verified p1+p2 release bundle; /data is preserved"
+  if [ -n "$BUNDLE_FILE" ]; then
     mkdir -p /data
     mount -o ro /dev/mmcblk0p3 /data || fail "cannot mount staged /data"
-    [ -r "$SYSTEM_FILE" ] || fail "staged system payload is unavailable"
-    [ -z "$BOOT_FILE" ] || [ -r "$BOOT_FILE" ] || fail "staged boot payload is unavailable"
+    [ -r "$BUNDLE_FILE" ] || fail "staged release bundle is unavailable"
   fi
   start_leds
-  if [ -n "$SYSTEM_FILE" ]; then dd if="$SYSTEM_FILE" of=/dev/mmcblk0p2 bs=1M oflag=direct conv=fsync; else wget -q -O - "$SYSTEM_URL" | dd of=/dev/mmcblk0p2 bs=1M oflag=direct conv=fsync; fi || fail "download or system write failed"
-  ACTUAL=$(dd if=/dev/mmcblk0p2 bs=1M iflag=direct 2>/dev/null | sha256sum | awk '{print $1}') || fail "system read-back failed"
-  [ "$ACTUAL" = "$SYSTEM_EXPECTED" ] || fail "system SHA-256 mismatch: $ACTUAL"
-  if [ -n "$BOOT_URL$BOOT_FILE" ]; then
-    say "writing boot partition"
-    if [ -n "$BOOT_FILE" ]; then dd if="$BOOT_FILE" of=/dev/mmcblk0p1 bs=1M oflag=direct conv=fsync; else wget -q -O - "$BOOT_URL" | dd of=/dev/mmcblk0p1 bs=1M oflag=direct conv=fsync; fi || fail "download or boot write failed"
-    ACTUAL=$(dd if=/dev/mmcblk0p1 bs=1M count=64 iflag=direct 2>/dev/null | sha256sum | awk '{print $1}') || fail "boot read-back failed"
-    [ "$ACTUAL" = "$BOOT_EXPECTED" ] || fail "boot SHA-256 mismatch: $ACTUAL"
+  if [ -n "$BUNDLE_FILE" ]; then
+    [ "$(wc -c <"$BUNDLE_FILE" | tr -d ' ')" = "$BUNDLE_BYTES" ] || fail "staged bundle size mismatch"
+    [ "$(sha256sum "$BUNDLE_FILE" | awk '{print $1}')" = "$BUNDLE_EXPECTED" ] || fail "staged bundle checksum mismatch"
+    dd if="$BUNDLE_FILE" of=/dev/mmcblk0p1 bs=1M count="$BOOT_MIB" oflag=direct conv=fsync || fail "boot write failed"
+    dd if="$BUNDLE_FILE" of=/dev/mmcblk0p2 bs=1M skip="$BOOT_MIB" count="$SYSTEM_MIB" oflag=direct conv=fsync || fail "system write failed"
   fi
+  ACTUAL=$( (dd if=/dev/mmcblk0p1 bs=1M count="$BOOT_MIB" iflag=direct 2>/dev/null; dd if=/dev/mmcblk0p2 bs=1M count="$SYSTEM_MIB" iflag=direct 2>/dev/null) | sha256sum | awk '{print $1}') || fail "bundle read-back failed"
+  [ "$ACTUAL" = "$BUNDLE_EXPECTED" ] || fail "bundle SHA-256 mismatch: $ACTUAL"
   stop_leds
 else
 say "writing image to SD with direct I/O; do not remove power"
@@ -169,6 +161,7 @@ else
 fi
 EOF
 chmod 0755 "$WORK/init"
+sed -i "s/@ATLANTIAN_BOOT_MIB@/$ATLANTIAN_BOOT_MIB/g; s/@ATLANTIAN_SYSTEM_MIB@/$ATLANTIAN_SYSTEM_MIB/g" "$WORK/init"
 mkdir -p "$(dirname "$OUT")"
 (cd "$WORK" && find . -print0 | cpio --null -o -H newc 2>/dev/null | gzip -9) >"$OUT"
 echo "Recovery initramfs created: $OUT"

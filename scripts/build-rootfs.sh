@@ -5,9 +5,12 @@ set -euo pipefail
 PROJECT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 . "$PROJECT/config/release.env"
 . "$PROJECT/config/debian-snapshot.env"
+[ -r "$PROJECT/config/local.env" ] && . "$PROJECT/config/local.env"
 ROOT="${ROOT:-$PROJECT/out/rootfs}"
 SUITE="${SUITE:-$DEBIAN_CODENAME}"
 MIRROR="${MIRROR:-$DEBIAN_SNAPSHOT_MIRROR}"
+HOSTNAME=${ATLANTIAN_HOSTNAME:-atlantian}
+TIMEZONE=${ATLANTIAN_TIMEZONE:-Etc/UTC}
 ARCH="armhf"
 ATLANTIAN_RELEASE=${ATLANTIAN_RELEASE:-$ATLANTIAN_RELEASE_ID}
 CACHE_DIR=${ATLANTIAN_DEBOOTSTRAP_CACHE:-/var/cache/atlantian/debootstrap}
@@ -33,13 +36,14 @@ path-exclude=/usr/share/locale/*
 EOF
 
 install -D -m 0644 "$PROJECT/config/packages.base" "$ROOT/usr/local/share/atlantian/packages.base"
+install -D -m 0644 "$PROJECT/config/image-layout.env" "$ROOT/usr/local/share/atlantian/image-layout.env"
 cat >"$ROOT/etc/apt/sources.list" <<EOF
 deb [check-valid-until=no] $MIRROR $SUITE main non-free-firmware
+deb [check-valid-until=no] $MIRROR ${SUITE}-updates main non-free-firmware
+deb [check-valid-until=no] $DEBIAN_SECURITY_SNAPSHOT_MIRROR ${SUITE}-security main non-free-firmware
 EOF
 
-cat >"$ROOT/etc/hostname" <<'EOF'
-atlantian
-EOF
+printf '%s\n' "$HOSTNAME" >"$ROOT/etc/hostname"
 printf '%s\n' "$ATLANTIAN_RELEASE" >"$ROOT/etc/atlantian-release"
 cat >"$ROOT/etc/os-release" <<EOF
 PRETTY_NAME="AtlANTian GNU/Linux $ATLANTIAN_RELEASE"
@@ -51,14 +55,14 @@ HOME_URL="https://github.com/"
 SUPPORT_URL="https://github.com/"
 BUG_REPORT_URL="https://github.com/"
 EOF
-ln -sfn /usr/share/zoneinfo/Asia/Tomsk "$ROOT/etc/localtime"
-printf '%s\n' 'Asia/Tomsk' >"$ROOT/etc/timezone"
+ln -sfn "/usr/share/zoneinfo/$TIMEZONE" "$ROOT/etc/localtime"
+printf '%s\n' "$TIMEZONE" >"$ROOT/etc/timezone"
 cat >"$ROOT/etc/default/locale" <<'EOF'
 LANG=C.UTF-8
 EOF
-cat >"$ROOT/etc/hosts" <<'EOF'
+cat >"$ROOT/etc/hosts" <<EOF
 127.0.0.1 localhost
-127.0.1.1 atlantian
+127.0.1.1 $HOSTNAME
 EOF
 # Debian's minbase deliberately leaves fstab unconfigured.  Without an entry
 # for /, systemd-remount-fs has nothing to remount and root remains read-only
@@ -228,7 +232,7 @@ chmod 0644 "$ROOT/etc/ssh/sshd_config.d/10-atlantian-root.conf"
 mkdir -p "$ROOT/usr/share/atlantian"
 chroot "$ROOT" /usr/bin/dpkg-query -W -f='${binary:Package}\t${Version}\n' \
   | LC_ALL=C sort >"$ROOT/usr/share/atlantian/debian-package-manifest.tsv"
-printf 'snapshot=%s\nmirror=%s\n' "$DEBIAN_SNAPSHOT_TIMESTAMP" "$MIRROR" \
+printf 'snapshot=%s\nmirror=%s\nsecurity_mirror=%s\n' "$DEBIAN_SNAPSHOT_TIMESTAMP" "$MIRROR" "$DEBIAN_SECURITY_SNAPSHOT_MIRROR" \
   >"$ROOT/usr/share/atlantian/debian-snapshot.txt"
 
 # The bind mounts expose host-owned pseudo-filesystems.  Drop them before
