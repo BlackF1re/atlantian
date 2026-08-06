@@ -42,6 +42,13 @@ deb [check-valid-until=no] $MIRROR $SUITE main non-free-firmware
 deb [check-valid-until=no] $MIRROR ${SUITE}-updates main non-free-firmware
 deb [check-valid-until=no] $DEBIAN_SECURITY_SNAPSHOT_MIRROR ${SUITE}-security main non-free-firmware
 EOF
+# p2 is intentionally a compact, replaceable root filesystem.  APT's index
+# files are transient but can exceed the available free space on it (notably
+# the English translation index).  Keep those files and downloaded packages on
+# persistent p3 instead.  This configuration is read only after
+# atlantian-persist-state mounts /data, which happens before SSH is started.
+install -D -m 0644 "$PROJECT/config/apt/10-atlantian-persistent-cache" \
+  "$ROOT/etc/apt/apt.conf.d/10-atlantian-persistent-cache"
 
 printf '%s\n' "$HOSTNAME" >"$ROOT/etc/hostname"
 printf '%s\n' "$ATLANTIAN_RELEASE" >"$ROOT/etc/atlantian-release"

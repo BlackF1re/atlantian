@@ -81,6 +81,21 @@ link="$ROOT/etc/systemd/system/local-fs.target.wants/atlantian-persist-state.ser
 grep -qx '/dev/mmcblk0p3 /data ext4 defaults,nofail 0 2' "$ROOT/etc/fstab" || {
   echo 'persistent /data mount missing from fstab' >&2; exit 3;
 }
+grep -qx 'Acquire::Languages "none";' "$ROOT/etc/apt/apt.conf.d/10-atlantian-persistent-cache" || {
+  echo 'APT language-index policy missing' >&2; exit 3;
+}
+grep -qx 'Dir::State::lists "/data/system/atlantian/apt/lists";' "$ROOT/etc/apt/apt.conf.d/10-atlantian-persistent-cache" || {
+  echo 'APT list cache is not on persistent data' >&2; exit 3;
+}
+grep -qx 'Dir::Cache::archives "/data/system/atlantian/apt/archives";' "$ROOT/etc/apt/apt.conf.d/10-atlantian-persistent-cache" || {
+  echo 'APT archive cache is not on persistent data' >&2; exit 3;
+}
+grep -qx 'Dir::Cache::pkgcache "/data/system/atlantian/apt/pkgcache.bin";' "$ROOT/etc/apt/apt.conf.d/10-atlantian-persistent-cache" || {
+  echo 'APT package cache is not on persistent data' >&2; exit 3;
+}
+grep -qx 'Dir::Cache::srcpkgcache "/data/system/atlantian/apt/srcpkgcache.bin";' "$ROOT/etc/apt/apt.conf.d/10-atlantian-persistent-cache" || {
+  echo 'APT source cache is not on persistent data' >&2; exit 3;
+}
 [[ -d $DATA/system && -d $DATA/fpga && -d $DATA/user ]] || {
   echo 'initial persistent-data layout missing' >&2; exit 3;
 }

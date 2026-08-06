@@ -73,6 +73,11 @@ system release on purpose: carrying an old dpkg database into a new base
 system is unsafe.  Packages installed with `apt` must therefore be declared
 again or reinstalled after an image-level upgrade.
 
+APT's package indexes and downloaded `.deb` archives live under
+`/data/system/atlantian/apt`, not on the fixed system partition. This makes
+`apt update` safe on the installed image; it does not make package installation
+persistent across a system release.
+
 The NAND is separate from the SD installation. AtlANTian exposes it, but does not overwrite it as part of normal booting or updating. A raw NAND backup must retain the bad-block information as well as the contents; copying a mounted filesystem is not a replacement for an MTD-aware backup.
 
 ## Interfaces which need an FPGA profile

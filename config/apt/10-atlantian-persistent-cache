@@ -1,0 +1,6 @@
+// Keep transient APT data off the fixed-size, replaceable root partition.
+Acquire::Languages "none";
+Dir::State::lists "/data/system/atlantian/apt/lists";
+Dir::Cache::archives "/data/system/atlantian/apt/archives";
+Dir::Cache::pkgcache "/data/system/atlantian/apt/pkgcache.bin";
+Dir::Cache::srcpkgcache "/data/system/atlantian/apt/srcpkgcache.bin";

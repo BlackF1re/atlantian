@@ -16,6 +16,11 @@ mountpoint -q "$data" || {
 }
 
 install -d -m 0755 "$state/etc.upper" "$state/etc.work" "$state/root" "$state/home" "$state/var-local"
+# APT indices and downloaded packages are deliberately transient, but too
+# large for the fixed-size immutable p2 partition.  They belong on p3, unlike
+# dpkg's database, which remains in the release rootfs by design.
+install -d -m 0755 "$data/system/atlantian/apt/lists/partial" \
+    "$data/system/atlantian/apt/archives/partial"
 
 seed_tree() {
     source=$1 target=$2 marker=$3
