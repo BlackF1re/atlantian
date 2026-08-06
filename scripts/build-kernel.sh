@@ -101,6 +101,12 @@ for opt in \
     exit 3
   }
 done
+# XADC is not an optional profile endpoint.  Keep it resident so the board's
+# advertised `sensors` ABI does not silently disappear if the modules payload
+# is deliberately minimised in a future image.
+grep -qx 'CONFIG_XILINX_XADC=y' .config || {
+  echo 'XADC must be built into the AtlANTian kernel' >&2; exit 3;
+}
 if [[ $TARGET = dtb ]]; then
   make -j"$JOBS" ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" xilinx/zynq-bitmain-antminer-s9.dtb
   mkdir -p "$OUT"

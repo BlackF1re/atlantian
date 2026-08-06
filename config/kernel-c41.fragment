@@ -63,7 +63,10 @@ CONFIG_USB_ULPI=y
 CONFIG_USB_ACM=m
 CONFIG_USB_SERIAL=m
 CONFIG_IIO=y
-CONFIG_XILINX_XADC=m
+# XADC is a confirmed PS peripheral and the only on-board temperature/rail
+# source.  It must be resident: lean images are allowed to omit optional PL
+# modules, but `sensors` must work at the first prompt without modprobe.
+CONFIG_XILINX_XADC=y
 # Expose the XADC through the standard hwmon ABI as well as native IIO.
 CONFIG_SENSORS_IIO_HWMON=y
 CONFIG_MTD=y
