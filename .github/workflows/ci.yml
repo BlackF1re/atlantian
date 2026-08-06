@@ -34,4 +34,4 @@ jobs:
         run: |
           . config/image-layout.env
           test "$ATLANTIAN_BOOT_MIB" = 64
-          test "$ATLANTIAN_SYSTEM_MIB" = 352
+          test "$ATLANTIAN_SYSTEM_MIB" = 336

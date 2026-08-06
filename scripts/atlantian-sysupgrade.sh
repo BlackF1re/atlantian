@@ -23,6 +23,21 @@ case "$SHA" in *[!0-9a-fA-F]*|'') echo 'invalid SHA256' >&2; exit 65;; esac
     echo 'unexpected release bundle size' >&2; exit 65;
 }
 [ "$(id -u)" -eq 0 ] || { echo 'run as root' >&2; exit 77; }
+# A release payload must never be written to a differently sized partition.
+# In particular, this protects legacy 336-MiB p2 cards from a future image
+# layout change: dd would otherwise silently truncate an ext4 filesystem.
+partition_bytes() {
+    sectors=$(cat "/sys/class/block/$1/size") || return 1
+    echo $((sectors * 512))
+}
+EXPECTED_BOOT_BYTES=$((ATLANTIAN_BOOT_MIB * 1024 * 1024))
+EXPECTED_SYSTEM_BYTES=$((ATLANTIAN_SYSTEM_MIB * 1024 * 1024))
+[ "$(partition_bytes mmcblk0p1)" -eq "$EXPECTED_BOOT_BYTES" ] || {
+    echo 'boot partition layout mismatch; use explicit recovery migration' >&2; exit 66;
+}
+[ "$(partition_bytes mmcblk0p2)" -eq "$EXPECTED_SYSTEM_BYTES" ] || {
+    echo 'system partition layout mismatch; refusing a truncating update' >&2; exit 66;
+}
 # Materialise p3-backed administrator state before RAM recovery replaces p2.
 systemctl start atlantian-persist-state.service >/dev/null 2>&1 || true
 mkdir -p "$BOOT" "$KERNEL"

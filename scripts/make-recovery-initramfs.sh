@@ -106,6 +106,18 @@ ip link set "$IFACE" up || fail "cannot enable $IFACE"
 udhcpc -i "$IFACE" -s /udhcpc.script -n -q -t 8 -T 3 || fail "DHCP failed on $IFACE"
 test -b /dev/mmcblk0 || fail "SD device not found"
 
+# Refuse before any write when the physical card does not match this release's
+# fixed p1+p2 ABI.  A blind dd to a smaller p2 can leave a syntactically valid
+# but unbootable, truncated ext4 filesystem.
+partition_bytes() {
+  sectors=$(cat "/sys/class/block/$1/size") || return 1
+  echo $((sectors * 512))
+}
+EXPECTED_BOOT_BYTES=$((BOOT_MIB * 1024 * 1024))
+EXPECTED_SYSTEM_BYTES=$((SYSTEM_MIB * 1024 * 1024))
+[ "$(partition_bytes mmcblk0p1)" -eq "$EXPECTED_BOOT_BYTES" ] || fail "boot partition layout mismatch; use explicit recovery migration"
+[ "$(partition_bytes mmcblk0p2)" -eq "$EXPECTED_SYSTEM_BYTES" ] || fail "system partition layout mismatch; refusing a truncating update"
+
 if [ "$MODE" = system ]; then
   say "writing verified p1+p2 release bundle; /data is preserved"
   if [ -n "$BUNDLE_FILE" ]; then
