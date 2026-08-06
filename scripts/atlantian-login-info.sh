@@ -12,3 +12,9 @@ previous=$(last -F -w -n 2 root 2>/dev/null | awk 'NR==2 && $1=="root" { $1=""; 
 
 printf '\nAtlANTian build: %s\nDebian base: %s\n\n' "$release" "$debian"
 printf 'Hostname: %s\nUptime: %s\nLast login: %s\n\n' "$(hostname)" "$uptime" "$previous"
+
+# A login never performs network I/O. It only repeats a previously discovered
+# release from persistent state until that release has been installed.
+if [ -n "${SSH_CONNECTION:-}" ]; then
+    /usr/local/sbin/atlantian-release-check --notice || true
+fi

@@ -107,19 +107,19 @@ The PS I2C and SPI controllers are available in the kernel but intentionally dis
 
 ## Updating
 
-`atlantian-sysupgrade` updates an installed board from an AtlANTian release image. It verifies the supplied SHA-256 checksum and writes only the system partition (`p2`).  It preserves the boot partition and `p3`, including the persistent `/etc`, `/root`, `/home`, and `/var/local` state described above.
+`atlantian-sysupgrade` updates an installed board from a published AtlANTian release. It checks the release over HTTPS, downloads and verifies its SHA-256 checksum into persistent staging, then replaces the boot (`p1`) and immutable system (`p2`) partitions as one bundle. It never writes `p3`, including the persistent `/etc`, `/root`, `/home`, and `/var/local` state described above.
 
 The updater switches into a small recovery environment running from RAM before it rewrites the system partition. It is not a permanent recovery partition and does not consume a reserved part of the SD card.
 
-While the filesystem is frozen and the write has begun, the normal LED services are stopped and the update pattern owns the LEDs exclusively: two red flashes, then two green flashes, repeating.
+While the filesystem is frozen and the write has begun, the normal LED services are stopped and the update pattern owns the LEDs exclusively: three red flashes, then three green flashes, repeating.
 
 The normal command form is:
 
 ```sh
-atlantian-sysupgrade <http-image-url> <sha256>
+atlantian-sysupgrade --latest atlantian-<release-version-and-commit>
 ```
 
-`atlantian-release-check` can check the configured GitHub releases and, when explicitly requested, hand a verified release to the updater. Automatic application is off by default. Its configuration lives in `/etc/default/atlantian-release-check`.
+`atlantian-release-check` runs after boot and daily. It records a newer release on `/data`; SSH logins repeat the exact `atlantian-sysupgrade --latest …` command until that release is installed. Automatic application is off by default. Its configuration lives in `/etc/default/atlantian-release-check`.
 
 ## Building locally
 

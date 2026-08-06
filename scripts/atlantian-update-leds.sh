@@ -1,59 +1,49 @@
 #!/bin/sh
-# AtlANTian update indicator for D3 LEDs.
-# Pattern: red, red, green, green with equal gaps between flashes.
+# Interactive/update D3 LED pattern player for AtlANTian.
+#
+# Keep this pattern local to the script: recovery invokes the same file, so an
+# update always has one unambiguous, reproducible visual indication.
+PATTERN='red red red green green green'
+ON_SECONDS=0.05
+OFF_SECONDS=0.05
 
 set -eu
 
-RED_LED=${ATLANTIAN_UPDATE_RED_LED:-/sys/class/leds/atlantian:red:status/brightness}
-GREEN_LED=${ATLANTIAN_UPDATE_GREEN_LED:-/sys/class/leds/atlantian:green:activity/brightness}
-PULSE_TIME=${ATLANTIAN_UPDATE_PULSE_TIME:-0.15}
-GAP_TIME=${ATLANTIAN_UPDATE_GAP_TIME:-0.15}
-LOCK=${ATLANTIAN_UPDATE_LOCK:-/run/atlantian-update-leds.lock}
+RED_LED=/sys/class/leds/atlantian:red:status/brightness
+GREEN_LED=/sys/class/leds/atlantian:green:activity/brightness
+LOCK=/run/atlantian-update-leds.lock
+SERVICES='atlantian-status-leds.service atlantian-fpga-status-leds.service'
 
-write_led() {
-    led=$1
-    value=$2
-    printf '%s\n' "$value" > "$led"
-}
+die() { echo "atlantian-update-leds: $*" >&2; exit 2; }
+write() { printf '%s\n' "$2" >"$1"; }
+off() { write "$RED_LED" 0; write "$GREEN_LED" 0; }
+
+[ -w "$RED_LED" ] && [ -w "$GREEN_LED" ] || die 'D3 LED sysfs endpoints are unavailable'
 
 cleanup() {
-    write_led "$RED_LED" 0 2>/dev/null || true
-    write_led "$GREEN_LED" 0 2>/dev/null || true
-    rm -f "$LOCK" 2>/dev/null || true
+    off 2>/dev/null || true
+    rm -f "$LOCK"
+    systemctl start $SERVICES >/dev/null 2>&1 || true
 }
+terminate() { cleanup; exit 0; }
+trap cleanup EXIT
+trap terminate INT TERM HUP
 
-trap cleanup INT TERM EXIT
-
-mkdir -p /run 2>/dev/null || true
 : >"$LOCK"
-
-for led in "$RED_LED" "$GREEN_LED"; do
-    [ -w "$led" ] || {
-        printf '%s\n' "missing or unwritable LED path: $led" >&2
-        exit 1
-    }
-done
+systemctl stop $SERVICES >/dev/null 2>&1 || true
+off
 
 while :; do
-    [ -e "$LOCK" ] || exit 0
-
-    write_led "$RED_LED" 1
-    sleep "$PULSE_TIME"
-    write_led "$RED_LED" 0
-    sleep "$GAP_TIME"
-
-    write_led "$RED_LED" 1
-    sleep "$PULSE_TIME"
-    write_led "$RED_LED" 0
-    sleep "$GAP_TIME"
-
-    write_led "$GREEN_LED" 1
-    sleep "$PULSE_TIME"
-    write_led "$GREEN_LED" 0
-    sleep "$GAP_TIME"
-
-    write_led "$GREEN_LED" 1
-    sleep "$PULSE_TIME"
-    write_led "$GREEN_LED" 0
-    sleep "$GAP_TIME"
+    for item in $PATTERN; do
+        off
+        case "$item" in
+            red|r|R) write "$RED_LED" 1 ;;
+            green|g|G) write "$GREEN_LED" 1 ;;
+            off|0|-) ;;
+            *) die "unknown pattern element: $item" ;;
+        esac
+        sleep "$ON_SECONDS"
+        off
+        sleep "$OFF_SECONDS"
+    done
 done
