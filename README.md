@@ -133,7 +133,9 @@ Automatic application is off by default. Its configuration lives in
 
 `atlantian-sysupgrade --check` refreshes and displays the available release,
 `--notes` prints its notes, and `--yes` is available for explicitly unattended
-operation.
+operation. The release source is configured in
+`/etc/atlantian/releases.conf`; a compatible GitHub fork or API mirror can be
+selected there without editing the updater.
 
 ## Building locally
 

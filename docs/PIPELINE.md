@@ -15,3 +15,7 @@ the SSH session is intentionally disconnected for reboot.
 
 Rewriting an SD card is a factory/recovery operation performed with a raw-image
 writer. Normal release updates use the package path above.
+
+The release endpoint is a small, explicit configuration file:
+`/etc/atlantian/releases.conf`. It supplies the GitHub owner/repository and API
+base URL; the updater itself contains no board- or account-specific URL.

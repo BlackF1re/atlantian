@@ -176,6 +176,8 @@ install -D -m 0644 "$PROJECT/systemd/atlantian-release-check.timer" \
   "$ROOT/etc/systemd/system/atlantian-release-check.timer"
 install -D -m 0644 "$PROJECT/config/atlantian-release-check.default" \
   "$ROOT/etc/default/atlantian-release-check"
+install -D -m 0644 "$PROJECT/config/atlantian-releases.conf" \
+  "$ROOT/etc/atlantian/releases.conf"
 
 mount --bind /dev "$ROOT/dev"
 mount -t proc proc "$ROOT/proc"

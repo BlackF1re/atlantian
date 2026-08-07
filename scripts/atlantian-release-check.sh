@@ -2,6 +2,8 @@
 # Discover the newest complete AtlANTian release and cache display metadata.
 set -eu
 
+RELEASE_CONFIG=${ATLANTIAN_RELEASE_CONFIG:-/etc/atlantian/releases.conf}
+[ -r "$RELEASE_CONFIG" ] && . "$RELEASE_CONFIG"
 REPO=${ATLANTIAN_GITHUB_REPO:-}
 API=${ATLANTIAN_RELEASE_API:-https://api.github.com}
 STATE_DIR=/var/lib/atlantian/update
@@ -25,7 +27,7 @@ case "${1:---refresh}" in
   *) echo 'usage: atlantian-release-check [--refresh|--notice]' >&2; exit 64 ;;
 esac
 
-[ -n "$REPO" ] || { echo 'ATLANTIAN_GITHUB_REPO is unset' >&2; exit 64; }
+[ -n "$REPO" ] || { echo "ATLANTIAN_GITHUB_REPO is unset; set it in $RELEASE_CONFIG" >&2; exit 64; }
 command -v jq >/dev/null || { echo 'jq is required for release metadata parsing' >&2; exit 69; }
 json=$(curl -fsSL --retry 3 "$API/repos/$REPO/releases/latest")
 tag=$(printf '%s' "$json" | jq -r '.tag_name // empty')
@@ -33,7 +35,7 @@ published=$(printf '%s' "$json" | jq -r '.published_at // empty')
 notes=$(printf '%s' "$json" | jq -r '.body // "No release notes were published."')
 asset() {
   printf '%s' "$json" | jq -r --arg prefix "$1" \
-    '.assets[] | select(.name | startswith($prefix)) | [.browser_download_url, .size] | @tsv' | head -n1
+    '.assets[] | select(.name | startswith($prefix)) | [.name, .browser_download_url, .size] | @tsv' | head -n1
 }
 platform=$(asset 'atlantian-platform_')
 kernel=$(asset 'atlantian-kernel_')
@@ -48,17 +50,26 @@ if is_current "$(current)" "$tag"; then
   exit 0
 fi
 
-set -- $platform; platform_url=$1; platform_size=$2
-set -- $kernel; kernel_url=$1; kernel_size=$2
-set -- $releasepkg; release_url=$1; release_size=$2
-set -- $sums; sums_url=$1
+tab=$(printf '\t')
+IFS="$tab" read -r platform_name platform_url platform_size <<EOF
+$platform
+EOF
+IFS="$tab" read -r kernel_name kernel_url kernel_size <<EOF
+$kernel
+EOF
+IFS="$tab" read -r release_name release_url release_size <<EOF
+$releasepkg
+EOF
+IFS="$tab" read -r sums_name sums_url sums_size <<EOF
+$sums
+EOF
 mkdir -p "$STATE_DIR"
 tmp=$(mktemp "$STATE_DIR/.available.XXXXXX")
 notes_tmp=$(mktemp "$STATE_DIR/.notes.XXXXXX")
 trap 'rm -f "$tmp" "$notes_tmp"' EXIT
 printf '%s\n' "$notes" >"$notes_tmp"
-printf 'release_id=%s\ntag=%s\npublished_at=%s\nplatform_url=%s\nplatform_size=%s\nkernel_url=%s\nkernel_size=%s\nrelease_url=%s\nrelease_size=%s\nsums_url=%s\n' \
-  "${tag#v}" "$tag" "$published" "$platform_url" "$platform_size" "$kernel_url" "$kernel_size" "$release_url" "$release_size" "$sums_url" >"$tmp"
+printf 'release_id=%s\ntag=%s\npublished_at=%s\nplatform_name=%s\nplatform_url=%s\nplatform_size=%s\nkernel_name=%s\nkernel_url=%s\nkernel_size=%s\nrelease_name=%s\nrelease_url=%s\nrelease_size=%s\nsums_name=%s\nsums_url=%s\n' \
+  "${tag#v}" "$tag" "$published" "$platform_name" "$platform_url" "$platform_size" "$kernel_name" "$kernel_url" "$kernel_size" "$release_name" "$release_url" "$release_size" "$sums_name" "$sums_url" >"$tmp"
 mv "$tmp" "$STATE_FILE"
 mv "$notes_tmp" "$NOTES_FILE"
 echo "AtlANTian update available: $(current) -> $tag"

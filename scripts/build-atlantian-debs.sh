@@ -9,7 +9,7 @@ control(){ mkdir -p "$1/DEBIAN"; printf 'Package: %s\nVersion: %s\nArchitecture:
 conffiles(){ [ -d "$1/etc" ] && find "$1/etc" -type f -printf '/etc/%P\n' >"$1/DEBIAN/conffiles" || true; }
 copy(){ local p=$1; mkdir -p "$2/$(dirname "$p")"; cp -a "$RFS/$p" "$2/$p"; }
 p="$work/platform"; mkdir -p "$p"; control "$p" atlantian-platform all 'AtlANTian board policy and tooling'
-for f in etc/apt/sources.list etc/atlantian-release etc/os-release etc/issue.net etc/default/zramswap etc/default/atlantian-release-check etc/ssh/sshd_config.d/10-atlantian-root.conf etc/systemd/network/20-ethernet.network etc/systemd/resolved.conf.d/atlantian.conf etc/systemd/logind.conf.d/atlantian-power-policy.conf; do copy "$f" "$p"; done
+for f in etc/apt/sources.list etc/atlantian-release etc/os-release etc/issue.net etc/default/zramswap etc/default/atlantian-release-check etc/atlantian/releases.conf etc/ssh/sshd_config.d/10-atlantian-root.conf etc/systemd/network/20-ethernet.network etc/systemd/resolved.conf.d/atlantian.conf etc/systemd/logind.conf.d/atlantian-power-policy.conf; do copy "$f" "$p"; done
 for source in "$RFS"/usr/local/sbin/atlantian-*; do
   f=${source#"$RFS"/}
   copy "$f" "$p"

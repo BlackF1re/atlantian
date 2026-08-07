@@ -31,6 +31,9 @@ jobs:
           grep -q 'Type UPGRADE' scripts/atlantian-sysupgrade.sh
           grep -q -- '--check' scripts/atlantian-sysupgrade.sh
           grep -q 'command -v jq' scripts/atlantian-release-check.sh
+          grep -q 'platform_name' scripts/atlantian-release-check.sh
+          grep -q 'unsafe release asset name' scripts/atlantian-sysupgrade.sh
+          test -s config/atlantian-releases.conf
       - name: Validate two-partition image contract
         run: |
           . config/image-layout.env

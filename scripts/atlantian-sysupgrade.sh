@@ -5,6 +5,7 @@ set -eu
 STATE=/var/lib/atlantian/update/available.env
 NOTES=/var/lib/atlantian/update/available-notes.txt
 STAGE=/var/cache/atlantian/update
+RELEASE_CONFIG=${ATLANTIAN_RELEASE_CONFIG:-/etc/atlantian/releases.conf}
 
 get() { sed -n "s/^$1=//p" "$STATE" | head -n1; }
 human_size() { numfmt --to=iec-i --suffix=B "$1" 2>/dev/null || printf '%s bytes' "$1"; }
@@ -20,7 +21,10 @@ Options:
   --notes       Refresh and print the newest release notes.
   --yes         Install without the interactive UPGRADE confirmation.
   --help        Show this help.
+
 EOF
+  printf '\nRelease source configuration: %s\n' "$RELEASE_CONFIG"
+  printf '%s\n' 'Override its path for one invocation with ATLANTIAN_RELEASE_CONFIG=/path.'
 }
 show_release() {
   current=$(cat /etc/atlantian-release 2>/dev/null || printf unknown)
@@ -39,12 +43,20 @@ EOF
 }
 download_and_verify() {
   mkdir -p "$STAGE"; rm -f "$STAGE"/*.deb "$STAGE/SHA256SUMS"
-  for key in platform_url kernel_url release_url; do
-    url=$(get "$key"); file="$STAGE/$(basename "$url")"
-    echo "Downloading $(basename "$url")"
+  total=$(( $(get platform_size) + $(get kernel_size) + $(get release_size) ))
+  available=$(df -Pk "$STAGE" | awk 'NR == 2 { print $4 * 1024 }')
+  required=$((total + 32 * 1024 * 1024))
+  [ "$available" -ge "$required" ] || {
+    echo "not enough free space in $STAGE: need $(human_size "$required") including working space, have $(human_size "$available")" >&2; exit 75;
+  }
+  for prefix in platform kernel release; do
+    url=$(get "${prefix}_url"); name=$(get "${prefix}_name")
+    case "$name" in ''|*[!A-Za-z0-9._+~-]*) echo "unsafe release asset name: $name" >&2; exit 65;; esac
+    file="$STAGE/$name"
+    echo "Downloading $name"
     curl -fL --retry 3 --progress-bar -o "$file" "$url"
   done
-  echo 'Downloading SHA256SUMS'
+  echo "Downloading $(get sums_name)"
   curl -fL --retry 3 --progress-bar -o "$STAGE/SHA256SUMS" "$(get sums_url)"
   echo 'Verifying package checksums'
   for f in "$STAGE"/*.deb; do
