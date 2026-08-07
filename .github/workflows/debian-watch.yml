@@ -2,16 +2,22 @@ name: Watch Debian base updates
 
 on:
   schedule:
-    - cron: '17 4 * * 1'
+    # 06:00 Asia/Tomsk (UTC+7).
+    - cron: '0 23 * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
   actions: write
 
+concurrency:
+  group: atlantian-debian-watch
+  cancel-in-progress: false
+
 jobs:
   check:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       # v4.2.2
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -32,18 +38,18 @@ jobs:
           current_main_sha=$(sha256sum /tmp/current-main | awk '{print $1}')
           current_updates_sha=$(sha256sum /tmp/current-updates | awk '{print $1}')
           current_security_sha=$(sha256sum /tmp/current-security | awk '{print $1}')
-          old_main_sha=$(tr -d '\\r\\n' < debian-release.sha256)
-          old_updates_sha=$(tr -d '\\r\\n' < debian-updates-release.sha256)
-          old_security_sha=$(tr -d '\\r\\n' < debian-security-release.sha256)
+          old_main_sha=$(tr -d '\r\n' < debian-release.sha256)
+          old_updates_sha=$(tr -d '\r\n' < debian-updates-release.sha256)
+          old_security_sha=$(tr -d '\r\n' < debian-security-release.sha256)
           if [ "$current_main_sha" = "$old_main_sha" ] && \
              [ "$current_updates_sha" = "$old_updates_sha" ] && \
              [ "$current_security_sha" = "$old_security_sha" ]; then
             echo changed=false >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Debian Snapshot is sometimes a few minutes behind the mirror. Do
-          # not publish a moving-mirror build: wait until the snapshot archive
-          # contains exactly the Release file which triggered this update.
+
+          # Never build a release from moving mirrors. Wait until Debian
+          # Snapshot contains exactly the Release files which triggered this run.
           timestamps=$(curl -fsSL https://snapshot.debian.org/mr/timestamp/)
           main_timestamp=$(printf '%s' "$timestamps" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["debian"][-1])')
           security_timestamp=$(printf '%s' "$timestamps" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["debian-security"][-1])')
@@ -58,22 +64,24 @@ jobs:
           if [ "$snapshot_main_sha" != "$current_main_sha" ] || \
              [ "$snapshot_updates_sha" != "$current_updates_sha" ] || \
              [ "$snapshot_security_sha" != "$current_security_sha" ]; then
-            echo "A Debian snapshot has not caught up with its observed mirror; retrying on the next scheduled run."
+            echo 'Debian Snapshot has not caught up with the observed mirrors; retrying on the next daily run.'
             echo changed=false >> "$GITHUB_OUTPUT"
-          else
-            printf '%s\\n' "$snapshot_main_sha" > debian-release.sha256
-            printf '%s\\n' "$snapshot_updates_sha" > debian-updates-release.sha256
-            printf '%s\\n' "$snapshot_security_sha" > debian-security-release.sha256
-            cat > config/debian-snapshot.env <<EOF
-          # Reproducible Debian rootfs input.  Updated only by the Debian watcher after
+            exit 0
+          fi
+
+          printf '%s\n' "$snapshot_main_sha" > debian-release.sha256
+          printf '%s\n' "$snapshot_updates_sha" > debian-updates-release.sha256
+          printf '%s\n' "$snapshot_security_sha" > debian-security-release.sha256
+          cat > config/debian-snapshot.env <<EOF
+          # Reproducible Debian rootfs input. Updated only by the Debian watcher after
           # it has verified that this archive snapshot contains the observed Release.
           DEBIAN_SNAPSHOT_TIMESTAMP=$main_timestamp
           DEBIAN_SNAPSHOT_MIRROR=$snapshot_url
           DEBIAN_SECURITY_SNAPSHOT_MIRROR=$security_snapshot_url
           EOF
-            echo changed=true >> "$GITHUB_OUTPUT"
-          fi
-      - name: Record metadata and start build
+          echo changed=true >> "$GITHUB_OUTPUT"
+
+      - name: Record metadata and start release build
         if: steps.debian.outputs.changed == 'true'
         run: |
           set -eu
@@ -82,12 +90,12 @@ jobs:
           sed -i -E "s/^ATLANTIAN_BUILD=.*/ATLANTIAN_BUILD=${next_build}/" config/release.env
           git config user.name github-actions
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add debian-release.sha256 debian-updates-release.sha256 debian-security-release.sha256 config/debian-snapshot.env config/release.env
-          git commit -m "chore: freeze Debian trixie snapshot (AtlANTian ${DEBIAN_MAJOR}.${next_build})"
+          git add debian-release.sha256 debian-updates-release.sha256 debian-security-release.sha256 \
+            config/debian-snapshot.env config/release.env
+          git commit -m "chore: freeze Debian ${DEBIAN_CODENAME} snapshot (AtlANTian ${DEBIAN_MAJOR}.${next_build})"
           git push origin main
-          # Pushes made with GITHUB_TOKEN do not trigger another push workflow.
-          # Start the normal release workflow explicitly; it derives the commit
-          # hash and creates the immutable release tag itself.
+          # GITHUB_TOKEN pushes do not trigger push workflows, so dispatch the
+          # normal release workflow explicitly for the new immutable source tip.
           gh workflow run 'Build and release AtlANTian' --ref main
         env:
           GH_TOKEN: ${{ github.token }}
