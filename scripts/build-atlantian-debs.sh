@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Package AtlANTian-owned files.  Debian itself remains updated by apt from the
 # snapshot configured by atlantian-platform.
+# Package assembly is deterministic; this no-op revision validates the
+# end-to-end updater with a distinct release identity.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd); . "$ROOT/config/release.env"
 OUT=${OUT:-$ROOT/artifacts/current}; RFS=${RFS:-$ROOT/out/rootfs}; VERSION=${ATLANTIAN_VERSION:?}
