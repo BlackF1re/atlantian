@@ -36,6 +36,7 @@ jobs:
           test -s config/atlantian-releases.conf
           grep -q 'usr/lib/atlantian/boot' scripts/build-atlantian-debs.sh
           ! grep -q 'etc/default/zramswap.*copy' scripts/build-atlantian-debs.sh
+          ! sed -n '/^for f in /p' scripts/build-atlantian-debs.sh | grep -qE 'etc/(os-release|issue\.net|default/zramswap)'
       - name: Validate two-partition image contract
         run: |
           . config/image-layout.env

@@ -10,7 +10,10 @@ conffiles(){ [ -d "$1/etc" ] && find "$1/etc" -type f -printf '/etc/%P\n' >"$1/D
 copy(){ local p=$1; mkdir -p "$2/$(dirname "$p")"; cp -a "$RFS/$p" "$2/$p"; }
 p="$work/platform"; mkdir -p "$p"; control "$p" atlantian-platform all 'AtlANTian board policy and tooling'
 printf '%s\n' 'Depends: zram-tools' >>"$p/DEBIAN/control"
-for f in etc/apt/sources.list etc/atlantian-release etc/os-release etc/issue.net etc/default/atlantian-release-check etc/atlantian/releases.conf etc/ssh/sshd_config.d/10-atlantian-root.conf etc/systemd/network/20-ethernet.network etc/systemd/resolved.conf.d/atlantian.conf etc/systemd/logind.conf.d/atlantian-power-policy.conf; do copy "$f" "$p"; done
+# base-files owns /etc/os-release and /etc/issue.net.  They are branded while
+# building a factory image, but a platform package must never take ownership
+# of Debian's files on an installed system.
+for f in etc/apt/sources.list etc/atlantian-release etc/default/atlantian-release-check etc/atlantian/releases.conf etc/ssh/sshd_config.d/10-atlantian-root.conf etc/systemd/network/20-ethernet.network etc/systemd/resolved.conf.d/atlantian.conf etc/systemd/logind.conf.d/atlantian-power-policy.conf; do copy "$f" "$p"; done
 for source in "$RFS"/usr/local/sbin/atlantian-*; do
   f=${source#"$RFS"/}
   copy "$f" "$p"

@@ -208,6 +208,8 @@ jobs:
           ! dpkg-deb -c "$kernel_deb" | grep -qE ' ./boot/'
           dpkg-deb -e "$kernel_deb" /tmp/atlantian-kernel-control
           grep -q '/usr/lib/atlantian/boot' /tmp/atlantian-kernel-control/postinst
+          platform_deb=$(find artifacts/current -maxdepth 1 -name 'atlantian-platform_*.deb' -type f -print -quit)
+          ! dpkg-deb -c "$platform_deb" | grep -qE ' ./etc/(issue\.net|os-release|default/zramswap)$'
           bash scripts/test-build.sh "$image" artifacts/current/SHA256SUMS
           sudo bash scripts/test-image-layout.sh "$image"
           test -s "${image%.img}.packages.tsv"
