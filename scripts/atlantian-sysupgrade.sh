@@ -105,7 +105,7 @@ systemctl stop atlantian-status-leds.service atlantian-fpga-status-leds.service 
 trap 'kill "$ledpid" 2>/dev/null || true; rm -f /run/atlantian-update-leds.lock' EXIT
 export DEBIAN_FRONTEND=noninteractive
 echo 'Installing AtlANTian platform, kernel and release packages...'
-apt-get -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' install -y "$STAGE"/*.deb
+apt-get -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' install -y --allow-downgrades "$STAGE"/*.deb
 echo 'Refreshing the pinned Debian package index...'
 apt-get update
 echo 'Applying compatible Debian package updates...'
