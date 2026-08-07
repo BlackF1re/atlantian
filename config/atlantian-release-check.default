@@ -1,2 +1,0 @@
-# Keep advisory-only checks by default. Set to 1 only after local validation.
-ATLANTIAN_AUTO_APPLY=0
