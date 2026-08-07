@@ -11,14 +11,11 @@ on:
         options: [all, rootfs-image, kernel-image, image]
   push:
     branches: [main]
-    # Documentation, README, licensing, and release-note edits do not produce
-    # a new operating-system image. Every path listed here can affect the
-    # booted system or the release contract.
     paths:
       - 'board/**'
       - 'boot-candidate/**'
       - 'config/**'
-      - 'debian-release.sha256'
+      - 'debian-*.sha256'
       - 'fpga/**'
       - 'kernel-overlay/**'
       - 'scripts/**'
@@ -26,10 +23,20 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+
+# Only the newest main tip may become a published release. GitHub keeps one
+# pending run in this group; the head check below also prevents a superseded
+# build which was already running from publishing after main advances.
+concurrency:
+  group: atlantian-release
+  cancel-in-progress: false
 
 jobs:
   plan:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
       reason: ${{ steps.scope.outputs.reason }}
@@ -46,10 +53,6 @@ jobs:
           scope=all
           reason='manual full build'
           if [[ '${{ github.event_name }}' = push ]]; then
-            # A force-push may intentionally replace the old tip (for
-            # example while amending the single release-preparation commit).
-            # That object is then absent from this shallow checkout.  A full
-            # build is the only safe classification in that case.
             if git cat-file -e '${{ github.event.before }}^{commit}' 2>/dev/null; then
               changed=$(git diff --name-only '${{ github.event.before }}' '${{ github.sha }}')
             else
@@ -57,10 +60,10 @@ jobs:
               reason='previous push tip is unavailable; safe full build'
             fi
             rootfs=false kernel=false image=false
-            if grep -qE '^(debian-release\.sha256|config/(release|debian-snapshot|image-layout)\.env|scripts/(build-incremental|build-atlantian-debs|make-sd-image)\.sh)$' <<<"$changed"; then
-              scope=all; reason='base, release, workflow, or build-logic change'
+            if grep -qE '^(debian-.*\.sha256|config/(release|debian-snapshot|image-layout)\.env|scripts/(build-incremental|build-atlantian-debs|make-sd-image)\.sh)$' <<<"$changed"; then
+              scope=all; reason='base, release, or build-logic change'
             else
-              grep -qE '^(config/packages\.base|config/atlantian-release-check\.default|fpga/|systemd/|scripts/(atlantian-|build-rootfs|configure-rootfs-access))' <<<"$changed" && rootfs=true || true
+              grep -qE '^(config/packages\.base|config/atlantian-releases\.conf|fpga/|systemd/|scripts/(atlantian-|build-rootfs|configure-rootfs-access|stamp-release))' <<<"$changed" && rootfs=true || true
               grep -qE '^(board/|config/kernel-c41|kernel-overlay/|scripts/build-kernel\.sh)' <<<"$changed" && kernel=true || true
               grep -qE '^(boot-candidate/|scripts/(make-sd-image|build-atlantian-debs)\.sh)' <<<"$changed" && image=true || true
               if [[ $rootfs = true && $kernel = true ]]; then
@@ -82,32 +85,36 @@ jobs:
           echo "scope=$scope" >> "$GITHUB_OUTPUT"
           echo "reason=$reason" >> "$GITHUB_OUTPUT"
           echo "Selected \`$scope\`: $reason" >> "$GITHUB_STEP_SUMMARY"
+
   build:
     needs: plan
     runs-on: ubuntu-24.04
-    # The native GitHub failure email links directly to the failed step. Keep
-    # failure domains separate, so build, image-contract and test failures are
-    # immediately distinguishable without a custom mailer.
+    timeout-minutes: 120
     steps:
       # v4.2.2
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+
       - name: Prepare immutable release identity
         id: identity
+        shell: bash
         run: |
-          set -eu
+          set -euo pipefail
           short_sha=$(git rev-parse --short=12 "$GITHUB_SHA")
+          revision=$(git rev-list --count "$GITHUB_SHA")
           . config/release.env
-          version="${DEBIAN_MAJOR}.${ATLANTIAN_BUILD}+g${short_sha}"
-          release_id="atlantian-${DEBIAN_MAJOR}-${ATLANTIAN_BUILD}+g${short_sha}"
+          version="${DEBIAN_MAJOR}.${ATLANTIAN_BUILD}.${revision}+g${short_sha}"
+          release_id="atlantian-${DEBIAN_MAJOR}-${ATLANTIAN_BUILD}-${revision}+g${short_sha}"
           {
+            echo "ATLANTIAN_REVISION=$revision"
             echo "ATLANTIAN_SOURCE_REVISION=$short_sha"
             echo "ATLANTIAN_VERSION=$version"
             echo "ATLANTIAN_RELEASE_ID=$release_id"
             echo "ATLANTIAN_IMAGE_NAME=$release_id"
             echo "RELEASE_TAG=v$version"
           } >> "$GITHUB_ENV"
+
       - name: Validate pinned release inputs
         id: pinned-inputs
         run: |
@@ -115,14 +122,17 @@ jobs:
           . config/release.env
           . config/debian-snapshot.env
           test -n "$ATLANTIAN_KERNEL_COMMIT"
-          test -n "$DEBIAN_SNAPSHOT_TIMESTAMP"
-          test -s debian-release.sha256
+          for file in debian-release.sha256 debian-updates-release.sha256 debian-security-release.sha256; do
+            test -s "$file"
+          done
+          test "$(git hash-object boot-candidate/BOOT.bin)" = "$(awk 'NR==1 {print $1}' boot-candidate/BOOT.bin.gitsha)"
           curl -fsSL "$DEBIAN_SNAPSHOT_MIRROR/dists/$DEBIAN_CODENAME/Release" -o /tmp/debian-release
-          test "$(sha256sum /tmp/debian-release | awk '{print $1}')" = "$(tr -d '\\r\\n' < debian-release.sha256)"
+          test "$(sha256sum /tmp/debian-release | awk '{print $1}')" = "$(tr -d '\r\n' < debian-release.sha256)"
           curl -fsSL "$DEBIAN_SNAPSHOT_MIRROR/dists/${DEBIAN_CODENAME}-updates/Release" -o /tmp/debian-updates-release
-          test "$(sha256sum /tmp/debian-updates-release | awk '{print $1}')" = "$(tr -d '\\r\\n' < debian-updates-release.sha256)"
+          test "$(sha256sum /tmp/debian-updates-release | awk '{print $1}')" = "$(tr -d '\r\n' < debian-updates-release.sha256)"
           curl -fsSL "$DEBIAN_SECURITY_SNAPSHOT_MIRROR/dists/${DEBIAN_CODENAME}-security/Release" -o /tmp/debian-security-release
-          test "$(sha256sum /tmp/debian-security-release | awk '{print $1}')" = "$(tr -d '\\r\\n' < debian-security-release.sha256)"
+          test "$(sha256sum /tmp/debian-security-release | awk '{print $1}')" = "$(tr -d '\r\n' < debian-security-release.sha256)"
+
       - name: Install cross-build dependencies
         id: dependencies
         run: |
@@ -130,36 +140,44 @@ jobs:
           sudo apt-get install -y debootstrap qemu-user-static binfmt-support \
             gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
             bc bison flex libssl-dev libncurses-dev device-tree-compiler \
-            u-boot-tools kmod cpio rsync pigz xz-utils e2fsprogs dosfstools parted \
+            u-boot-tools kmod cpio rsync pigz xz-utils zstd e2fsprogs dosfstools parted \
             libelf-dev libdw-dev git curl ca-certificates sudo
+
       - name: Restore Linux source and build cache
         id: kernel-cache
         # v4.2.3
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: out/linux-src
-          # Debian metadata is deliberately part of the key: when Debian
-          # changes, the release is a clean full rebuild, including kernel.
-          # Otherwise this tree is reusable only when every kernel input is
-          # byte-for-byte identical.
-          key: linux-6.12.100-${{ hashFiles('debian-release.sha256', 'config/release.env', 'board/**', 'config/kernel-c41*.fragment', 'kernel-overlay/**', 'scripts/build-kernel.sh') }}
-      - name: Restore root filesystem cache
+          key: linux-6.12.100-${{ hashFiles('debian-*.sha256', 'config/release.env', 'board/**', 'config/kernel-c41*.fragment', 'kernel-overlay/**', 'scripts/build-kernel.sh') }}
+
+      - name: Restore root filesystem archive
         id: rootfs-cache
         # v4.2.3
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
-          path: out/rootfs
-          # Kernel modules are replaced by build-kernel.sh when the kernel
-          # changes, so the base rootfs cache deliberately tracks only inputs
-          # which affect rootfs construction itself.
-          key: rootfs-${{ hashFiles('debian-release.sha256', 'config/debian-snapshot.env', 'config/packages.base', 'config/atlantian-release-check.default', 'config/atlantian-releases.conf', 'fpga/**', 'systemd/**', 'scripts/atlantian-*.sh', 'scripts/build-rootfs.sh', 'scripts/configure-rootfs-access.sh') }}
+          path: out/cache/rootfs.tar.zst
+          # The archive contains kernel modules, so kernel inputs deliberately
+          # participate in the key. The archive preserves numeric ownership.
+          key: rootfs-v2-${{ hashFiles('debian-*.sha256', 'config/debian-snapshot.env', 'config/release.env', 'config/packages.base', 'config/atlantian-releases.conf', 'board/**', 'config/kernel-c41*.fragment', 'kernel-overlay/**', 'fpga/**', 'systemd/**', 'scripts/atlantian-*.sh', 'scripts/build-rootfs.sh', 'scripts/configure-rootfs-access.sh', 'scripts/stamp-release.sh', 'scripts/build-kernel.sh') }}
+
+      - name: Extract cached root filesystem
+        if: steps.rootfs-cache.outputs.cache-hit == 'true'
+        run: |
+          set -euo pipefail
+          sudo rm -rf out/rootfs
+          sudo mkdir -p out/rootfs
+          sudo tar --numeric-owner --same-owner --xattrs --acls \
+            --use-compress-program=unzstd -xf out/cache/rootfs.tar.zst -C out/rootfs
+
       - name: Restore boot artefacts
         id: boot-cache
         # v4.2.3
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: out/boot
-          key: boot-6.12.100-${{ hashFiles('debian-release.sha256', 'config/release.env', 'board/**', 'config/kernel-c41*.fragment', 'kernel-overlay/**', 'scripts/build-kernel.sh') }}
+          key: boot-6.12.100-${{ hashFiles('debian-*.sha256', 'config/release.env', 'board/**', 'config/kernel-c41*.fragment', 'kernel-overlay/**', 'scripts/build-kernel.sh') }}
+
       - name: Fetch pinned Linux source
         id: kernel-source
         run: |
@@ -173,17 +191,15 @@ jobs:
           git -C out/linux-src fetch --depth 1 origin "$ATLANTIAN_KERNEL_COMMIT"
           git -C out/linux-src checkout --detach FETCH_HEAD
           test "$(git -C out/linux-src rev-parse HEAD)" = "$ATLANTIAN_KERNEL_COMMIT"
+
       - name: Build the selected release scope
         id: build
         env:
           DEBIAN_FRONTEND: noninteractive
           JOBS: 2
         run: |
+          set -euo pipefail
           scope='${{ needs.plan.outputs.scope }}'
-          # A cache eviction must never produce a partial release. A rootfs
-          # change builds both its own rootfs and the kernel; a kernel change
-          # builds fresh boot artefacts but needs the cached rootfs as the
-          # modules-install destination. Image-only work needs both caches.
           case "$scope" in
             kernel-image)
               [[ -d out/rootfs ]] || { echo 'Rootfs cache unavailable; using a complete build.'; scope=all; }
@@ -195,11 +211,22 @@ jobs:
               ;;
           esac
           echo "Scope: $scope (${{ needs.plan.outputs.reason }})"
-          sudo ./scripts/build-incremental.sh "$scope"
-          sudo chown -R "$USER:$USER" out artifacts
+          sudo -E ./scripts/build-incremental.sh "$scope"
+
+          # Never chown the rootfs tree: it contains real Debian ownership and
+          # mode bits. Cache it as a root-created archive with numeric owners.
+          if [[ '${{ steps.rootfs-cache.outputs.cache-hit }}' != true ]]; then
+            sudo mkdir -p out/cache
+            sudo tar --numeric-owner --xattrs --acls -I 'zstd -T0 -3' \
+              -cf out/cache/rootfs.tar.zst -C out/rootfs .
+            sudo chown "$USER:$USER" out/cache/rootfs.tar.zst
+          fi
+          sudo chown -R "$USER:$USER" out/linux-src out/boot artifacts
+
       - name: Verify release artifacts
         id: artifact-check
         run: |
+          set -euo pipefail
           image=$(find artifacts/current -maxdepth 1 -name '*.img' -type f | head -n1)
           test -n "$image"
           test "$(find artifacts/current -maxdepth 1 -name '*.deb' -type f | wc -l)" -eq 3
@@ -211,48 +238,51 @@ jobs:
           platform_deb=$(find artifacts/current -maxdepth 1 -name 'atlantian-platform_*.deb' -type f -print -quit)
           ! dpkg-deb -c "$platform_deb" | grep -qE ' ./etc/(issue\.net|os-release|default/zramswap)$'
           bash scripts/test-build.sh "$image" artifacts/current/SHA256SUMS
-          sudo bash scripts/test-image-layout.sh "$image"
+          sudo -E bash scripts/test-image-layout.sh "$image"
           test -s "${image%.img}.packages.tsv"
           test -s "${image%.img}.snapshot.txt"
-      - name: Validate shell programs
-        id: shell-check
-        run: |
-          bash -n scripts/*.sh
+
+      - name: Validate source contracts
+        id: source-check
+        run: bash scripts/test-source-contracts.sh
+
       - name: Verify update-state contract
         id: update-check
+        run: bash scripts/test-update-leds.sh
+
+      - name: Check whether this commit is still main
+        id: release-head
         run: |
-          bash scripts/test-update-leds.sh
-      - name: Publish CI outcome summary
-        if: always()
-        run: |
-          {
-            echo '## AtlANTian CI outcome'
-            echo
-            echo '| Domain | Outcome |'
-            echo '|---|---|'
-            echo '| Dependencies | ${{ steps.dependencies.outcome }} |'
-            echo '| Kernel source/cache | ${{ steps.kernel-source.outcome }} (cache: ${{ steps.kernel-cache.outputs.cache-hit }}) |'
-            echo '| Build | ${{ steps.build.outcome }} |'
-            echo '| Artifact, partition and rootfs contracts | ${{ steps.artifact-check.outcome }} |'
-            echo '| Shell syntax | ${{ steps.shell-check.outcome }} |'
-            echo '| Update-state contract | ${{ steps.update-check.outcome }} |'
-            echo
-            echo 'The GitHub notification links to this run; the first failed named step is the failure class.'
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          git fetch --quiet origin main
+          if [[ $(git rev-parse origin/main) = "$GITHUB_SHA" ]]; then
+            echo publish=true >> "$GITHUB_OUTPUT"
+            echo 'This build is still the main branch tip and may publish.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo publish=false >> "$GITHUB_OUTPUT"
+            echo 'This build was superseded by a newer main commit; release publication is skipped.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Generate concise release notes
+        if: steps.release-head.outputs.publish == 'true'
         run: bash scripts/generate-release-notes.sh "$RELEASE_TAG" "$GITHUB_SHA"
+
       - name: Verify release identity
+        if: steps.release-head.outputs.publish == 'true'
         run: |
           test "$RELEASE_TAG" = "v$ATLANTIAN_VERSION"
           test -f "artifacts/current/$ATLANTIAN_IMAGE_NAME.img"
           test "$(find artifacts/current -maxdepth 1 -name '*.deb' -type f | wc -l)" -eq 3
+
       - name: Write build metadata
+        if: steps.release-head.outputs.publish == 'true'
         run: |
           . config/release.env
           {
             echo "AtlANTian GNU/Linux $ATLANTIAN_VERSION"
             echo "Release tag: $RELEASE_TAG"
             echo "Source commit: $GITHUB_SHA"
+            echo "Source revision: $ATLANTIAN_REVISION"
             echo "Debian base: $DEBIAN_CODENAME"
             echo "Debian snapshot: $(sed -n 's/^DEBIAN_SNAPSHOT_TIMESTAMP=//p' config/debian-snapshot.env)"
             echo "Debian Release SHA-256: $(cat debian-release.sha256)"
@@ -260,8 +290,17 @@ jobs:
             echo "Linux kernel: $ATLANTIAN_KERNEL_VERSION$ATLANTIAN_KERNEL_LOCALVERSION"
             echo "Build workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > artifacts/current/BUILD-INFO.txt
+
+      - name: Attest release provenance
+        if: steps.release-head.outputs.publish == 'true'
+        # v4.2.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-checksums: artifacts/current/SHA256SUMS
+
       # v4.6.2
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: steps.release-head.outputs.publish == 'true'
         with:
           name: atlantian-image-${{ env.ATLANTIAN_VERSION }}
           path: |
@@ -271,7 +310,9 @@ jobs:
             artifacts/current/*.snapshot.txt
             artifacts/current/SHA256SUMS
             artifacts/current/BUILD-INFO.txt
+
       - name: Publish GitHub release
+        if: steps.release-head.outputs.publish == 'true'
         # v2.2.2
         uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631
         with:
@@ -286,3 +327,21 @@ jobs:
             artifacts/current/*.snapshot.txt
             artifacts/current/SHA256SUMS
             artifacts/current/BUILD-INFO.txt
+
+      - name: Publish CI outcome summary
+        if: always()
+        run: |
+          {
+            echo '## AtlANTian CI outcome'
+            echo
+            echo '| Domain | Outcome |'
+            echo '|---|---|'
+            echo '| Dependencies | ${{ steps.dependencies.outcome }} |'
+            echo '| Kernel source/cache | ${{ steps.kernel-source.outcome }} (cache: ${{ steps.kernel-cache.outputs.cache-hit }}) |'
+            echo '| Rootfs cache | ${{ steps.rootfs-cache.outputs.cache-hit }} |'
+            echo '| Build | ${{ steps.build.outcome }} |'
+            echo '| Artifact, partition and rootfs contracts | ${{ steps.artifact-check.outcome }} |'
+            echo '| Source contracts | ${{ steps.source-check.outcome }} |'
+            echo '| Update-state contract | ${{ steps.update-check.outcome }} |'
+            echo '| Publication eligible | ${{ steps.release-head.outputs.publish }} |'
+          } >> "$GITHUB_STEP_SUMMARY"
