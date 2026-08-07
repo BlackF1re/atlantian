@@ -43,6 +43,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 2
+
       - name: Select the smallest safe build scope
         id: scope
         shell: bash
@@ -58,7 +59,7 @@ jobs:
               reason='previous push tip is unavailable; safe full build'
             fi
             rootfs=false kernel=false image=false
-            if grep -qE '^(debian-.*\.sha256|config/(release|debian-snapshot|image-layout)\.env|scripts/(build-incremental|build-atlantian-debs|make-sd-image)\.sh)$' <<<"$changed"; then
+            if grep -qE '^(debian-.*\.sha256|config/(release|debian-snapshot|image-layout)\.env|scripts/(build-incremental|build-atlantian-debs|make-sd-image|validate-release-inputs)\.sh)$' <<<"$changed"; then
               scope=all; reason='base, release, or build-logic change'
             else
               grep -qE '^(config/packages\.base|config/atlantian-releases\.conf|fpga/|systemd/|scripts/(atlantian-|build-rootfs|configure-rootfs-access|stamp-release))' <<<"$changed" && rootfs=true || true
@@ -119,21 +120,7 @@ jobs:
 
       - name: Validate pinned release inputs
         id: pinned-inputs
-        run: |
-          set -euo pipefail
-          . config/release.env
-          . config/debian-snapshot.env
-          test -n "$ATLANTIAN_KERNEL_COMMIT"
-          for file in debian-release.sha256 debian-updates-release.sha256 debian-security-release.sha256; do
-            test -s "$file"
-          done
-          test "$(git hash-object boot-candidate/BOOT.bin)" = "$(awk 'NR==1 {print $1}' boot-candidate/BOOT.bin.gitsha)"
-          curl -fsSL "$DEBIAN_SNAPSHOT_MIRROR/dists/$DEBIAN_CODENAME/Release" -o /tmp/debian-release
-          test "$(sha256sum /tmp/debian-release | awk '{print $1}')" = "$(tr -d '\r\n' < debian-release.sha256)"
-          curl -fsSL "$DEBIAN_SNAPSHOT_MIRROR/dists/${DEBIAN_CODENAME}-updates/Release" -o /tmp/debian-updates-release
-          test "$(sha256sum /tmp/debian-updates-release | awk '{print $1}')" = "$(tr -d '\r\n' < debian-updates-release.sha256)"
-          curl -fsSL "$DEBIAN_SECURITY_SNAPSHOT_MIRROR/dists/${DEBIAN_CODENAME}-security/Release" -o /tmp/debian-security-release
-          test "$(sha256sum /tmp/debian-security-release | awk '{print $1}')" = "$(tr -d '\r\n' < debian-security-release.sha256)"
+        run: bash scripts/validate-release-inputs.sh
 
       - name: Install cross-build dependencies
         id: dependencies
@@ -338,6 +325,7 @@ jobs:
             echo
             echo '| Domain | Outcome |'
             echo '|---|---|'
+            echo '| Immutable inputs | ${{ steps.pinned-inputs.outcome }} |'
             echo '| Dependencies | ${{ steps.dependencies.outcome }} |'
             echo '| Kernel source/cache | ${{ steps.kernel-source.outcome }} (cache: ${{ steps.kernel-cache.outputs.cache-hit }}) |'
             echo '| Rootfs cache | ${{ steps.rootfs-cache.outputs.cache-hit }} |'

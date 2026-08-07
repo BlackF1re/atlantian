@@ -46,11 +46,14 @@ jobs:
               print(f'valid: {path}')
           PY
 
-      - name: Validate shell and release contracts
+      - name: Validate shell and source contracts
         run: |
           shellcheck -S error -x scripts/*.sh
           bash scripts/test-source-contracts.sh
           bash scripts/test-update-leds.sh
+
+      - name: Validate immutable release inputs
+        run: bash scripts/validate-release-inputs.sh
 
       - name: Validate package and image contract sources
         run: |
