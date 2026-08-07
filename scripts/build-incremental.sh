@@ -12,7 +12,7 @@ BOOT_BIN=${BOOT_BIN:-$ROOT/boot-candidate/BOOT.bin}
 
 rootfs() { sudo "$ROOT/scripts/build-rootfs.sh"; }
 kernel() { sudo "$ROOT/scripts/build-kernel.sh"; }
-stamp() { sudo -E "$ROOT/scripts/stamp-release.sh" "$ROOT/out/rootfs"; }
+stamp() { sudo -E bash "$ROOT/scripts/stamp-release.sh" "$ROOT/out/rootfs"; }
 packages() { "$ROOT/scripts/build-atlantian-debs.sh"; }
 image() {
   mkdir -p "$DIR"
