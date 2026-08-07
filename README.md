@@ -108,14 +108,16 @@ release using normal APT/dpkg transactions. It installs the release's three
 AtlANTian packages (platform policy, kernel and release metadata), after
 verifying them against the release's `SHA256SUMS`, then runs
 `apt full-upgrade` against the pinned Debian Snapshot. It does not rewrite
-partitions or use a recovery environment. Local files and normal Debian
-configuration persist: `/etc`, SSH keys, `/root`, `/home`, `/var`, package
+partitions; the update runs on the live Debian system. Local files and normal
+Debian configuration persist: `/etc`, SSH keys, `/root`, `/home`, `/var`, package
 databases and packages installed by the user remain in place. Modified Debian
 conffiles are retained by default.
 
-During the package transaction the normal LED services are stopped and the
-update pattern owns the LEDs exclusively: three red flashes, then three green
-flashes, repeating.
+After `UPGRADE` confirmation, the normal LED services are stopped and the D3
+update pattern starts before the release packages are downloaded: three red
+flashes, then three green flashes, repeating. The pattern stays active during
+download, checksum verification, package installation, `apt full-upgrade`, and
+the transition into reboot.
 
 Run the updater with no arguments. It shows the installed and available release,
 publication time, package download size and release notes, then requires the

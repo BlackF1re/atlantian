@@ -149,11 +149,10 @@ install -D -m 0644 "$PROJECT/systemd/atlantian-power-policy.conf" "$ROOT/etc/sys
 # D3 is a PS-GPIO bicolour LED.  The daemon uses only standard LED-class
 # sysfs: red emits an atomic double-pulse heartbeat whose inter-pair pause
 # tracks aggregate CPU utilisation; green briefly pulses on real mmcblk0 I/O.
+# The update blinker is installed alongside it and is owned by the package
+# updater while release assets are downloaded, verified and installed.
 install -D -m 0755 "$PROJECT/scripts/atlantian-update-leds.sh" \
   "$ROOT/usr/local/sbin/atlantian-update-leds"
-# The update blinker is a standalone utility used by both recovery and
-# network-driven update paths.  It must be present in the rootfs so the
-# recovery initramfs can carry the exact same logic.
 install -D -m 0755 "$PROJECT/scripts/atlantian-status-leds.sh" \
   "$ROOT/usr/local/sbin/atlantian-status-leds"
 install -D -m 0644 "$PROJECT/systemd/atlantian-status-leds.service" \
