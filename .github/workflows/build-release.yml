@@ -22,9 +22,7 @@ on:
       - 'systemd/**'
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 # Only the newest main tip may become a published release. GitHub keeps one
 # pending run in this group; the head check below also prevents a superseded
@@ -90,6 +88,10 @@ jobs:
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       # v4.2.2
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
