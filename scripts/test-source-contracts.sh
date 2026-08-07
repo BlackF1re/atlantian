@@ -27,7 +27,7 @@ grep -q 'MACAddressPolicy=persistent' scripts/build-rootfs.sh
 grep -q 'atlantian-ssh-hostkeys.service' scripts/configure-rootfs-access.sh
 
 test ! -e config/zynq-bitmain-antminer-s9.dts
-! grep -R -q 'ATLANTIAN_AUTO_APPLY' config scripts systemd README.md docs || {
+! grep -R -q --exclude=test-source-contracts.sh 'ATLANTIAN_AUTO_APPLY' config scripts systemd README.md docs || {
   echo 'obsolete ATLANTIAN_AUTO_APPLY contract remains' >&2
   exit 1
 }
