@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - '.github/**'
       - 'board/**'
       - 'boot-candidate/**'
       - 'config/**'
@@ -16,29 +17,46 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: atlantian-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   contract:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
+      # v4.2.2
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - name: Validate shell programs
-        run: bash -n scripts/*.sh
-      - name: Validate release/update contracts
+        with:
+          fetch-depth: 0
+
+      - name: Install validation tools
         run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck python3-yaml
+
+      - name: Validate workflow YAML
+        run: |
+          python3 - <<'PY'
+          import glob, yaml
+          for path in glob.glob('.github/workflows/*.yml'):
+              with open(path, encoding='utf-8') as f:
+                  yaml.safe_load(f)
+              print(f'valid: {path}')
+          PY
+
+      - name: Validate shell and release contracts
+        run: |
+          shellcheck -S error -x scripts/*.sh
+          bash scripts/test-source-contracts.sh
           bash scripts/test-update-leds.sh
-          grep -q 'apt-get.*full-upgrade' scripts/atlantian-sysupgrade.sh
-          grep -q 'SHA256SUMS' scripts/atlantian-sysupgrade.sh
-          grep -q 'Type UPGRADE' scripts/atlantian-sysupgrade.sh
-          grep -q -- '--check' scripts/atlantian-sysupgrade.sh
-          grep -q 'command -v jq' scripts/atlantian-release-check.sh
-          grep -q 'platform_name' scripts/atlantian-release-check.sh
-          grep -q 'unsafe release asset name' scripts/atlantian-sysupgrade.sh
-          test -s config/atlantian-releases.conf
-          grep -q 'usr/lib/atlantian/boot' scripts/build-atlantian-debs.sh
+
+      - name: Validate package and image contract sources
+        run: |
+          grep -q '/usr/lib/atlantian/boot' scripts/build-atlantian-debs.sh
           ! grep -q 'etc/default/zramswap.*copy' scripts/build-atlantian-debs.sh
           ! sed -n '/^for f in /p' scripts/build-atlantian-debs.sh | grep -qE 'etc/(os-release|issue\.net|default/zramswap)'
-      - name: Validate two-partition image contract
-        run: |
           . config/image-layout.env
           test "$ATLANTIAN_BOOT_MIB" = 64
           test "$ATLANTIAN_INITIAL_ROOT_SLACK_MIB" -gt 0
