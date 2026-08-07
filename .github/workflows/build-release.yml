@@ -39,8 +39,8 @@ jobs:
       scope: ${{ steps.scope.outputs.scope }}
       reason: ${{ steps.scope.outputs.reason }}
     steps:
-      # v4.2.2
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 2
       - name: Select the smallest safe build scope
@@ -93,8 +93,8 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      # v4.2.2
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
