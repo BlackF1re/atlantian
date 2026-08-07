@@ -14,12 +14,15 @@ printf '%s\n' "$ATLANTIAN_VERSION" >"$ROOT/usr/lib/atlantian/version"
 printf '%s\n' "$ATLANTIAN_SOURCE_REVISION" >"$ROOT/usr/lib/atlantian/source-revision"
 printf '%s\n' "$ATLANTIAN_VERSION" >"$ROOT/etc/atlantian-release"
 
+# base-files owns /etc/os-release and /etc/issue.net on installed systems, so
+# factory branding is deliberately release-neutral. The authoritative dynamic
+# AtlANTian version lives in /usr/lib/atlantian/version.
 cat >"$ROOT/etc/os-release" <<EOF
-PRETTY_NAME="AtlANTian GNU/Linux $ATLANTIAN_VERSION"
+PRETTY_NAME="AtlANTian GNU/Linux (Debian GNU/Linux $DEBIAN_CODENAME)"
 NAME="AtlANTian GNU/Linux"
 ID=atlantian
-VERSION_ID="$ATLANTIAN_VERSION"
-VERSION="$ATLANTIAN_VERSION (based on Debian GNU/Linux $DEBIAN_CODENAME)"
+VERSION_ID="$DEBIAN_MAJOR"
+VERSION="$DEBIAN_MAJOR (based on Debian GNU/Linux $DEBIAN_CODENAME)"
 HOME_URL="https://github.com/BlackF1re/atlantian"
 SUPPORT_URL="https://github.com/BlackF1re/atlantian/issues"
 BUG_REPORT_URL="https://github.com/BlackF1re/atlantian/issues"
@@ -27,11 +30,10 @@ EOF
 
 cat >"$ROOT/etc/issue.net" <<EOF
 Welcome to AtlANTian GNU/Linux!
-$ATLANTIAN_VERSION (based on Debian GNU/Linux $DEBIAN_CODENAME)
+Based on Debian GNU/Linux $DEBIAN_CODENAME.
 
-AtlANTian is based on Debian GNU/Linux. The programs included with Debian are
-free software; their distribution terms are described in the corresponding
-copyright files under /usr/share/doc.
+The programs included with Debian are free software; their distribution terms
+are described in the corresponding copyright files under /usr/share/doc.
 
 Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent permitted by
 applicable law.
