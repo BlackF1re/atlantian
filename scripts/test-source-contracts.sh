@@ -20,7 +20,9 @@ dpkg --compare-versions "${DEBIAN_MAJOR}.${ATLANTIAN_BUILD}.1+ga" gt "${DEBIAN_M
 grep -q 'dpkg --compare-versions' scripts/atlantian-release-check.sh
 ! grep -q -- '--allow-downgrades' scripts/atlantian-sysupgrade.sh
 grep -q 'package version mismatch' scripts/atlantian-sysupgrade.sh
-grep -q 'stamp-release.sh' scripts/build-incremental.sh
+grep -Fq 'sudo -E bash "$ROOT/scripts/stamp-release.sh"' scripts/build-incremental.sh
+grep -Fq 'bash "$PROJECT/scripts/stamp-release.sh" "$ROOT"' scripts/build-rootfs.sh
+grep -Fq 'exec sudo -E bash "$0" "$ROOT"' scripts/stamp-release.sh
 grep -q 'configure-rootfs-access.sh' scripts/build-rootfs.sh
 ! grep -q 'chown -hR 0:0' scripts/build-rootfs.sh
 grep -q 'MACAddressPolicy=persistent' scripts/build-rootfs.sh

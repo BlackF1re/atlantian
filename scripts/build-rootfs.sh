@@ -161,7 +161,7 @@ EOF
 : >"$ROOT/etc/machine-id"
 rm -f "$ROOT/var/lib/dbus/machine-id"
 "$PROJECT/scripts/configure-rootfs-access.sh" "$ROOT"
-"$PROJECT/scripts/stamp-release.sh" "$ROOT"
+bash "$PROJECT/scripts/stamp-release.sh" "$ROOT"
 
 mkdir -p "$ROOT/usr/share/atlantian"
 chroot "$ROOT" /usr/bin/dpkg-query -W -f='${binary:Package}\t${Version}\n' \

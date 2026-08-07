@@ -7,7 +7,7 @@ PROJECT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ROOT=${1:?usage: stamp-release.sh ROOTFS}
 
 [[ -d "$ROOT/etc" ]] || { echo "not a root filesystem: $ROOT" >&2; exit 2; }
-[[ $EUID -eq 0 ]] || exec sudo -E "$0" "$ROOT"
+[[ $EUID -eq 0 ]] || exec sudo -E bash "$0" "$ROOT"
 
 install -d -m 0755 "$ROOT/usr/lib/atlantian"
 printf '%s\n' "$ATLANTIAN_VERSION" >"$ROOT/usr/lib/atlantian/version"
