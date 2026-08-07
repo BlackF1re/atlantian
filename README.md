@@ -117,17 +117,23 @@ During the package transaction the normal LED services are stopped and the
 update pattern owns the LEDs exclusively: three red flashes, then three green
 flashes, repeating.
 
-The normal command form is:
+Run the updater with no arguments. It shows the installed and available release,
+publication time, package download size and release notes, then requires the
+literal confirmation `UPGRADE`:
 
 ```sh
-atlantian-sysupgrade --latest atlantian-<release-version-and-commit>
+atlantian-sysupgrade
 ```
 
 `atlantian-release-check` runs after boot and daily. It records a newer release
-under `/var/lib/atlantian/update`; SSH logins repeat the exact
-`atlantian-sysupgrade --latest …` command until that release is installed.
+under `/var/lib/atlantian/update`; SSH logins repeat the simple
+`atlantian-sysupgrade` command until that release is installed.
 Automatic application is off by default. Its configuration lives in
 `/etc/default/atlantian-release-check`.
+
+`atlantian-sysupgrade --check` refreshes and displays the available release,
+`--notes` prints its notes, and `--yes` is available for explicitly unattended
+operation.
 
 ## Building locally
 

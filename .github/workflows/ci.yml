@@ -28,6 +28,9 @@ jobs:
           bash scripts/test-update-leds.sh
           grep -q 'apt-get.*full-upgrade' scripts/atlantian-sysupgrade.sh
           grep -q 'SHA256SUMS' scripts/atlantian-sysupgrade.sh
+          grep -q 'Type UPGRADE' scripts/atlantian-sysupgrade.sh
+          grep -q -- '--check' scripts/atlantian-sysupgrade.sh
+          grep -q 'command -v jq' scripts/atlantian-release-check.sh
       - name: Validate two-partition image contract
         run: |
           . config/image-layout.env

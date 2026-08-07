@@ -10,6 +10,7 @@ iputils-ping
 ethtool
 nftables
 curl
+jq
 pigz
 less
 nano

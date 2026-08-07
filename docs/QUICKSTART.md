@@ -8,12 +8,13 @@
 4. Log in as `root`, set a password with `passwd`, and configure the board as
    ordinary Debian GNU/Linux.
 
-To apply a newer AtlANTian release, run the command printed at SSH login:
+To inspect and apply a newer AtlANTian release, run:
 
 ```sh
-atlantian-sysupgrade --latest <release-id>
+atlantian-sysupgrade
 ```
 
-It installs the published AtlANTian packages and performs a normal
-`apt full-upgrade`; it preserves the conventional Debian filesystem and then
-reboots the board.
+It displays the release, publication time, changes and download size, then
+requires `UPGRADE`. It installs the published AtlANTian packages, performs a
+normal `apt full-upgrade`, preserves the conventional Debian filesystem and
+then reboots the board.

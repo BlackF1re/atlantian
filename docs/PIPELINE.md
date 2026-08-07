@@ -5,7 +5,8 @@ GitHub Actions builds a factory SD image and three packages: `atlantian-platform
 write it with any raw-image writer, boot once, and let `atlantian-grow-rootfs`
 expand the root filesystem to the full card.
 
-An installed board checks GitHub Releases. `atlantian-sysupgrade --latest <id>`
+An installed board checks GitHub Releases. `atlantian-sysupgrade` discovers the
+latest complete release, displays its metadata and requires `UPGRADE`; it then
 downloads those packages over HTTPS, verifies them against the release's
 `SHA256SUMS`, installs
 them with APT/dpkg, runs `apt full-upgrade`, and reboots. It never overwrites a
