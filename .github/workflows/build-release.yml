@@ -152,7 +152,7 @@ jobs:
           # Kernel modules are replaced by build-kernel.sh when the kernel
           # changes, so the base rootfs cache deliberately tracks only inputs
           # which affect rootfs construction itself.
-          key: rootfs-${{ hashFiles('debian-release.sha256', 'config/debian-snapshot.env', 'config/packages.base', 'config/atlantian-release-check.default', 'fpga/**', 'systemd/**', 'scripts/atlantian-*.sh', 'scripts/build-rootfs.sh', 'scripts/configure-rootfs-access.sh') }}
+          key: rootfs-${{ hashFiles('debian-release.sha256', 'config/debian-snapshot.env', 'config/packages.base', 'config/atlantian-release-check.default', 'config/atlantian-releases.conf', 'fpga/**', 'systemd/**', 'scripts/atlantian-*.sh', 'scripts/build-rootfs.sh', 'scripts/configure-rootfs-access.sh') }}
       - name: Restore boot artefacts
         id: boot-cache
         # v4.2.3
@@ -203,6 +203,11 @@ jobs:
           image=$(find artifacts/current -maxdepth 1 -name '*.img' -type f | head -n1)
           test -n "$image"
           test "$(find artifacts/current -maxdepth 1 -name '*.deb' -type f | wc -l)" -eq 3
+          kernel_deb=$(find artifacts/current -maxdepth 1 -name 'atlantian-kernel_*.deb' -type f -print -quit)
+          test -n "$kernel_deb"
+          ! dpkg-deb -c "$kernel_deb" | grep -qE ' ./boot/'
+          dpkg-deb -e "$kernel_deb" /tmp/atlantian-kernel-control
+          grep -q '/usr/lib/atlantian/boot' /tmp/atlantian-kernel-control/postinst
           bash scripts/test-build.sh "$image" artifacts/current/SHA256SUMS
           sudo bash scripts/test-image-layout.sh "$image"
           test -s "${image%.img}.packages.tsv"

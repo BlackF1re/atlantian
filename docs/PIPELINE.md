@@ -13,6 +13,13 @@ them with APT/dpkg, runs `apt full-upgrade`, and reboots. It never overwrites a
 partition. The updater preserves ordinary user and Debian state; it warns before
 the SSH session is intentionally disconnected for reboot.
 
+The boot partition is FAT32, so `atlantian-kernel` deliberately stores its
+package payload under `/usr/lib/atlantian/boot` on the ext4 root filesystem.
+Its post-install script copies the three boot files to `/boot`; this avoids
+dpkg's unsupported FAT hard-link backup operation. `zram-tools` remains the
+owner of `/etc/default/zramswap`, so platform updates never replace its Debian
+configuration file.
+
 Rewriting an SD card is a factory/recovery operation performed with a raw-image
 writer. Normal release updates use the package path above.
 
