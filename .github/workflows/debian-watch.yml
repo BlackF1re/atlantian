@@ -23,6 +23,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+
       - name: Detect and freeze Debian Release metadata
         id: debian
         run: |
@@ -80,6 +81,10 @@ jobs:
           DEBIAN_SECURITY_SNAPSHOT_MIRROR=$security_snapshot_url
           EOF
           echo changed=true >> "$GITHUB_OUTPUT"
+
+      - name: Validate frozen release inputs
+        if: steps.debian.outputs.changed == 'true'
+        run: bash scripts/validate-release-inputs.sh
 
       - name: Record metadata and start release build
         if: steps.debian.outputs.changed == 'true'
