@@ -40,14 +40,74 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck python3-yaml
 
-      - name: Validate workflow YAML
+      - name: Validate automation YAML
         run: |
           python3 - <<'PY'
-          import glob, yaml
-          for path in glob.glob('.github/workflows/*.yml'):
+          import glob
+          import yaml
+
+          paths = sorted(glob.glob('.github/workflows/*.yml')) + ['.github/dependabot.yml']
+          parsed = {}
+          for path in paths:
               with open(path, encoding='utf-8') as f:
-                  yaml.safe_load(f)
+                  data = yaml.safe_load(f)
+              if not isinstance(data, dict):
+                  raise SystemExit(f'invalid top-level YAML object: {path}')
+              parsed[path] = data
               print(f'valid: {path}')
+
+          dep = parsed['.github/dependabot.yml']
+          updates = dep.get('updates') or []
+          if len(updates) != 1:
+              raise SystemExit('Dependabot must have exactly one maintained ecosystem')
+          cfg = updates[0]
+          expected = {
+              'package-ecosystem': 'github-actions',
+              'directory': '/',
+              'open-pull-requests-limit': 1,
+              'rebase-strategy': 'auto',
+          }
+          for key, value in expected.items():
+              if cfg.get(key) != value:
+                  raise SystemExit(f'Dependabot {key} must remain {value!r}')
+          if (cfg.get('schedule') or {}).get('interval') != 'monthly':
+              raise SystemExit('Dependabot GitHub Actions updates must remain monthly')
+          PY
+
+      - name: Validate documentation links
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import urllib.parse
+
+          root = Path.cwd().resolve()
+          docs = [Path('README.md'), Path('SECURITY.md'), Path('CONTRIBUTING.md')]
+          docs += sorted(Path('docs').rglob('*.md'))
+          link_re = re.compile(r'(?<!!)\[[^\]]*\]\(([^)]+)\)')
+          errors = []
+
+          for source in docs:
+              text = source.read_text(encoding='utf-8')
+              for raw in link_re.findall(text):
+                  target = raw.strip().split()[0].strip('<>')
+                  if not target or target.startswith(('#', 'http://', 'https://', 'mailto:')):
+                      continue
+                  path_part = urllib.parse.unquote(target.split('#', 1)[0])
+                  if not path_part:
+                      continue
+                  destination = (source.parent / path_part).resolve()
+                  try:
+                      destination.relative_to(root)
+                  except ValueError:
+                      errors.append(f'{source}: link escapes repository: {target}')
+                      continue
+                  if not destination.exists():
+                      errors.append(f'{source}: missing local link target: {target}')
+
+          if errors:
+              raise SystemExit('\n'.join(errors))
+          print(f'validated local links in {len(docs)} Markdown files')
           PY
 
       - name: Validate shell and source contracts

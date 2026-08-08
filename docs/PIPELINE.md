@@ -1,93 +1,128 @@
-# Build and update pipeline
+# Build and release pipeline
 
-GitHub Actions builds one factory SD image and three version-matched packages:
-`atlantian-platform`, `atlantian-kernel` and `atlantian-release`.
+AtlANTian produces one factory SD image and three version-matched Debian
+packages: `atlantian-platform`, `atlantian-kernel` and `atlantian-release`.
+
+```mermaid
+flowchart LR
+    A[Pinned source inputs] --> B[Build rootfs + kernel]
+    B --> C[Assemble image + .deb set]
+    C --> D[Static/image contracts]
+    D --> E[Upgrade previous release in QEMU]
+    E --> F[Verify main tip]
+    F --> G[Attest + publish]
+```
 
 ## Release identity
 
-A version such as `13.3.184+g0123456789ab` contains:
+Example: `13.3.184+g0123456789ab`
 
-- Debian major (`13`);
-- AtlANTian Debian-base generation (`3`);
-- monotonic source revision (`184`);
-- exact source commit suffix.
+| Field | Meaning |
+|---|---|
+| `13` | Debian major |
+| `3` | AtlANTian Debian-base generation |
+| `184` | monotonic source revision |
+| `g0123456789ab` | source commit suffix |
 
-The Debian watcher resets the base generation to `1` when it promotes to the
-next Debian major and increments it whenever repository metadata changes within
-that major. Debian version ordering therefore remains monotonic across both
-normal and major upgrades.
+The Debian watcher resets the base generation to `1` on a Debian-major promotion
+and increments it whenever frozen Debian repository metadata changes within the
+same major.
 
 ## Debian automation
 
-The scheduled workflow runs every day at 06:00 Asia/Tomsk. The actual policy is
-implemented in `scripts/refresh-debian-base.sh`, not embedded in workflow YAML.
-It can promote by only one Debian major, requires `armhf`, and freezes a release
-only after Snapshot exactly matches live main/updates/security metadata.
+The scheduled watcher runs daily at **06:00 Asia/Tomsk** and delegates policy to
+`scripts/refresh-debian-base.sh`.
 
-A `GITHUB_TOKEN` commit does not recursively trigger a push workflow, so the
-watcher explicitly dispatches the production build after committing the frozen
-base.
+| Check | Rule |
+|---|---|
+| Current base | refresh only after Snapshot matches live Release metadata |
+| Next Debian major | exactly `current + 1` |
+| Architecture | required suites must still publish `armhf` |
+| New codename | generic debootstrap fallback is available |
+| Failed release | watcher retries while the frozen generation has no release |
+| Quiet repository | monthly heartbeat keeps scheduled Actions active |
 
-## Root filesystem
+A commit created with `GITHUB_TOKEN` does not recursively trigger another push
+workflow, so the watcher explicitly dispatches the production build after it
+freezes a new Debian base.
 
-`debootstrap` and initial package installation use the frozen Snapshot. The
-resolved package manifest and Snapshot metadata are attached to the release.
-Before image assembly, runtime APT is changed to codename-pinned live Debian
-repositories. The immutable Snapshot is therefore provenance for the factory
-baseline rather than a permanent package restriction on installed systems.
+## Factory rootfs vs runtime APT
 
-The root filesystem cache is a root-created compressed archive with numeric
-ownership, modes, ACLs and xattrs preserved. Cached root filesystems are stamped
-with the current source-addressed release identity before packaging.
+| Stage | Repository policy |
+|---|---|
+| Factory build | immutable `snapshot.debian.org` input |
+| Published metadata | exact Snapshot timestamp + Release hashes + package manifest |
+| Running board | live repositories for the installed Debian codename |
+
+This keeps the factory baseline reproducible without turning an installed board
+into a package time capsule.
 
 ## Kernel and boot
 
-The Linux source is pinned to an immutable upstream stable commit. Board kernel
-configuration is validated for required boot/FPGA interfaces and forbidden
-unrelated drivers. `BOOT.bin` is a separately pinned vendor binary trust
-boundary; CI verifies its Git object ID.
+- Linux source is pinned to an immutable upstream stable commit.
+- Board kernel config is checked for required Zynq/FPGA interfaces.
+- `BOOT.bin` is a separately pinned external vendor trust boundary.
+- `atlantian-kernel` stores boot assets under `/usr/lib/atlantian/boot`.
+- Package post-install copies `zImage`, `uImage` and DTB to the FAT `/boot`.
 
-The FAT boot partition is not owned directly by dpkg. `atlantian-kernel` stores
-`zImage`, `uImage` and the DTB under `/usr/lib/atlantian/boot` on ext4 and its
-post-install script copies them atomically to `/boot`.
+## Publication gates
 
-## Publication safety
+| Gate | What it prevents |
+|---|---|
+| immutable input validation | drifting Debian/kernel/BOOT inputs |
+| source and shell contracts | accidental lifecycle/build regressions |
+| image-layout tests | broken partitions, ownership or identity |
+| package identity checks | mixed or incorrectly versioned `.deb` files |
+| updater/LED contract | broken update-state behavior |
+| previous-release upgrade test | publishing a release that cannot replace the prior release safely |
+| final `main` tip check | superseded builds publishing after newer source exists |
+| SHA-256 + provenance attestation | unverifiable release artifacts |
 
-Release builds are serialized. Immediately before publication the workflow
-fetches `main` and publishes only if its own commit is still the branch tip.
-Artifacts are checksum-verified and receive GitHub/Sigstore build-provenance
-attestations. Superseded builds may finish but cannot become the newest release.
+### Previous-release upgrade gate
 
-Before a production build reaches publication, `scripts/test-build.sh` also
-runs `scripts/test-upgrade-from-release.sh`. The gate downloads the newest
-published AtlANTian image older than the candidate, verifies that image against
-its published `SHA256SUMS`, expands its root partition like a first-booted SD
-card and mounts its FAT `/boot` plus ext4 root filesystem. Under `armhf`
-QEMU/binfmt chroot execution it then installs the candidate package set and
-checks package guards, legacy Snapshot-to-live-APT migration, `/boot` replacement,
-`dpkg --audit`, repository reachability and preservation of machine identity,
-SSH host keys and representative `/etc`, `/root`, `/home` and `/var` state.
+The production gate downloads the newest published AtlANTian image older than
+the candidate, verifies it with its published `SHA256SUMS`, expands its root
+partition and mounts FAT `/boot` + ext4 root.
 
-For a real one-major Debian transition the same gate additionally runs the
-target Debian `full-upgrade` and verifies the resulting userspace codename.
-Downgrades, skipped majors and unauthorized one-major package transitions are
-negative tests. Hardware-only behavior such as Zynq boot, FPGA configuration,
-physical I/O and Ethernet PHY operation remains outside emulation and is covered
-by source contracts plus real-board validation. If no older release exists, the
-gate is not applicable; otherwise any failure blocks publication.
+Under `armhf` QEMU/binfmt chroot it then checks:
+
+- installation of the new three-package set;
+- downgrade, skipped-major and unauthorized-major rejection;
+- legacy Snapshot-to-live-APT migration;
+- `/boot` replacement and package/version markers;
+- `dpkg --audit` and repository reachability;
+- machine ID, SSH host key and representative persistent-state preservation.
+
+For a real one-major transition, the gate also performs the Debian
+`full-upgrade` and verifies the resulting codename.
+
+> [!NOTE]
+> QEMU validates userspace/package transitions. Zynq boot, FPGA configuration,
+> Ethernet PHY and physical I/O remain real-board validation boundaries.
+
+## Caches
+
+| Cache | Safety property |
+|---|---|
+| Linux source/build | key includes kernel and board inputs |
+| rootfs archive | numeric owners, modes, xattrs and ACLs are preserved |
+| boot artifacts | invalidated by kernel/board inputs |
+
+Cached rootfs state is restamped with the current release identity before
+packaging.
+
+## Dependency maintenance
+
+Dependabot checks GitHub Actions monthly and groups routine Action updates into
+one PR. PR CI validates workflow YAML and repository contracts before such
+infrastructure changes are merged. Dependabot configuration has no Debian or
+AtlANTian version pin and should not require routine editing.
 
 ## Installed updates
 
-`atlantian-release-check` scans complete GitHub releases and enforces staged
-Debian-major reachability. `atlantian-sysupgrade` verifies exact package names,
-SHA-256 digests and embedded Debian package versions before installation.
+`atlantian-release-check` selects only reachable releases.
+`atlantian-sysupgrade` verifies exact package names, SHA-256 values and package
+versions before installation.
 
-Within one Debian major it installs the AtlANTian package set and runs normal
-APT `full-upgrade`. Across one Debian major it first brings the current major
-fully up to date, disables/backups third-party repositories, installs the target
-AtlANTian package set and managed target-codename source template, then performs
-the Debian major `full-upgrade` and reboots.
-
-Normal updates do not rewrite partitions. `/etc`, SSH keys, `/root`, `/home`,
-`/var`, package databases and user-installed packages remain ordinary Debian
-state.
+See [Upgrading](UPGRADING.md) for administrator-facing behavior and
+[Debian lifecycle](DEBIAN-LIFECYCLE.md) for automatic base selection.

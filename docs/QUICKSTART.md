@@ -1,48 +1,81 @@
-# AtlANTian Quick Start
+# Quick Start
 
-## Requirements
+## What you need
 
-- Bitmain Antminer S9 CTRL_C41 control board;
-- microSD card (4 GiB or larger recommended);
-- 12 V board power;
-- Ethernet with DHCP and/or a **3.3 V** USB-UART adapter;
-- the newest AtlANTian `.img` from GitHub Releases.
+| Item | Requirement |
+|---|---|
+| Board | Bitmain Antminer S9 CTRL_C41 |
+| Storage | microSD, 4 GiB or larger recommended |
+| Power | 12 V board supply |
+| Network | Ethernet with DHCP |
+| Console | optional 3.3 V USB-UART, `115200 8N1` |
+| Image | newest AtlANTian `.img` + `SHA256SUMS` from GitHub Releases |
 
-Do not connect 5 V logic to the board UART.
+> [!CAUTION]
+> The board UART is **3.3 V logic**. Do not connect 5 V UART logic.
 
-## Write the image
+## 1. Verify the download
 
-On Windows use Rufus, Raspberry Pi Imager or Etcher in raw/DD mode. On Linux:
+From the directory containing the image and `SHA256SUMS`:
+
+```sh
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+Expected result for the image is `OK`.
+
+Optional provenance verification with GitHub CLI:
+
+```sh
+gh attestation verify atlantian-*.img --repo BlackF1re/atlantian
+```
+
+`BUILD-INFO.txt` in each release records the source commit, Debian Snapshot and
+kernel identity used for that build.
+
+## 2. Write the image
+
+**Windows:** use Rufus, Raspberry Pi Imager or Etcher in raw/DD mode.
+
+**Linux:**
 
 ```sh
 sudo dd if=atlantian-*.img of=/dev/sdX bs=8M status=progress conv=fsync
 sync
 ```
 
-Use the whole card device, not a partition, and verify `/dev/sdX` carefully.
+> [!WARNING]
+> Use the whole card device, not a partition, and verify `/dev/sdX` carefully.
 
-## First boot
+## 3. First boot
 
 1. Power the board off and select SD boot.
-2. Insert the microSD card and connect Ethernet/UART.
-3. Apply 12 V.
-4. The first boot expands `/dev/mmcblk0p2` and reboots once.
-5. Connect over DHCP or UART (`115200 8N1`).
+2. Insert the microSD card.
+3. Connect Ethernet and/or UART.
+4. Apply 12 V.
+5. Wait for the automatic root-filesystem expansion and one reboot.
+6. Connect over DHCP or UART.
 
-The default hostname is `atlantian`. A fresh image permits root access with an
-empty password for initial bench provisioning. Immediately run:
+| Default | Value |
+|---|---|
+| Hostname | `atlantian` |
+| User | `root` |
+| Password | empty by design for initial provisioning |
+| UART | `115200 8N1` |
+
+> [!IMPORTANT]
+> Passwordless root provisioning is intentional, appliance-style behavior
+> similar to OpenWrt. Keep a fresh board on a trusted network. Run `passwd` or
+> install your SSH public key when you want authenticated access.
+
+Every flash generates a new machine ID and SSH host keys. After reflashing, an
+SSH client may need the old key removed:
 
 ```sh
-passwd
+ssh-keygen -R BOARD_IP
 ```
 
-Do not expose an unconfigured image to an untrusted network.
-
-Each flash creates a new machine ID and OpenSSH host keys. After reflashing, an
-SSH client may need the deliberately stale host key removed with
-`ssh-keygen -R BOARD_IP`.
-
-## Verify
+## 4. Verify the system
 
 ```sh
 cat /etc/os-release
@@ -54,14 +87,15 @@ free -h
 atlantian-fpga status
 ```
 
-Expected high-level state is the current Debian stable release selected by the
-AtlANTian release automation, `armhf` userspace, the pinned board kernel, a FAT
-boot partition and an ext4 root partition expanded to the card.
+Expected high-level state:
 
-## Packages
+- current AtlANTian-selected Debian stable, `armhf` userspace;
+- pinned board kernel;
+- FAT boot partition + ext4 root partition;
+- root filesystem expanded to the microSD card;
+- live Debian runtime repositories.
 
-Runtime APT uses live Debian repositories for the installed codename, not the
-factory Snapshot:
+## 5. Install packages
 
 ```sh
 apt update
@@ -69,10 +103,8 @@ apt upgrade
 apt install git python3 tmux
 ```
 
-The codename is intentionally fixed for the lifetime of that Debian major.
-When Debian publishes a new stable release, AtlANTian's repository automation
-builds a new major only if `armhf` remains supported; an installed board changes
-major only through `atlantian-sysupgrade`.
+The factory image was built from an immutable Debian Snapshot, but the running
+board uses live repositories for its installed codename.
 
 ## AtlANTian updates
 
@@ -82,14 +114,8 @@ atlantian-sysupgrade --notes
 atlantian-sysupgrade
 ```
 
-The updater verifies all three AtlANTian packages and checksums. A Debian major
-upgrade is staged one major at a time. Third-party files under
-`/etc/apt/sources.list.d/` are backed up and disabled during that transition so
-an old external repository cannot contaminate the new Debian base. The backup
-location is recorded under `/var/lib/atlantian/update/`.
-
-The periodic on-board checker only notifies; it does not install releases
-without an explicit `atlantian-sysupgrade` (or `--yes`).
+For normal APT updates, AtlANTian updates and Debian-major transitions, see
+**[Upgrading](UPGRADING.md)**.
 
 ## FPGA basics
 
@@ -99,39 +125,30 @@ atlantian-fpga apply <instance> <overlay.dtbo>
 atlantian-fpga remove <instance>
 ```
 
-A DT overlay describes hardware but does not create FPGA logic. The loaded
+A DT overlay describes hardware; it does not create FPGA logic. The loaded
 bitstream must implement the peripheral described by the overlay.
 
-## Board-specific notes
+## Board notes
 
-- `poweroff` halts Linux but does not remove external 12 V.
-- CTRL_C41 has no battery-backed RTC; network time is important after cold boot.
-- The base DT keeps the conflicted PS USB route disabled.
-- NAND is a separate MTD device; normal SD updates do not overwrite it.
-- Not every peripheral present in the Zynq datasheet is safely routed on this
-  PCB. Consult [hardware-support-matrix.md](hardware-support-matrix.md).
+| Topic | Behavior |
+|---|---|
+| `poweroff` | halts Linux; external 12 V remains present |
+| RTC | none fitted; network time is important after cold boot |
+| USB | conflicted PS route is disabled in the base DT |
+| NAND | separate MTD device; normal SD updates do not overwrite it |
+| PL peripherals | require a matching bitstream + DT overlay |
 
 ## Troubleshooting
 
-If Ethernet has no address, use UART and inspect:
+| Symptom | Check |
+|---|---|
+| no Ethernet address | `networkctl`, `ip link`, `ip address` |
+| network service issue | `journalctl -u systemd-networkd --no-pager` |
+| wrong time | `timedatectl status` |
+| NTP issue | `systemctl status systemd-timesyncd --no-pager` |
+| one reboot on first boot | expected rootfs expansion behavior |
+| SSH host-key warning after reflash | `ssh-keygen -R BOARD_IP` |
 
-```sh
-networkctl
-ip link
-ip address
-journalctl -u systemd-networkd --no-pager
-```
-
-If time is wrong:
-
-```sh
-timedatectl status
-systemctl status systemd-timesyncd --no-pager
-```
-
-If the board rebooted once on the first boot, that is expected root-filesystem
-expansion behavior.
-
-Further reading: [README](../README.md), [Debian lifecycle](DEBIAN-LIFECYCLE.md),
-[release pipeline](PIPELINE.md), [persistence](PERSISTENCE.md), and
-[security policy](../SECURITY.md).
+Further reading: [documentation index](README.md),
+[hardware support](hardware-support-matrix.md), [persistence](PERSISTENCE.md) and
+[security](../SECURITY.md).

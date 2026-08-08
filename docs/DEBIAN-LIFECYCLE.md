@@ -1,74 +1,91 @@
-# Debian lifecycle policy
+# Debian lifecycle
 
 AtlANTian follows Debian stable automatically while keeping factory images
-reproducible and installed systems safe from accidental major upgrades.
+reproducible and installed systems protected from accidental major upgrades.
 
-## Build baseline
+## Policy
 
-`config/release.env` records the selected Debian codename, major version and
-architecture. `config/debian-snapshot.env` plus the three `debian-*.sha256`
-files record the exact immutable Debian repository metadata used by a release.
+| Rule | Behavior |
+|---|---|
+| Architecture | `armhf` must be officially published |
+| Current Debian | live metadata is compared with the pinned factory Snapshot |
+| Next Debian | only `current major + 1` is eligible |
+| Repositories | main, updates and security must all exist |
+| Snapshot | must contain byte-for-byte matching Release metadata |
+| Running board | uses its fixed codename, never moving `stable` |
+| Failed automation | fail closed; keep the last compatible base |
 
-`scripts/refresh-debian-base.sh` is the single implementation of base
-selection. The scheduled workflow is intentionally thin and calls that script.
+## Daily watcher
 
-## Daily selection
+At **06:00 Asia/Tomsk**:
 
-At 06:00 Asia/Tomsk the watcher checks Debian release metadata. It considers
-`stable`, `oldstable` and `oldoldstable` so it can recover after a long period
-without scheduled workflow execution. It will only select a release whose major
-version is exactly one greater than the configured major and whose main,
-updates and security repositories all publish `DEBIAN_ARCH` (`armhf`).
+1. read the configured Debian codename/major;
+2. inspect Debian `stable`, `oldstable` and `oldoldstable` aliases;
+3. detect an eligible next major without skipping generations;
+4. verify `armhf` in main, updates and security;
+5. wait until Snapshot matches the observed live Release files;
+6. freeze the exact metadata and update AtlANTian's base generation;
+7. preflight a real rootfs if this is a new Debian major;
+8. commit the frozen base and dispatch the production release workflow.
 
-A new major is not accepted until all required live repositories and their
-`binary-armhf` indexes exist. It is then not committed until Debian Snapshot
-contains byte-for-byte matching Release files. A partial Debian publication can
-therefore delay AtlANTian by one or more watcher runs, but cannot create a mixed
-or unreproducible factory image.
+```mermaid
+flowchart LR
+    A[Live Debian metadata] --> B{Compatible?}
+    B -- no --> C[Keep current base]
+    B -- yes --> D{Snapshot caught up?}
+    D -- no --> E[Retry next run]
+    D -- yes --> F[Freeze metadata]
+    F --> G[Build/release]
+```
 
-If the next Debian stable drops `armhf`, AtlANTian deliberately remains on the
-last compatible Debian release instead of switching to an unusable base.
+## Future Debian codenames
 
-## Future codenames
+The build does not require the GitHub runner's installed `debootstrap` package
+to already know the new codename. If the codename-specific script is missing,
+AtlANTian uses Debian's generic `sid` bootstrap script while still targeting the
+selected codename and immutable Snapshot.
 
-The build does not assume that the host's `debootstrap` package already knows a
-new codename. If `/usr/share/debootstrap/scripts/<codename>` is absent,
-`build-rootfs.sh` supplies the generic Debian `sid` bootstrap script explicitly
-while still using the selected codename and immutable Snapshot mirror.
+> [!IMPORTANT]
+> If a future Debian stable drops `armhf`, AtlANTian deliberately stays on the
+> last compatible Debian release instead of publishing an unusable image.
 
-## Runtime repositories
+## Running systems
 
-Factory package selection uses Snapshot. Before the image is assembled,
-`/etc/apt/sources.list` is replaced by a codename-pinned live Debian template.
-The same template is stored at `/usr/lib/atlantian/runtime-sources.list` and the
-installed Debian major/codename are recorded under `/usr/lib/atlantian/`.
+Factory construction and runtime package access are intentionally separate:
 
-The moving `stable` alias is never used on a running board. This allows ordinary
-APT security/package updates while preventing an implicit major upgrade.
+| Factory image | Installed board |
+|---|---|
+| exact Snapshot | live Debian repositories |
+| reproducible package baseline | current packages/security fixes |
+| codename/major recorded | same codename until explicit AtlANTian major upgrade |
 
-## Installed-system major upgrades
+A normal `apt upgrade` stays inside the current Debian major.
 
-`atlantian-release-check` scans published releases rather than relying on the
-single GitHub `/releases/latest` endpoint. A newer release in the currently
-installed Debian major always wins over a release in the next major. This makes
-the lifecycle-aware updater deploy itself before a major transition whenever a
-same-major bridge release exists.
+## Debian-major upgrade on-device
 
-`atlantian-sysupgrade` refuses downgrades and refuses to skip a Debian major.
-For a one-major transition it backs up and disables third-party APT source files,
-fully upgrades the current Debian base, installs the next AtlANTian package set,
-switches to the packaged next-codename Debian sources, performs `full-upgrade`,
-and reboots. Disabled third-party source files remain in the update-state backup
-for manual review after the transition.
+`atlantian-release-check` scans published releases and prefers a newer
+same-major bridge release before the next major. `atlantian-sysupgrade` then:
 
-No software already shipped on an old image can be retroactively changed. Very
-old releases predating the lifecycle-aware updater should first install the
-newest available same-major AtlANTian release before a Debian-major transition.
+1. fully updates the current Debian major;
+2. backs up and disables third-party APT source files;
+3. installs the next-major AtlANTian package set;
+4. installs the managed next-codename Debian base template;
+5. performs `full-upgrade`;
+6. records/resumes interrupted transitions when necessary;
+7. reboots.
 
-## GitHub schedule liveness
+See [Upgrading](UPGRADING.md) for operator instructions.
 
-GitHub may automatically disable scheduled workflows in a public repository after
-60 days without repository activity. When no Debian metadata change has produced a
-real release commit, the watcher updates `.github/debian-watch-heartbeat` once per
-calendar month. That path is outside the production build trigger, so it keeps the
-schedule alive without creating a release.
+## Liveness and recovery
+
+| Situation | Automation response |
+|---|---|
+| Snapshot is behind live Debian | retry on the next daily run |
+| new major is only partially published | keep current base and retry |
+| production build fails after a base freeze | retry until that generation has a published release |
+| repository is otherwise quiet | monthly heartbeat keeps scheduled workflow active |
+| scheduler was inactive for a long time | `stable`/`oldstable`/`oldoldstable` allow sequential recovery |
+
+No old installed image can gain updater logic retroactively. Very old releases
+should first install the newest reachable same-major AtlANTian release before a
+Debian-major transition.
