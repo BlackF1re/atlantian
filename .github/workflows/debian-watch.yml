@@ -16,92 +16,90 @@ concurrency:
 
 jobs:
   check:
-    name: Check Debian base and freeze snapshot
+    name: Check Debian stable and freeze build snapshot
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       # v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
-      - name: Detect and freeze Debian Release metadata
+      - name: Select Debian base and freeze exact Snapshot metadata
         id: debian
-        run: |
-          set -eu
-          . config/release.env
-          main_suite="$DEBIAN_CODENAME"
-          updates_suite="$DEBIAN_CODENAME-updates"
-          security_suite="$DEBIAN_CODENAME-security"
-
-          curl -fsSL "https://deb.debian.org/debian/dists/$main_suite/Release" -o /tmp/current-main
-          curl -fsSL "https://deb.debian.org/debian/dists/$updates_suite/Release" -o /tmp/current-updates
-          curl -fsSL "https://security.debian.org/debian-security/dists/$security_suite/Release" -o /tmp/current-security
-          current_main_sha=$(sha256sum /tmp/current-main | awk '{print $1}')
-          current_updates_sha=$(sha256sum /tmp/current-updates | awk '{print $1}')
-          current_security_sha=$(sha256sum /tmp/current-security | awk '{print $1}')
-          old_main_sha=$(tr -d '\r\n' < debian-release.sha256)
-          old_updates_sha=$(tr -d '\r\n' < debian-updates-release.sha256)
-          old_security_sha=$(tr -d '\r\n' < debian-security-release.sha256)
-          if [ "$current_main_sha" = "$old_main_sha" ] && \
-             [ "$current_updates_sha" = "$old_updates_sha" ] && \
-             [ "$current_security_sha" = "$old_security_sha" ]; then
-            echo changed=false >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Never build a release from moving mirrors. Wait until Debian
-          # Snapshot contains exactly the Release files which triggered this run.
-          timestamps=$(curl -fsSL https://snapshot.debian.org/mr/timestamp/)
-          main_timestamp=$(printf '%s' "$timestamps" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["debian"][-1])')
-          security_timestamp=$(printf '%s' "$timestamps" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["debian-security"][-1])')
-          snapshot_url="https://snapshot.debian.org/archive/debian/${main_timestamp}"
-          security_snapshot_url="https://snapshot.debian.org/archive/debian-security/${security_timestamp}"
-          curl -fsSL "$snapshot_url/dists/$main_suite/Release" -o /tmp/snapshot-main
-          curl -fsSL "$snapshot_url/dists/$updates_suite/Release" -o /tmp/snapshot-updates
-          curl -fsSL "$security_snapshot_url/dists/$security_suite/Release" -o /tmp/snapshot-security
-          snapshot_main_sha=$(sha256sum /tmp/snapshot-main | awk '{print $1}')
-          snapshot_updates_sha=$(sha256sum /tmp/snapshot-updates | awk '{print $1}')
-          snapshot_security_sha=$(sha256sum /tmp/snapshot-security | awk '{print $1}')
-          if [ "$snapshot_main_sha" != "$current_main_sha" ] || \
-             [ "$snapshot_updates_sha" != "$current_updates_sha" ] || \
-             [ "$snapshot_security_sha" != "$current_security_sha" ]; then
-            echo 'Debian Snapshot has not caught up with the observed mirrors; retrying on the next daily run.'
-            echo changed=false >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          printf '%s\n' "$snapshot_main_sha" > debian-release.sha256
-          printf '%s\n' "$snapshot_updates_sha" > debian-updates-release.sha256
-          printf '%s\n' "$snapshot_security_sha" > debian-security-release.sha256
-          cat > config/debian-snapshot.env <<EOF
-          # Reproducible Debian rootfs input. Updated only by the Debian watcher after
-          # it has verified that this archive snapshot contains the observed Release.
-          DEBIAN_SNAPSHOT_TIMESTAMP=$main_timestamp
-          DEBIAN_SNAPSHOT_MIRROR=$snapshot_url
-          DEBIAN_SECURITY_SNAPSHOT_MIRROR=$security_snapshot_url
-          EOF
-          echo changed=true >> "$GITHUB_OUTPUT"
+        run: bash scripts/refresh-debian-base.sh
 
       - name: Validate frozen release inputs
         if: steps.debian.outputs.changed == 'true'
         run: bash scripts/validate-release-inputs.sh
 
-      - name: Record metadata and start release build
-        if: steps.debian.outputs.changed == 'true'
+      # A major promotion is rare and deserves a real userspace compatibility
+      # test before main is changed. This catches renamed/removed packages and
+      # debootstrap changes while the previous Debian generation stays intact.
+      - name: Preflight a new Debian major root filesystem
+        if: steps.debian.outputs.promoted == 'true'
         run: |
-          set -eu
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            debootstrap qemu-user-static binfmt-support
+          sudo -E bash scripts/build-rootfs.sh
+          sudo rm -rf out/rootfs
+
+      - name: Commit frozen Debian base and start release build
+        if: steps.debian.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
           . config/release.env
-          next_build=$((ATLANTIAN_BUILD + 1))
-          sed -i -E "s/^ATLANTIAN_BUILD=.*/ATLANTIAN_BUILD=${next_build}/" config/release.env
           git config user.name github-actions
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add debian-release.sha256 debian-updates-release.sha256 debian-security-release.sha256 \
             config/debian-snapshot.env config/release.env
-          git commit -m "chore: freeze Debian ${DEBIAN_CODENAME} snapshot (AtlANTian ${DEBIAN_MAJOR}.${next_build})"
+          if [[ '${{ steps.debian.outputs.promoted }}' == true ]]; then
+            message="chore: promote Debian stable to ${DEBIAN_CODENAME} (AtlANTian ${DEBIAN_MAJOR}.${ATLANTIAN_BUILD})"
+          else
+            message="chore: freeze Debian ${DEBIAN_CODENAME} snapshot (AtlANTian ${DEBIAN_MAJOR}.${ATLANTIAN_BUILD})"
+          fi
+          git commit -m "$message"
           git push origin main
-          # GITHUB_TOKEN pushes do not trigger push workflows, so dispatch the
-          # normal release workflow explicitly for the new immutable source tip.
+          # A push made by GITHUB_TOKEN does not recursively start push workflows.
           gh workflow run 'Build and release AtlANTian' --ref main
+
+      # GitHub can disable scheduled workflows in an inactive public repository.
+      # A monthly workflow-only commit keeps the watcher alive but is deliberately
+      # outside the production release workflow's path filters.
+      - name: Keep the scheduled watcher active on quiet repositories
+        if: steps.debian.outputs.changed != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          month=$(date -u +%Y-%m)
+          current=$(cat .github/debian-watch-heartbeat 2>/dev/null || true)
+          [[ "$current" == "$month" ]] && exit 0
+          printf '%s\n' "$month" > .github/debian-watch-heartbeat
+          git config user.name github-actions
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/debian-watch-heartbeat
+          git commit -m "chore: keep Debian watcher active ($month)"
+          git push origin main
+
+      # If a watcher-triggered production build failed, the frozen generation
+      # would otherwise remain committed forever with no future metadata change
+      # to retrigger it. Retry until this Debian generation has a published tag.
+      - name: Ensure the current Debian generation has a release
+        if: steps.debian.outputs.changed != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          . config/release.env
+          prefix="v${DEBIAN_MAJOR}.${ATLANTIAN_BUILD}."
+          if gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -Fq "$prefix"; then
+            echo "A published release already exists for AtlANTian ${DEBIAN_MAJOR}.${ATLANTIAN_BUILD}."
+            exit 0
+          fi
+          echo "No published release exists for AtlANTian ${DEBIAN_MAJOR}.${ATLANTIAN_BUILD}; retrying production build."
+          gh workflow run 'Build and release AtlANTian' --ref main

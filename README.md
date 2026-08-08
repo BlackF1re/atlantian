@@ -1,44 +1,37 @@
 # AtlANTian GNU/Linux
 
 [![Build and release](https://github.com/BlackF1re/atlantian/actions/workflows/build-release.yml/badge.svg)](https://github.com/BlackF1re/atlantian/actions/workflows/build-release.yml)
+[![Debian base](https://github.com/BlackF1re/atlantian/actions/workflows/debian-watch.yml/badge.svg)](https://github.com/BlackF1re/atlantian/actions/workflows/debian-watch.yml)
 [![PR CI](https://github.com/BlackF1re/atlantian/actions/workflows/ci.yml/badge.svg)](https://github.com/BlackF1re/atlantian/actions/workflows/ci.yml)
 
-**AtlANTian** is a small Debian GNU/Linux distribution for the Bitmain Antminer S9
-**CTRL_C41** control board. It turns the board into a general-purpose Xilinx Zynq
-platform instead of treating it as a mining appliance.
+**AtlANTian** is a compact Debian GNU/Linux distribution for the Bitmain
+Antminer S9 **CTRL_C41** control board. It turns the Xilinx Zynq-7010 board into
+a general-purpose Linux/FPGA platform instead of a mining appliance.
 
 | | |
-| --- | --- |
+|---|---|
 | Board | Bitmain Antminer S9 CTRL_C41 |
-| SoC | Xilinx Zynq-7010 |
+| SoC | Xilinx Zynq-7010, dual Cortex-A9 + programmable logic |
 | RAM | 512 MiB DDR3 |
-| Base | Debian 13 `trixie` |
-| Kernel | Linux 6.12.100 |
-| System storage | microSD, two-partition image |
-| PL support | FPGA Manager + FPGA Region + DT overlays |
+| Debian base | Debian stable, `armhf`, selected automatically |
+| Kernel | Pinned Linux 6.12 LTS board kernel |
+| System storage | microSD, FAT boot + ext4 root |
+| FPGA | FPGA Manager/Region + DT overlays |
 
-AtlANTian deliberately stays close to Debian: Debian supplies almost all
-userspace and security maintenance, while this repository supplies the board
-description, kernel policy, FPGA plumbing, factory image and release/update
-logic needed by CTRL_C41.
+AtlANTian stays deliberately close to Debian. Debian owns almost all userspace
+and package maintenance; this repository owns the board description, kernel
+policy, FPGA plumbing, factory image and AtlANTian release tooling.
 
 ## Quick start
 
-1. Download the newest `.img` from [GitHub Releases](https://github.com/BlackF1re/atlantian/releases/latest).
+1. Open [GitHub Releases](https://github.com/BlackF1re/atlantian/releases) and download the newest `.img`.
 2. Write it to a microSD card with Rufus, Raspberry Pi Imager, Etcher or `dd`.
-3. Set CTRL_C41 to **SD boot**, insert the card and power the board.
-4. Wait through the first automatic reboot while AtlANTian expands the root
-   partition to the card.
-5. Connect by Ethernet/DHCP or the 3.3 V UART (`115200 8N1`).
-6. Log in as `root`. A fresh image initially permits an empty root password on
-   the local bench network.
-7. Immediately set a password:
+3. Select SD boot on CTRL_C41, insert the card and power the board.
+4. The first boot expands the root partition and reboots once.
+5. Connect over DHCP Ethernet or 3.3 V UART (`115200 8N1`).
+6. Log in as `root` and immediately set a password with `passwd`.
 
-```sh
-passwd
-```
-
-Then verify the system:
+Then verify:
 
 ```sh
 cat /etc/os-release
@@ -48,120 +41,52 @@ networkctl
 atlantian-fpga status
 ```
 
-For flashing examples, first-login checks and troubleshooting, see
-**[Quick Start](docs/QUICKSTART.md)**.
+See [Quick Start](docs/QUICKSTART.md) for the full first-boot procedure.
 
-> **Security:** the empty initial root password is for first access on an
-> isolated trusted network. Set `passwd` before exposing the board to an
-> untrusted LAN.
+> **Security:** a fresh image intentionally permits an empty root password for
+> initial bench access. Use only a trusted isolated network until `passwd` has
+> been set. Every flashed image generates unique machine and SSH host keys.
 
-## What works in the base image
-
-The base image enables only hardware whose routing and ownership are understood.
-It does not assume that every peripheral present inside the Zynq package is
-actually usable on this PCB.
+## Hardware support
 
 | Function | Status | Notes |
-| --- | --- | --- |
+|---|---|---|
 | Zynq-7010 + 512 MiB DDR3 | Ready | Main PS platform |
 | microSD | Ready | Boot + ext4 root filesystem |
-| Ethernet | Ready | MACB/GEM, MDIO, DHCP, stable local MAC |
-| UART | Ready | `ttyPS0`, console + getty at 115200 8N1 |
+| Gigabit Ethernet | Ready | MACB/GEM, DHCP, persistent local MAC |
+| UART | Ready | `ttyPS0`, console/getty at 115200 |
 | NAND | Ready | 256 MiB MTD, UBI/UBIFS, software BCH ECC |
-| D2/D3 + buttons | Ready | Linux GPIO/LED/input plumbing |
+| D2/D3 + S1/S2 | Ready | Linux LED/input plumbing |
 | XADC | Ready | IIO + hwmon |
 | Watchdog | Ready | `/dev/watchdog0` |
 | FPGA configuration | Ready | FPGA Manager/Region + configfs overlays |
-| D5-D8 | Profile | Shipped `status-leds` PL profile |
-| PS USB | Disabled by default | Known MIO conflict; enable only with validated routing/profile |
-| Unused PS I2C/SPI | Disabled by default | Avoids claiming conflicted or unverified pins |
-| Fan/hash-board/extra PL I/O | Profile-dependent | Requires matching bitstream + DT overlay |
-| RTC | Not fitted | Network time via `systemd-timesyncd` |
-| Software power cut | Not available | `poweroff` halts Linux but cannot remove external 12 V |
+| D5-D8 | Profile | Shipped `status-leds` FPGA profile |
+| PS USB | Disabled by default | Known MIO conflict; requires validated routing/profile |
+| Other PL I/O | Profile-dependent | Matching bitstream + DT overlay required |
+| RTC | Not fitted | Network time via systemd-timesyncd |
 
-The detailed pin-level boundary lives in
-[`docs/hardware-support-matrix.md`](docs/hardware-support-matrix.md).
+The pin-level boundary and evidence are documented in
+[hardware-support-matrix.md](docs/hardware-support-matrix.md).
 
-## Design principles
+## Debian package model
 
-AtlANTian follows a few simple rules:
+A published image uses two deliberately different Debian sources:
 
-- **Debian-native:** normal APT/dpkg, systemd and ordinary filesystem layout.
-- **Board-specific, not board-fiction:** hardware is enabled only when the
-  CTRL_C41 routing is understood.
-- **Small base image:** no desktop, PYNQ/Jupyter or large convenience stacks.
-- **PL remains useful:** FPGA infrastructure is present without forcing one
-  monolithic bitstream on every use case.
-- **Releases are reproducible from pinned inputs:** Debian Snapshot metadata,
-  Linux source commit and boot firmware input are fixed for each source release.
-- **Runtime Debian stays current:** installed systems use the normal live Debian
-  stable, updates and security repositories rather than remaining bound to the
-  factory-build Snapshot.
-- **Normal user state survives updates:** `/etc`, `/root`, `/home`, `/var`, APT
-  state and user-installed packages remain ordinary Debian state.
+**Build time:** the root filesystem is assembled from an immutable
+`snapshot.debian.org` point. The exact Release hashes, Snapshot timestamp and
+resolved package manifest are published with the image. This makes the factory
+baseline reproducible.
 
-## First boot and identity
+**Runtime:** the flashed board uses the normal live Debian repositories for its
+selected codename:
 
-The factory image contains no reusable SSH private host key or pre-generated
-machine identity.
-
-On each newly flashed installation:
-
-- systemd creates a unique machine identity;
-- OpenSSH generates unique host keys;
-- systemd derives a stable locally-administered Ethernet MAC from that machine
-  identity;
-- `atlantian-grow-rootfs` expands partition 2 to the remaining microSD capacity.
-
-The expansion requires one automatic reboot. After that the card behaves like a
-normal two-partition Debian installation.
-
-If you reflash the same board, its SSH host key will intentionally change. Your
-client may require removal of the old `known_hosts` entry.
-
-## Storage
-
-The factory image is intentionally simple:
-
-| Partition | Filesystem | Purpose |
-| --- | --- | --- |
-| `p1` | FAT | 64 MiB boot partition |
-| `p2` | ext4 | Root filesystem, expanded on first boot |
-
-There is no overlay filesystem, hidden persistence partition or special data
-volume. Everything you normally expect to persist on Debian persists on `/`.
-
-The on-board NAND is **separate** from the microSD installation. Normal boot,
-package updates and `atlantian-sysupgrade` do not overwrite it. Treat raw NAND
-backups carefully: bad-block and OOB/ECC assumptions matter.
-
-More detail: [`docs/PERSISTENCE.md`](docs/PERSISTENCE.md).
-
-## Networking and access
-
-The default hostname is `atlantian`. Ethernet uses systemd-networkd with DHCP.
-The serial console is always available on `ttyPS0` at `115200 8N1`.
-
-Useful first commands:
-
-```sh
-hostnamectl
-networkctl
-ip address
-ip route
+```text
+deb https://deb.debian.org/debian <codename> main non-free-firmware
+deb https://deb.debian.org/debian <codename>-updates main non-free-firmware
+deb https://security.debian.org/debian-security <codename>-security main non-free-firmware
 ```
 
-The base system is root-only, similar in spirit to OpenWrt. There is no default
-`sudo` user.
-
-A local build can override non-release installation defaults in
-`config/local.env`; copy `config/local.env.example` and edit it. That file is
-ignored by Git and does not change the identity of published releases.
-
-## Installing software
-
-AtlANTian is ordinary Debian, so package installation and maintenance are
-normal:
+Therefore an old AtlANTian image does **not** become a package time capsule:
 
 ```sh
 apt update
@@ -169,123 +94,92 @@ apt upgrade
 apt install git python3 tmux
 ```
 
-Published systems point APT at the normal live Debian stable repositories:
-`trixie`, `trixie-updates` and `trixie-security`. An installation therefore
-continues to see newly published Debian packages and security fixes even if its
-AtlANTian image is much older than the newest release.
+continues to receive current packages and security fixes for that Debian major.
+The codename is used rather than the moving `stable` alias so an installed board
+never performs an unplanned Debian major upgrade merely because Debian released
+a new stable version.
 
-The factory image itself is still built from an **immutable Debian Snapshot**.
-That Snapshot is build provenance: it records the exact Debian package set used
-to create a release and keeps the image reproducible. It is deliberately not a
-runtime package-availability restriction.
+## Automatic Debian lifecycle
 
-The base image already contains practical board/debugging tools including:
+The repository is designed to keep releasing images without routine manual
+maintenance.
 
-`gpiod`, `i2c-tools`, `spi-tools`, `can-utils`, `lm-sensors`, `libiio-utils`,
-`mtd-utils`, `dtc`, `ethtool`, `iproute2`, `nftables`, `usbutils`, `v4l-utils`,
-`alsa-utils`, `curl`, `jq`, `kmod`, `htop`, `pigz`, `less` and `nano`.
+Every day at **06:00 Asia/Tomsk (23:00 UTC)** the `Daily Debian base update
+check` workflow:
 
-ZRAM uses roughly one third of RAM through Debian `zram-tools`; AtlANTian does
-not create disk swap by default.
+1. checks the configured Debian release plus Debian `stable`, `oldstable` and
+   `oldoldstable` aliases;
+2. promotes AtlANTian by **at most one Debian major at a time**;
+3. promotes only if the next release officially publishes `armhf` in main,
+   updates and security repositories;
+4. waits until `snapshot.debian.org` contains the exact Release metadata seen
+   on the live mirrors;
+5. freezes that Snapshot, advances the AtlANTian Debian build generation and
+   commits the new base to `main`;
+6. dispatches the normal production release workflow.
 
-## Updating AtlANTian
+A small monthly `.github/debian-watch-heartbeat` commit is made when Debian is
+otherwise completely quiet. GitHub documents that scheduled workflows in public
+repositories may be disabled after 60 days without repository activity; the
+heartbeat prevents a genuinely unattended repository from silently losing its
+daily watcher.
 
-Check for a release without installing it:
+This means that when the Debian release after the current one becomes stable,
+AtlANTian automatically starts building from it **if `armhf` is still an
+officially published architecture**. If Debian drops `armhf`, the automation
+keeps the last compatible base instead of producing a broken image.
+
+The build also uses a generic Debian debootstrap script when the runner's
+installed `debootstrap` package does not yet know a newly released codename.
+See [Debian lifecycle](docs/DEBIAN-LIFECYCLE.md) for the complete policy.
+
+## Updating an installed board
+
+Normal Debian userspace maintenance uses APT. AtlANTian-specific releases carry
+the board kernel, device tree, FPGA support and AtlANTian-owned tooling.
 
 ```sh
 atlantian-sysupgrade --check
-```
-
-Read the available release notes:
-
-```sh
 atlantian-sysupgrade --notes
-```
-
-Install the newest release interactively:
-
-```sh
 atlantian-sysupgrade
 ```
 
-The updater:
+The updater verifies one exact set of `atlantian-platform`, `atlantian-kernel`
+and `atlantian-release` packages against `SHA256SUMS` and rejects downgrades or
+mixed release versions.
 
-1. selects a release that is strictly newer according to Debian version rules;
-2. downloads exactly `atlantian-platform`, `atlantian-kernel` and
-   `atlantian-release` for that version;
-3. verifies `SHA256SUMS` and the version embedded in every package;
-4. installs the AtlANTian packages with normal APT/dpkg;
-5. refreshes the configured Debian repositories and runs `apt full-upgrade`;
-6. reboots normally.
+Across a Debian major transition it additionally:
 
-During the confirmed update D3 shows three red flashes followed by three green
-flashes until the reboot transition.
+- refuses to skip a Debian major;
+- prefers a newer same-major AtlANTian bridge release before offering the next
+  major;
+- disables and backs up third-party APT source files;
+- fully upgrades the current Debian major first;
+- installs the next AtlANTian release and its managed base repository template;
+- runs the Debian `full-upgrade` into the next major;
+- reboots normally.
 
-The daily on-board release checker **does not install updates automatically**.
-It only records a newer release and shows a short notice on later SSH logins.
-Explicit unattended installation is available with `atlantian-sysupgrade --yes`
-for users who deliberately want it.
+Third-party repositories disabled for a major transition are preserved under
+`/var/lib/atlantian/update/`; they are not silently re-enabled against a new
+Debian major.
 
-The release endpoint can be redirected to a compatible repository or API mirror
-through `/etc/atlantian/releases.conf`.
+## Storage and persistence
 
-Ordinary Debian userspace updates do not require `atlantian-sysupgrade`; use
-normal APT for those. AtlANTian releases are primarily the delivery path for the
-board kernel, device-tree policy, FPGA plumbing and AtlANTian-owned tooling.
+The factory image has only two partitions:
 
-## How releases stay current with Debian
+| Partition | Filesystem | Purpose |
+|---|---|---|
+| `p1` | FAT | 64 MiB boot partition |
+| `p2` | ext4 | Root filesystem, expanded on first boot |
 
-AtlANTian tracks Debian stable without building directly from moving mirrors:
+There is no overlay filesystem or hidden persistence volume. `/etc`, `/root`,
+`/home`, `/var`, package databases, SSH keys and user-installed packages are
+ordinary persistent Debian state. The on-board NAND is separate and is not
+overwritten by normal SD boot or `atlantian-sysupgrade`.
 
-```text
-Debian trixie / trixie-updates / trixie-security
-                    │
-          daily check at 06:00 Tomsk
-                    │
-                    ▼
-        exact Release metadata observed
-                    │
-        wait for snapshot.debian.org
-                    │
-                    ▼
-           immutable Debian Snapshot
-                    │
-       AtlANTian source + pinned kernel
-                    │
-                    ▼
-          tested image + .deb packages
-                    │
-                    ▼
-               GitHub Release
-```
-
-The watcher runs every day at **06:00 Asia/Tomsk (UTC+7)**. If main, updates or
-security metadata changed, it waits until Debian Snapshot contains the exact
-observed `Release` files. Only then does it freeze the new snapshot, advance the
-AtlANTian Debian build number and start the normal release workflow.
-
-This keeps every factory image tied to immutable Debian build metadata while
-runtime APT independently follows current Debian stable repositories. The
-watcher therefore refreshes the reproducible **factory baseline**; it is not a
-gate that old installed boards must wait behind to obtain normal Debian package
-updates.
-
-Version example:
-
-```text
-13.2.184+g0123456789ab
-│  │ │     └─ exact source commit
-│  │ └─────── monotonic source revision
-│  └───────── AtlANTian build of the Debian base
-└──────────── Debian major version
-```
-
-Older source-addressed versions are never treated as upgrades merely because
-their Git hash sorts differently.
+See [Persistence](docs/PERSISTENCE.md).
 
 ## FPGA use
-
-AtlANTian provides the Linux control plane for programmable logic:
 
 ```sh
 atlantian-fpga status
@@ -293,31 +187,25 @@ atlantian-fpga apply <instance> <overlay.dtbo>
 atlantian-fpga remove <instance>
 ```
 
-The shipped `status-leds` profile exposes D5-D8 through AXI GPIO:
-
-| LED | PL pin | AXI GPIO bit |
-| --- | --- | --- |
-| D5 | M19 | 2 |
-| D6 | M17 | 3 |
-| D7 | F16 | 0 |
-| D8 | L19 | 1 |
-
-A full bitstream replaces the current PL design; unrelated full bitstreams are
-not stackable. A larger custom design can preserve the existing AXI GPIO ABI and
-include additional peripherals alongside the LED block.
+The shipped `status-leds` profile exports D5-D8 through AXI GPIO. A full FPGA
+bitstream replaces the current PL design; independent full bitstreams cannot be
+stacked. A custom larger design can retain the same AXI ABI while adding more
+peripherals.
 
 ## Building locally
 
-Use a current Linux host with Internet access and roughly 20 GiB of free space:
+Use a current Debian/Ubuntu Linux host with Internet access and roughly 20 GiB
+free space:
 
 ```sh
 git clone https://github.com/BlackF1re/atlantian.git
 cd atlantian
 sudo ./scripts/bootstrap-host.sh
+./scripts/validate-release-inputs.sh
 ./scripts/build-incremental.sh all
 ```
 
-Development targets:
+Useful incremental targets:
 
 ```sh
 ./scripts/build-incremental.sh rootfs
@@ -325,84 +213,68 @@ Development targets:
 ./scripts/build-incremental.sh image
 ```
 
-Use `all` when in doubt. Published releases are built by GitHub Actions from
-`main` rather than from arbitrary local state.
+Published releases are produced only from `main` by GitHub Actions.
 
-Before working on a release, immutable external inputs can be checked directly:
+## Release safety
 
-```sh
-./scripts/validate-release-inputs.sh
-```
+Production releases are serialized. Before publication a build verifies that
+its source commit is still the tip of `main`, so a superseded slow run cannot
+publish over a newer source state.
 
-## CI and release guarantees
+CI checks include:
 
-Pull requests run read-only CI before merge. It checks workflow YAML, shell
-syntax/ShellCheck, release/update invariants, immutable release inputs and image
-layout contracts.
-
-A `main` build additionally checks the assembled image and packages, including:
-
-- exactly three AtlANTian release packages;
-- package/release version identity;
-- boot partition and root partition layout;
-- correct rootfs ownership and mode handling;
+- shell/YAML and source lifecycle contracts;
+- immutable Debian Snapshot, Linux and BOOT.bin inputs;
+- exact package/release version identity;
+- live-runtime-APT vs frozen-build-APT separation;
+- partition, boot asset and rootfs ownership contracts;
 - absence of factory SSH private host keys;
-- first-boot identity contract;
-- package checksums and release metadata.
+- first-boot identity behavior;
+- update LED and updater lifecycle invariants.
 
-Release builds are serialised. Before publishing, a run verifies that its commit
-is still the current `main` tip, preventing an older slow build from becoming
-the newest release after a newer commit.
+GitHub Actions dependencies are pinned to commit IDs. Checksummed release
+artifacts receive GitHub/Sigstore build-provenance attestations. The runtime
+updater currently trusts GitHub HTTPS plus the release `SHA256SUMS`; it does not
+claim to verify the Sigstore attestation on-device.
 
-GitHub Actions dependencies are pinned to immutable commit IDs. Published
-artifacts covered by `SHA256SUMS` also receive GitHub/Sigstore build-provenance
-attestation.
+`boot-candidate/BOOT.bin` is a pinned external vendor binary input and is not
+claimed to be reproducible from this repository. See
+[boot-candidate/README.md](boot-candidate/README.md).
 
-`boot-candidate/BOOT.bin` is a pinned external binary input, not source-built in
-this repository. Its Git object ID is checked by CI; provenance and limitations
-are documented in [`boot-candidate/README.md`](boot-candidate/README.md).
-
-## Repository map
+## Repository layout
 
 | Path | Purpose |
-| --- | --- |
-| `board/` | Canonical CTRL_C41 Linux device tree |
-| `config/` | Debian, kernel, package and image policy |
-| `kernel-overlay/` | Kernel-side OF/configfs support used by AtlANTian |
-| `fpga/` | Shipped FPGA profiles and firmware |
-| `systemd/` | Board-specific services and first-boot policy |
+|---|---|
+| `board/` | Canonical CTRL_C41 device tree |
+| `config/` | Debian/kernel/package/image policy |
+| `kernel-overlay/` | Kernel-side OF/configfs support |
+| `fpga/` | Shipped FPGA profiles/firmware |
+| `systemd/` | Board services and first-boot policy |
 | `scripts/` | Build, package, update and validation tooling |
-| `boot-candidate/` | Pinned external boot firmware input |
-| `docs/` | Hardware, persistence, pipeline and operational docs |
-| `.github/workflows/` | PR CI, Debian watcher and release automation |
+| `boot-candidate/` | Pinned external boot firmware |
+| `docs/` | Operational and hardware documentation |
+| `.github/workflows/` | PR CI, Debian watcher and production release automation |
 
-## Important non-obvious behaviour
+## Important behavior
 
-- **`poweroff` does not cut 12 V.** Linux halts safely; CTRL_C41 has no
-  software-controlled input power switch.
-- **There is no battery-backed RTC.** Time becomes accurate after network time
-  synchronisation or manual `timedatectl` configuration.
-- **USB being compiled into Linux does not mean the board USB route is safe.**
-  Base DT keeps it disabled because of known MIO overlap.
-- **PL peripherals require both hardware logic and a matching DT overlay.** A
-  device tree entry cannot create logic that is absent from the bitstream.
-- **Snapshot pinning applies to factory builds, not runtime APT.** Installed
-  systems follow live Debian stable, updates and security repositories.
-- **Reflashing creates a new SSH identity.** A host-key warning from your SSH
-  client after a deliberate reflash is expected.
+- `poweroff` halts Linux but cannot disconnect external 12 V.
+- There is no battery-backed RTC; network time matters after cold power loss.
+- USB support in the kernel does not imply safe physical USB routing on this
+  board; the base DT intentionally keeps the conflicted route disabled.
+- PL peripherals require both FPGA logic and a matching DT overlay.
+- Reflashing deliberately creates a new SSH host identity.
 
 ## Documentation
 
-- [Quick Start](docs/QUICKSTART.md) — flash, boot, login and first commands.
-- [Hardware support matrix](docs/hardware-support-matrix.md) — pin ownership and
-  supported/conditional interfaces.
-- [Release pipeline](docs/PIPELINE.md) — image/package/update architecture.
-- [Persistence](docs/PERSISTENCE.md) — storage and what survives updates.
-- [Security](SECURITY.md) — security model and reporting.
-- [BOOT.bin notes](boot-candidate/README.md) — external boot firmware boundary.
+- [Quick Start](docs/QUICKSTART.md)
+- [Debian lifecycle](docs/DEBIAN-LIFECYCLE.md)
+- [Release pipeline](docs/PIPELINE.md)
+- [Hardware support matrix](docs/hardware-support-matrix.md)
+- [Persistence](docs/PERSISTENCE.md)
+- [Security policy](SECURITY.md)
 
 ## License
 
 AtlANTian-specific source code is licensed under **GPL-2.0-only**. Debian,
 Linux, U-Boot, FPGA components and other third-party material remain under their
-respective licences.
+respective licenses.

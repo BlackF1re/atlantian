@@ -11,8 +11,18 @@ previous=$(last -F -w -n 2 root 2>/dev/null | awk 'NR==2 && $1=="root" { $1=""; 
 printf '\nAtlANTian build: %s\nDebian base: %s\n\n' "$release" "$debian"
 printf 'Hostname: %s\nUptime: %s\nLast login: %s\n\n' "$(hostname)" "$uptime" "$previous"
 
-# Login never performs network I/O; it only displays a release already found
-# by the periodic background check.
-if [ -n "${SSH_CONNECTION:-}" ]; then
-    /usr/local/sbin/atlantian-release-check --notice || true
+pending=/var/lib/atlantian/update/major-upgrade-pending.env
+backup_marker=/var/lib/atlantian/update/major-upgrade-sources-backup
+if [ -s "$pending" ]; then
+  target=$(sed -n 's/^target_version=//p' "$pending" | head -n1)
+  printf 'UPDATE WARNING: Debian major upgrade to %s is incomplete.\n' "${target:-unknown}"
+  printf 'Run: atlantian-sysupgrade\n\n'
+elif [ -n "${SSH_CONNECTION:-}" ]; then
+  # Login never performs network I/O; it only displays a release already found
+  # by the periodic background checker.
+  /usr/local/sbin/atlantian-release-check --notice || true
+fi
+if [ -s "$backup_marker" ]; then
+  printf 'APT note: third-party sources from the last Debian major upgrade are disabled.\n'
+  printf 'Review backup: %s\n\n' "$(cat "$backup_marker")"
 fi

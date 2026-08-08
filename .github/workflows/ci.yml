@@ -13,6 +13,10 @@ on:
       - 'kernel-overlay/**'
       - 'scripts/**'
       - 'systemd/**'
+      - 'README.md'
+      - 'SECURITY.md'
+      - 'CONTRIBUTING.md'
+      - 'docs/**'
 
 permissions:
   contents: read
@@ -64,7 +68,8 @@ jobs:
           test "$runtime_line" -gt "$snapshot_line"
           grep -Fq 'deb https://deb.debian.org/debian ${SUITE}-updates main non-free-firmware' scripts/build-rootfs.sh
           grep -Fq 'deb https://security.debian.org/debian-security ${SUITE}-security main non-free-firmware' scripts/build-rootfs.sh
-          grep -q 'etc/apt/sources.list' scripts/build-atlantian-debs.sh
+          grep -Fq 'runtime-sources.list' scripts/build-atlantian-debs.sh
+          grep -Fq 'atlantian-major-upgrade-authorized' scripts/build-atlantian-debs.sh
 
       - name: Validate package and image contract sources
         run: |

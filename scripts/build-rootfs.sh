@@ -11,110 +11,101 @@ SUITE="${SUITE:-$DEBIAN_CODENAME}"
 MIRROR="${MIRROR:-$DEBIAN_SNAPSHOT_MIRROR}"
 HOSTNAME=${ATLANTIAN_HOSTNAME:-atlantian}
 TIMEZONE=${ATLANTIAN_TIMEZONE:-Etc/UTC}
-ARCH="armhf"
+ARCH="${DEBIAN_ARCH:-armhf}"
 CACHE_DIR=${ATLANTIAN_DEBOOTSTRAP_CACHE:-/var/cache/atlantian/debootstrap}
 
-if [[ ${EUID} -ne 0 ]]; then
-  exec sudo "$0" "$@"
-fi
+if [[ ${EUID} -ne 0 ]]; then exec sudo "$0" "$@"; fi
 
-rm -rf "$ROOT"
-mkdir -p "$ROOT" "$CACHE_DIR"
-debootstrap --cache-dir="$CACHE_DIR" --arch="$ARCH" --variant=minbase "$SUITE" "$ROOT" "$MIRROR"
+rm -rf "$ROOT"; mkdir -p "$ROOT" "$CACHE_DIR"
+# A GitHub runner can carry a debootstrap package older than the next Debian
+# codename. Supplying the generic Debian script keeps future stable codenames
+# buildable without weakening the pinned Snapshot input.
+DEBOOTSTRAP_SCRIPT=${DEBOOTSTRAP_SCRIPT:-/usr/share/debootstrap/scripts/$SUITE}
+if [[ ! -r $DEBOOTSTRAP_SCRIPT ]]; then DEBOOTSTRAP_SCRIPT=/usr/share/debootstrap/scripts/sid; fi
+[[ -r $DEBOOTSTRAP_SCRIPT ]] || { echo 'no generic Debian debootstrap script is installed' >&2; exit 2; }
+debootstrap --cache-dir="$CACHE_DIR" --arch="$ARCH" --variant=minbase "$SUITE" "$ROOT" "$MIRROR" "$DEBOOTSTRAP_SCRIPT"
 
-# Keep the embedded image lean without removing local licence information.
-cat >"$ROOT/etc/dpkg/dpkg.cfg.d/01-atlantian-lean" <<'EOF'
+cat >"$ROOT/etc/dpkg/dpkg.cfg.d/01-atlantian-lean" <<'EOF_DPKG'
 path-exclude=/usr/share/doc/*
 path-include=/usr/share/doc/*/copyright
 path-exclude=/usr/share/man/*
 path-exclude=/usr/share/info/*
 path-exclude=/usr/share/locale/*
-EOF
+EOF_DPKG
 
 install -D -m 0644 "$PROJECT/config/packages.base" "$ROOT/usr/local/share/atlantian/packages.base"
 install -D -m 0644 "$PROJECT/config/image-layout.env" "$ROOT/usr/local/share/atlantian/image-layout.env"
 
-# Factory package selection is intentionally performed only against immutable
-# Debian Snapshot inputs. This keeps a published image reproducible even after
-# the live Debian mirrors have moved on.
-cat >"$ROOT/etc/apt/sources.list" <<EOF
+# Factory package selection happens only against immutable Snapshot inputs.
+cat >"$ROOT/etc/apt/sources.list" <<EOF_SNAPSHOT_APT
 deb [check-valid-until=no] $MIRROR $SUITE main non-free-firmware
 deb [check-valid-until=no] $MIRROR ${SUITE}-updates main non-free-firmware
 deb [check-valid-until=no] $DEBIAN_SECURITY_SNAPSHOT_MIRROR ${SUITE}-security main non-free-firmware
-EOF
+EOF_SNAPSHOT_APT
 
 printf '%s\n' "$HOSTNAME" >"$ROOT/etc/hostname"
-ln -sfn "/usr/share/zoneinfo/$TIMEZONE" "$ROOT/etc/localtime"
-printf '%s\n' "$TIMEZONE" >"$ROOT/etc/timezone"
-cat >"$ROOT/etc/default/locale" <<'EOF'
+ln -sfn "/usr/share/zoneinfo/$TIMEZONE" "$ROOT/etc/localtime"; printf '%s\n' "$TIMEZONE" >"$ROOT/etc/timezone"
+cat >"$ROOT/etc/default/locale" <<'EOF_LOCALE'
 LANG=C.UTF-8
-EOF
-cat >"$ROOT/etc/hosts" <<EOF
+EOF_LOCALE
+cat >"$ROOT/etc/hosts" <<EOF_HOSTS
 127.0.0.1 localhost
 127.0.1.1 $HOSTNAME
-EOF
-cat >"$ROOT/etc/fstab" <<'EOF'
+EOF_HOSTS
+cat >"$ROOT/etc/fstab" <<'EOF_FSTAB'
 /dev/mmcblk0p2 / ext4 defaults 0 1
 /dev/mmcblk0p1 /boot vfat defaults 0 2
-EOF
+EOF_FSTAB
 
-mkdir -p "$ROOT/etc/atlantian" "$ROOT/etc/systemd/network" \
-  "$ROOT/etc/systemd/system/serial-getty@ttyPS0.service.d"
-cat >"$ROOT/etc/systemd/network/10-atlantian-ethernet.link" <<'EOF'
+mkdir -p "$ROOT/etc/atlantian" "$ROOT/etc/systemd/network" "$ROOT/etc/systemd/system/serial-getty@ttyPS0.service.d"
+cat >"$ROOT/etc/systemd/network/10-atlantian-ethernet.link" <<'EOF_LINK'
 [Match]
 Driver=macb
 
 [Link]
-# The board has no dependable factory MAC. systemd derives a stable,
-# locally-administered address from this installation's machine identity.
 MACAddressPolicy=persistent
-EOF
-cat >"$ROOT/etc/systemd/network/20-ethernet.network" <<'EOF'
+EOF_LINK
+cat >"$ROOT/etc/systemd/network/20-ethernet.network" <<'EOF_NETWORK'
 [Match]
 Name=en* eth*
 
 [Network]
 DHCP=yes
 IPv6AcceptRA=yes
-EOF
+EOF_NETWORK
 mkdir -p "$ROOT/etc/systemd/resolved.conf.d"
-cat >"$ROOT/etc/systemd/resolved.conf.d/atlantian.conf" <<'EOF'
+cat >"$ROOT/etc/systemd/resolved.conf.d/atlantian.conf" <<'EOF_RESOLVED'
 [Resolve]
 FallbackDNS=1.1.1.1 2606:4700:4700::1111
-EOF
-cat >"$ROOT/etc/systemd/system/serial-getty@ttyPS0.service.d/atlantian.conf" <<'EOF'
+EOF_RESOLVED
+cat >"$ROOT/etc/systemd/system/serial-getty@ttyPS0.service.d/atlantian.conf" <<'EOF_GETTY'
 [Service]
 ExecStart=
 ExecStart=-/sbin/agetty -o '-p -- \\u' --keep-baud 115200,57600,38400 ttyPS0 vt102
-EOF
+EOF_GETTY
 
 install -d -m 0755 "$ROOT/etc/profile.d" "$ROOT/etc/systemd/logind.conf.d"
-cat >>"$ROOT/root/.bashrc" <<'EOF'
+cat >>"$ROOT/root/.bashrc" <<'EOF_BASHRC'
 
 if [ -n "${PS1-}" ]; then
     PS1='\[\e[1;32m\]\u@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]# '
 fi
-EOF
-cat >"$ROOT/root/.profile" <<'EOF'
+EOF_BASHRC
+cat >"$ROOT/root/.profile" <<'EOF_PROFILE'
 [ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc"
-EOF
+EOF_PROFILE
 chmod 0644 "$ROOT/root/.profile"
 
 install -D -m 0755 "$PROJECT/scripts/atlantian-login-info.sh" "$ROOT/usr/local/sbin/atlantian-login-info"
 install -D -m 0755 "$PROJECT/scripts/atlantian-fpga.sh" "$ROOT/usr/local/sbin/atlantian-fpga"
-install -d -m 0755 "$ROOT/lib/firmware/atlantian/status-leds" \
-  "$ROOT/etc/atlantian/fpga-profiles.d" "$ROOT/var/lib/atlantian/fpga-profiles"
-install -D -m 0644 "$PROJECT/fpga/status-leds/atlantian-status-leds.bin" \
-  "$ROOT/lib/firmware/atlantian/status-leds/atlantian-status-leds.bin"
-install -D -m 0644 "$PROJECT/fpga/status-leds/atlantian-status-leds.dtbo" \
-  "$ROOT/lib/firmware/atlantian/status-leds/atlantian-status-leds.dtbo"
-install -D -m 0644 "$PROJECT/fpga/status-leds/manifest.json" \
-  "$ROOT/etc/atlantian/fpga-profiles.d/status-leds.json"
-cat >"$ROOT/etc/profile.d/10-atlantian-login-info.sh" <<'EOF'
+install -d -m 0755 "$ROOT/lib/firmware/atlantian/status-leds" "$ROOT/etc/atlantian/fpga-profiles.d" "$ROOT/var/lib/atlantian/fpga-profiles"
+install -D -m 0644 "$PROJECT/fpga/status-leds/atlantian-status-leds.bin" "$ROOT/lib/firmware/atlantian/status-leds/atlantian-status-leds.bin"
+install -D -m 0644 "$PROJECT/fpga/status-leds/atlantian-status-leds.dtbo" "$ROOT/lib/firmware/atlantian/status-leds/atlantian-status-leds.dtbo"
+install -D -m 0644 "$PROJECT/fpga/status-leds/manifest.json" "$ROOT/etc/atlantian/fpga-profiles.d/status-leds.json"
+cat >"$ROOT/etc/profile.d/10-atlantian-login-info.sh" <<'EOF_LOGIN'
 [ -t 1 ] && /usr/local/sbin/atlantian-login-info
-EOF
-install -D -m 0644 "$PROJECT/systemd/atlantian-power-policy.conf" \
-  "$ROOT/etc/systemd/logind.conf.d/atlantian-power-policy.conf"
+EOF_LOGIN
+install -D -m 0644 "$PROJECT/systemd/atlantian-power-policy.conf" "$ROOT/etc/systemd/logind.conf.d/atlantian-power-policy.conf"
 
 install -D -m 0755 "$PROJECT/scripts/atlantian-update-leds.sh" "$ROOT/usr/local/sbin/atlantian-update-leds"
 install -D -m 0755 "$PROJECT/scripts/atlantian-status-leds.sh" "$ROOT/usr/local/sbin/atlantian-status-leds"
@@ -129,21 +120,19 @@ install -D -m 0644 "$PROJECT/systemd/atlantian-release-check.service" "$ROOT/etc
 install -D -m 0644 "$PROJECT/systemd/atlantian-release-check.timer" "$ROOT/etc/systemd/system/atlantian-release-check.timer"
 install -D -m 0644 "$PROJECT/config/atlantian-releases.conf" "$ROOT/etc/atlantian/releases.conf"
 
-mount --bind /dev "$ROOT/dev"
-mount -t proc proc "$ROOT/proc"
-mount -t sysfs sys "$ROOT/sys"
+mount --bind /dev "$ROOT/dev"; mount -t proc proc "$ROOT/proc"; mount -t sysfs sys "$ROOT/sys"
 cleanup() { umount -l "$ROOT/sys" "$ROOT/proc" "$ROOT/dev"; }
 trap cleanup EXIT
 
-chroot "$ROOT" /bin/bash -eux <<'EOF'
+chroot "$ROOT" /bin/bash -eux <<'EOF_CHROOT'
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 xargs -r apt-get install -y --no-install-recommends < /usr/local/share/atlantian/packages.base
-cat > /etc/default/zramswap <<'ZRAM_EOF'
+cat > /etc/default/zramswap <<'EOF_ZRAM'
 ALGO=lz4
 PERCENT=33
 PRIORITY=100
-ZRAM_EOF
+EOF_ZRAM
 command -v sfdisk
 command -v resize2fs
 apt-get clean
@@ -157,46 +146,32 @@ systemctl enable ssh systemd-networkd systemd-timesyncd systemd-resolved \
   atlantian-fpga-status-leds.service atlantian-grow-rootfs.service \
   zramswap.service atlantian-release-check.timer
 systemctl set-default multi-user.target
-EOF
+EOF_CHROOT
 
-# The factory image must not clone host identity or server keys across boards.
-# systemd creates a machine-id on first boot; the companion provisioning helper
-# removes build-time SSH host keys and installs a per-device key generator.
-: >"$ROOT/etc/machine-id"
-rm -f "$ROOT/var/lib/dbus/machine-id"
+: >"$ROOT/etc/machine-id"; rm -f "$ROOT/var/lib/dbus/machine-id"
 "$PROJECT/scripts/configure-rootfs-access.sh" "$ROOT"
 bash "$PROJECT/scripts/stamp-release.sh" "$ROOT"
 
-mkdir -p "$ROOT/usr/share/atlantian"
-chroot "$ROOT" /usr/bin/dpkg-query -W -f='${binary:Package}\t${Version}\n' \
-  | LC_ALL=C sort >"$ROOT/usr/share/atlantian/debian-package-manifest.tsv"
-printf 'snapshot=%s\nmirror=%s\nsecurity_mirror=%s\n' \
-  "$DEBIAN_SNAPSHOT_TIMESTAMP" "$MIRROR" "$DEBIAN_SECURITY_SNAPSHOT_MIRROR" \
-  >"$ROOT/usr/share/atlantian/debian-snapshot.txt"
+mkdir -p "$ROOT/usr/share/atlantian" "$ROOT/usr/lib/atlantian"
+chroot "$ROOT" /usr/bin/dpkg-query -W -f='${binary:Package}\t${Version}\n' | LC_ALL=C sort >"$ROOT/usr/share/atlantian/debian-package-manifest.tsv"
+printf 'snapshot=%s\nmirror=%s\nsecurity_mirror=%s\narchitecture=%s\n' \
+  "$DEBIAN_SNAPSHOT_TIMESTAMP" "$MIRROR" "$DEBIAN_SECURITY_SNAPSHOT_MIRROR" "$ARCH" >"$ROOT/usr/share/atlantian/debian-snapshot.txt"
 
-# Snapshot pinning ends at the build boundary. A flashed board is a normal
-# long-lived Debian stable installation and must keep seeing current package and
-# security updates even when its AtlANTian factory image is old.
-cat >"$ROOT/etc/apt/sources.list" <<EOF
+# Snapshot pinning ends at the build boundary. Runtime APT follows the selected
+# Debian codename so old images keep receiving updates without accidentally
+# crossing a Debian major merely because the stable alias moved.
+cat >"$ROOT/usr/lib/atlantian/runtime-sources.list" <<EOF_RUNTIME
+# Managed by AtlANTian. Put custom repositories in /etc/apt/sources.list.d/.
 deb https://deb.debian.org/debian $SUITE main non-free-firmware
 deb https://deb.debian.org/debian ${SUITE}-updates main non-free-firmware
 deb https://security.debian.org/debian-security ${SUITE}-security main non-free-firmware
-EOF
+EOF_RUNTIME
+install -m 0644 "$ROOT/usr/lib/atlantian/runtime-sources.list" "$ROOT/etc/apt/sources.list"
+if grep -q 'snapshot.debian.org' "$ROOT/etc/apt/sources.list"; then echo 'runtime APT sources must not point at snapshot.debian.org' >&2; exit 1; fi
 
-# Fail the build rather than accidentally publishing another runtime-pinned
-# image. The immutable Snapshot remains recorded separately as build provenance.
 grep -qxF "deb https://deb.debian.org/debian $SUITE main non-free-firmware" "$ROOT/etc/apt/sources.list"
 grep -qxF "deb https://deb.debian.org/debian ${SUITE}-updates main non-free-firmware" "$ROOT/etc/apt/sources.list"
 grep -qxF "deb https://security.debian.org/debian-security ${SUITE}-security main non-free-firmware" "$ROOT/etc/apt/sources.list"
-if grep -q 'snapshot.debian.org' "$ROOT/etc/apt/sources.list"; then
-  echo 'runtime APT sources must not point at snapshot.debian.org' >&2
-  exit 1
-fi
 
-# Drop host pseudo-filesystems before image assembly. Package ownership created
-# by debootstrap/dpkg is intentionally preserved exactly; never recursively
-# chown a root filesystem prepared as root.
-cleanup
-trap - EXIT
-
+cleanup; trap - EXIT
 echo "rootfs created: $ROOT"

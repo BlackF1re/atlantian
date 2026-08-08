@@ -1,89 +1,75 @@
 # Build and update pipeline
 
-GitHub Actions builds a factory SD image and three packages:
+GitHub Actions builds one factory SD image and three version-matched packages:
 `atlantian-platform`, `atlantian-kernel` and `atlantian-release`.
-
-The factory image is a clean installation image. Write it with a raw-image
-writer, boot once, and `atlantian-grow-rootfs` expands the ext4 root filesystem
-to the full card. Each installation creates its own machine identity and SSH
-host keys; build-time server keys are never shipped in the image.
 
 ## Release identity
 
-A release version has three ordered numeric components plus its source hash,
-for example `13.2.184+g0123456789ab`:
+A version such as `13.3.184+g0123456789ab` contains:
 
-- `13` is the Debian major release;
-- `2` is the AtlANTian Debian-snapshot generation;
-- `184` is the monotonic source revision in repository history;
-- the Git suffix identifies the exact source commit.
+- Debian major (`13`);
+- AtlANTian Debian-base generation (`3`);
+- monotonic source revision (`184`);
+- exact source commit suffix.
 
-The source revision gives dpkg a real ordering while the hash keeps exact
-traceability. An installed board only offers a strictly newer version.
+The Debian watcher resets the base generation to `1` when it promotes to the
+next Debian major and increments it whenever repository metadata changes within
+that major. Debian version ordering therefore remains monotonic across both
+normal and major upgrades.
 
-## Debian base automation
+## Debian automation
 
-Every day at 06:00 Tomsk time (23:00 UTC), the Debian watcher checks the main,
-updates and security Release metadata for the selected Debian suite. A change
-is accepted only after `snapshot.debian.org` contains the exact Release files
-observed on the live mirrors. The watcher then commits the frozen snapshot,
-advances the Debian build generation and dispatches the normal release build.
+The scheduled workflow runs every day at 06:00 Asia/Tomsk. The actual policy is
+implemented in `scripts/refresh-debian-base.sh`, not embedded in workflow YAML.
+It can promote by only one Debian major, requires `armhf`, and freezes a release
+only after Snapshot exactly matches live main/updates/security metadata.
 
-The immutable Snapshot is a **build input**, not a lifetime APT pin for an
-installed board. Factory package selection is performed against that exact
-Snapshot so a released image can be reproduced later. After the root filesystem
-has been assembled, AtlANTian writes normal live Debian stable repositories into
-`/etc/apt/sources.list` before the image and `atlantian-platform` package are
-created.
+A `GITHUB_TOKEN` commit does not recursively trigger a push workflow, so the
+watcher explicitly dispatches the production build after committing the frozen
+base.
 
-This means an old installed image can continue to receive current Debian stable,
-`trixie-updates` and `trixie-security` packages with ordinary APT even if no new
-AtlANTian image has been flashed.
+## Root filesystem
 
-## Build safety
+`debootstrap` and initial package installation use the frozen Snapshot. The
+resolved package manifest and Snapshot metadata are attached to the release.
+Before image assembly, runtime APT is changed to codename-pinned live Debian
+repositories. The immutable Snapshot is therefore provenance for the factory
+baseline rather than a permanent package restriction on installed systems.
 
-Release builds are serialised. Before publication, a build fetches `main` again
-and publishes only if its own commit is still the branch tip. A slow older run
-therefore cannot replace a newer release.
+The root filesystem cache is a root-created compressed archive with numeric
+ownership, modes, ACLs and xattrs preserved. Cached root filesystems are stamped
+with the current source-addressed release identity before packaging.
 
-The root filesystem is cached as a root-created compressed archive rather than
-as a runner-owned directory tree. Numeric ownership, modes, ACLs and xattrs are
-preserved. Before packages or images are assembled, `stamp-release.sh` writes
-the current source-addressed identity so cached content cannot retain an older
-release marker.
+## Kernel and boot
 
-`BOOT.bin` is an explicitly pinned external binary boot input. CI verifies its
-Git object ID; its provenance boundary is documented under `boot-candidate/`.
+The Linux source is pinned to an immutable upstream stable commit. Board kernel
+configuration is validated for required boot/FPGA interfaces and forbidden
+unrelated drivers. `BOOT.bin` is a separately pinned vendor binary trust
+boundary; CI verifies its Git object ID.
 
-Release artifacts covered by `SHA256SUMS` receive a GitHub Actions
-Sigstore-backed build-provenance attestation in addition to checksum
-verification.
+The FAT boot partition is not owned directly by dpkg. `atlantian-kernel` stores
+`zImage`, `uImage` and the DTB under `/usr/lib/atlantian/boot` on ext4 and its
+post-install script copies them atomically to `/boot`.
 
-## Installed-system update
+## Publication safety
 
-`atlantian-sysupgrade` discovers the newest complete GitHub release, requires
-an exact version-matched set of the three AtlANTian packages, verifies their
-SHA-256 digests and Debian package versions, and installs them with APT/dpkg.
-It then refreshes the configured APT repositories and performs a normal
-`apt full-upgrade`.
+Release builds are serialized. Immediately before publication the workflow
+fetches `main` and publishes only if its own commit is still the branch tip.
+Artifacts are checksum-verified and receive GitHub/Sigstore build-provenance
+attestations. Superseded builds may finish but cannot become the newest release.
 
-The default runtime repositories are the live Debian stable mirrors for
-`trixie`, `trixie-updates` and `trixie-security`. They are intentionally not
-bound to the Snapshot used to build the image. A user who deliberately edits
-APT sources keeps ordinary Debian conffile semantics; AtlANTian does not need a
-private package mirror to keep Debian userspace current.
+## Installed updates
 
-The boot partition is FAT32, so `atlantian-kernel` stores its dpkg payload under
-`/usr/lib/atlantian/boot` on ext4. Its post-install script atomically copies
-`zImage`, `uImage` and `devicetree.dtb` to `/boot`; dpkg never owns files on the
-FAT filesystem directly.
+`atlantian-release-check` scans complete GitHub releases and enforces staged
+Debian-major reachability. `atlantian-sysupgrade` verifies exact package names,
+SHA-256 digests and embedded Debian package versions before installation.
 
-The update does not rewrite partitions. Ordinary Debian state persists:
-`/etc`, SSH keys, `/root`, `/home`, `/var`, package databases and locally
-installed packages. Modified Debian conffiles are retained by default.
+Within one Debian major it installs the AtlANTian package set and runs normal
+APT `full-upgrade`. Across one Debian major it first brings the current major
+fully up to date, disables/backups third-party repositories, installs the target
+AtlANTian package set and managed target-codename source template, then performs
+the Debian major `full-upgrade` and reboots.
 
-Rewriting the SD card is a factory reinstall operation. Normal updates use the
-package path above.
-
-The release endpoint is configured in `/etc/atlantian/releases.conf`; a
-compatible fork or API mirror can be selected without changing the updater.
+Normal updates do not rewrite partitions. `/etc`, SSH keys, `/root`, `/home`,
+`/var`, package databases and user-installed packages remain ordinary Debian
+state.
