@@ -7,16 +7,16 @@
 | AtlANTian release tooling | newest published release |
 | Upgrade compatibility | each candidate is tested from the latest older published release |
 | Debian userspace | follows Debian support for the installed codename |
-| Kernel/board support | pinned AtlANTian board kernel until deliberately changed/tested |
+| Kernel/board support | pinned board kernel until deliberately changed and validated |
 | `BOOT.bin` | pinned external vendor binary trust boundary |
 
-Older AtlANTian releases should update to the newest reachable same-major release
-before a Debian-major transition.
+Older supported releases should move through the newest reachable same-major
+AtlANTian release before a Debian-major transition.
 
 ## Reporting a vulnerability
 
 Do **not** publish a vulnerability in a public issue before a fix is available.
-Use GitHub's private security-advisory mechanism for this repository and include:
+Use GitHub's private security-advisory mechanism and include:
 
 - affected release/tag;
 - reproduction steps;
@@ -36,9 +36,9 @@ Use GitHub's private security-advisory mechanism for this repository and include
 | GitHub/Sigstore provenance | ties published artifacts to source/workflow/commit |
 | previous-release upgrade gate | blocks incompatible package migrations |
 
-The lightweight on-device updater currently trusts GitHub HTTPS plus the
-published `SHA256SUMS`. It does **not** claim to verify the Sigstore attestation
-locally.
+> [!NOTE]
+> The on-device updater verifies GitHub HTTPS downloads against the published
+> `SHA256SUMS`. It does **not** currently verify the Sigstore attestation locally.
 
 ## Initial root access
 
@@ -49,9 +49,9 @@ locally.
 
 Factory behavior:
 
-- root account exists with an empty password;
+- root exists with an empty password;
 - SSH permits initial root provisioning;
-- each flash generates a unique machine ID and SSH host keys;
+- each flash generates a new machine ID and SSH host keys;
 - an interactive root shell warns until a password is set.
 
 Keep a fresh board on a trusted network. When authenticated access is desired:
@@ -66,15 +66,15 @@ or install your own root SSH public key.
 
 Factory builds use immutable Snapshot metadata. Running systems use live,
 codename-pinned Debian HTTPS repositories, including security updates. The moving
-`stable` alias is never used on-device, so Debian-major changes only occur via
+`stable` alias is never used on-device, so Debian-major changes occur only via
 `atlantian-sysupgrade`.
 
-## Hardware trust boundaries
+## Hardware validation boundary
 
-- Zynq/FPGA and physical pin behavior cannot be fully proven by QEMU CI.
-- Unverified/conflicting routes stay disabled or profile-only.
-- `BOOT.bin` is external and is not claimed to be reproducible from this repo.
-- `poweroff` cannot physically remove the external 12 V rail.
+CI can validate build products, package transitions and software contracts, but
+cannot prove physical Zynq/FPGA routing or electrical behavior. Unverified or
+conflicting routes therefore stay disabled/profile-only.
 
-See [Hardware support](docs/hardware-support-matrix.md) and
-[Release pipeline](docs/PIPELINE.md) for the validation boundary.
+See [Hardware support](docs/hardware-support-matrix.md),
+[Boot firmware input](boot-candidate/README.md) and
+[Release pipeline](docs/PIPELINE.md).
