@@ -55,6 +55,17 @@ jobs:
       - name: Validate immutable release inputs
         run: bash scripts/validate-release-inputs.sh
 
+      - name: Validate APT build/runtime separation
+        run: |
+          snapshot_line=$(grep -nF 'deb [check-valid-until=no] $MIRROR $SUITE main non-free-firmware' scripts/build-rootfs.sh | head -n1 | cut -d: -f1)
+          runtime_line=$(grep -nF 'deb https://deb.debian.org/debian $SUITE main non-free-firmware' scripts/build-rootfs.sh | tail -n1 | cut -d: -f1)
+          test -n "$snapshot_line"
+          test -n "$runtime_line"
+          test "$runtime_line" -gt "$snapshot_line"
+          grep -Fq 'deb https://deb.debian.org/debian ${SUITE}-updates main non-free-firmware' scripts/build-rootfs.sh
+          grep -Fq 'deb https://security.debian.org/debian-security ${SUITE}-security main non-free-firmware' scripts/build-rootfs.sh
+          grep -q 'etc/apt/sources.list' scripts/build-atlantian-debs.sh
+
       - name: Validate package and image contract sources
         run: |
           grep -q '/usr/lib/atlantian/boot' scripts/build-atlantian-debs.sh
