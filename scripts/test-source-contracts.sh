@@ -8,12 +8,15 @@ for file in scripts/*.sh; do
 done
 
 . config/release.env
+. config/u-boot.env
 [[ $DEBIAN_CODENAME =~ ^[a-z0-9][a-z0-9-]*$ ]]
 [[ $DEBIAN_MAJOR =~ ^[0-9]+$ ]]
 [[ ${DEBIAN_ARCH:-} == armhf ]]
 [[ $ATLANTIAN_REVISION =~ ^[0-9]+$ ]]
 [[ $ATLANTIAN_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+\+g[0-9A-Za-z]+$ ]]
 [[ $ATLANTIAN_RELEASE_ID == atlantian-*+g* ]]
+[[ $ATLANTIAN_UBOOT_COMMIT =~ ^[0-9a-f]{40}$ ]]
+[[ $ATLANTIAN_UBOOT_DEFCONFIG == bitmain_antminer_s9_defconfig ]]
 dpkg --compare-versions "${DEBIAN_MAJOR}.${ATLANTIAN_BUILD}.1+ga" gt "${DEBIAN_MAJOR}.${ATLANTIAN_BUILD}+gz"
 
 # Debian lifecycle: architecture-gated, one-major-at-a-time promotion and a
@@ -28,17 +31,31 @@ grep -q 'refusing to skip Debian majors' scripts/atlantian-sysupgrade.sh
 grep -q 'major-upgrade-sources-backup' scripts/atlantian-sysupgrade.sh
 
 # Memory sizing is a bootloader-discovered hardware property, never a Linux
-# command-line policy. Both source DTs expose the 1 GiB S9 probe ceiling;
-# U-Boot bootm fixes /memory to the detected bank before Linux starts.
+# command-line policy. Both source DTs expose the 1 GiB S9 probe ceiling and
+# mainline U-Boot's Antminer target probes the installed bank at runtime.
 for dts in board/zynq-bitmain-antminer-s9.dts board/uboot_bitmain-antminer-s9.dts; do
   grep -Fq 'reg = <0x0 0x40000000>;' "$dts"
 done
-! grep -Eq 'atlantian_normal_bootargs=.*mem=' scripts/make-sd-image.sh
-! grep -Fq 'mem=496M' scripts/make-sd-image.sh board/*.dts config/kernel-c41.fragment
+! grep -Eq 'atlantian_normal_bootargs=.*mem=' scripts/populate-boot-files.sh
+! grep -Fq 'mem=496M' scripts/make-sd-image.sh scripts/populate-boot-files.sh board/*.dts config/kernel-c41.fragment
 grep -qx 'CONFIG_HIGHMEM=y' config/kernel-c41.fragment
 grep -q 'CONFIG_ARCH_ZYNQ CONFIG_HIGHMEM' scripts/build-kernel.sh
 grep -Fq '512 MiB or 1 GiB DDR3' README.md
 grep -Fq '512 MiB / 1 GiB DDR3' docs/hardware-support-matrix.md
+
+# The factory image uses a source-built mainline U-Boot SPL chain instead of an
+# opaque vendor FSBL bundle. SPL loads u-boot.img from FAT; boot.scr then boots
+# the AtlANTian kernel/DT/rootfs without any saved NAND state.
+grep -Fq 'ATLANTIAN_UBOOT_COMMIT=' config/u-boot.env
+grep -Fq 'bitmain_antminer_s9_defconfig' config/u-boot.env scripts/build-uboot.sh
+grep -Fq -- "--set-str SPL_FS_LOAD_PAYLOAD_NAME 'u-boot.img'" scripts/build-uboot.sh
+grep -Fq 'spl/boot.bin' scripts/build-uboot.sh
+grep -Fq 'u-boot.img' scripts/build-uboot.sh scripts/populate-boot-files.sh scripts/make-sd-image.sh
+grep -Fq 'boot.scr' scripts/populate-boot-files.sh scripts/build-atlantian-debs.sh scripts/test-image-layout.sh
+grep -Fq 'fatload mmc 0:1 0x02000000 uImage' scripts/populate-boot-files.sh
+grep -Fq 'fatload mmc 0:1 0x01F00000 devicetree.dtb' scripts/populate-boot-files.sh
+grep -Fq 'mv -f "$target/.BOOT.bin.new" "$target/BOOT.bin"' scripts/build-atlantian-debs.sh
+! grep -Fq 'git hash-object boot-candidate/BOOT.bin' scripts/validate-release-inputs.sh
 
 # Runtime APT is live, codename-pinned and separated from immutable build input.
 grep -Fq 'deb [check-valid-until=no] $MIRROR $SUITE main non-free-firmware' scripts/build-rootfs.sh
@@ -84,7 +101,6 @@ grep -q '^StateDirectory=atlantian$' systemd/atlantian-release-check.service
 
 test ! -e config/zynq-bitmain-antminer-s9.dts
 ! grep -R -q --exclude=test-source-contracts.sh 'ATLANTIAN_AUTO_APPLY' config scripts systemd README.md docs || { echo 'obsolete ATLANTIAN_AUTO_APPLY contract remains' >&2; exit 1; }
-test "$(git hash-object boot-candidate/BOOT.bin)" = "$(awk 'NR==1 {print $1}' boot-candidate/BOOT.bin.gitsha)"
 grep -Fq "cron: '0 23 * * *'" .github/workflows/debian-watch.yml
 grep -q 'refresh-debian-base.sh' .github/workflows/debian-watch.yml
 grep -q 'Preflight a new Debian major root filesystem' .github/workflows/debian-watch.yml
@@ -99,4 +115,4 @@ grep -q 'actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd
 ! grep -R -nE --exclude=test-source-contracts.sh '/home/[^/[:space:]]+/atlantian' scripts config .github README.md docs .gitignore
 ! test -e state/board.address.example
 
-echo 'source, lifecycle, dynamic-memory and release contracts passed'
+echo 'source, lifecycle, source-built boot, dynamic-memory and release contracts passed'

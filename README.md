@@ -26,6 +26,7 @@ a small general-purpose Linux/FPGA platform instead of a mining appliance.
 | RAM | 512 MiB or 1 GiB DDR3, detected at boot; no Linux `mem=` cap |
 | Debian | current compatible Debian stable, `armhf`, selected automatically |
 | Kernel | pinned CTRL_C41 board kernel, updated deliberately |
+| Boot firmware | pinned mainline U-Boot source; SPL `BOOT.bin` + `u-boot.img` built in CI |
 | Storage | microSD: FAT boot + ext4 root; NAND remains separate |
 | FPGA | FPGA Manager/Region + DT overlays + optional PL profiles |
 | Updates | live Debian APT + staged AtlANTian package upgrades |
@@ -33,8 +34,8 @@ a small general-purpose Linux/FPGA platform instead of a mining appliance.
 
 > [!NOTE]
 > AtlANTian stays deliberately close to Debian. Debian owns normal userspace and
-> package maintenance; this repository owns the board description, kernel
-> policy, FPGA plumbing, factory image and AtlANTian release tooling.
+> package maintenance; this repository owns the board description, kernel,
+> bootloader policy, FPGA plumbing, factory image and AtlANTian release tooling.
 
 ## Start here
 
@@ -49,7 +50,7 @@ Everything needed to use or modify AtlANTian is linked here.
 | change DT, FPGA or board support | **[Hardware support matrix](docs/hardware-support-matrix.md)** |
 | know what survives upgrades | **[Persistence](docs/PERSISTENCE.md)** |
 | understand trust/security boundaries | **[Security policy](SECURITY.md)** |
-| inspect/replace `BOOT.bin` | **[Boot firmware input](boot-candidate/README.md)** |
+| understand the SD first-stage boot chain | **[Boot firmware](boot-candidate/README.md)** |
 | submit code or documentation | **[Contributing](CONTRIBUTING.md)** |
 | browse the whole documentation set | **[Documentation index](docs/README.md)** |
 
@@ -67,7 +68,7 @@ Everything needed to use or modify AtlANTian is linked here.
 | Debian selection / APT | [Debian lifecycle](docs/DEBIAN-LIFECYCLE.md) + [Upgrading](docs/UPGRADING.md) | normally produces a new release |
 | rootfs / packaging / updater | [Pipeline](docs/PIPELINE.md) + [Persistence](docs/PERSISTENCE.md) | new release + previous-release upgrade gate |
 | kernel / DT | [Hardware matrix](docs/hardware-support-matrix.md) + [Pipeline](docs/PIPELINE.md) | new release; real-board validation still matters |
-| `BOOT.bin` | [Boot firmware input](boot-candidate/README.md) + [Pipeline](docs/PIPELINE.md) | new release; explicit hardware validation required |
+| U-Boot / SD first stage | [Boot firmware](boot-candidate/README.md) + [Pipeline](docs/PIPELINE.md) | new release; explicit 512 MiB + 1 GiB cold-boot validation required |
 | FPGA / PL profile | [Hardware matrix](docs/hardware-support-matrix.md) | new release when bundled into the base/profile set |
 | security-sensitive behavior | [Security policy](SECURITY.md) | review trust boundary and release impact first |
 
@@ -99,10 +100,11 @@ and the maintained GitHub Actions themselves.
 |---|---|
 | Fresh packages | installed systems use live codename-pinned Debian repositories |
 | Reproducible images | factory rootfs is built from an immutable Debian Snapshot |
+| Reproducible first stage | pinned mainline U-Boot commit builds the S9 SPL + U-Boot proper |
 | Safe Debian majors | only one major at a time; `armhf` and repositories are preflighted |
 | Safe AtlANTian updates | exact three-package set, SHA-256 verification and downgrade guards |
 | Persistent system | ordinary Debian `/etc`, `/root`, `/home` and `/var` survive normal updates |
-| RAM portability | U-Boot probes installed DDR and fixes the DT; ARM HIGHMEM remains enabled |
+| RAM portability | mainline Antminer S9 U-Boot probes installed DDR and fixes the DT; ARM HIGHMEM remains enabled |
 | Release confidence | every release after the first is tested against the previous published image |
 | Low maintenance | daily Debian watcher + daily guarded Actions updates + post-merge canary/rollback |
 
@@ -134,8 +136,8 @@ Full procedure: **[Quick Start](docs/QUICKSTART.md)**.
 
 | Function | Status | Notes |
 |---|---|---|
-| DDR3 | Ready | 512 MiB and 1 GiB boards use the same image; size is bootloader-detected |
-| microSD boot/root | Ready | first boot expands ext4 root |
+| DDR3 | Ready | AtlANTian Linux/DT physically validated with 512 MiB and 1 GiB; source-built U-Boot performs runtime probing |
+| microSD boot/root | Validation | new source-built U-Boot SPL chain is implemented; exact release needs 512 MiB + 1 GiB cold-boot confirmation |
 | Gigabit Ethernet | Ready | MACB/GEM, DHCP, persistent local MAC |
 | UART | Ready | `ttyPS0`, 115200 8N1 |
 | NAND | Ready | 256 MiB MTD, UBI/UBIFS, software BCH ECC |
@@ -167,7 +169,7 @@ Electrical evidence, exact pins, memory sizing, power behavior and profile bound
 flowchart LR
     A[Debian stable] --> B[Daily watcher]
     B --> C[Exact Snapshot]
-    C --> D[Build image + packages]
+    C --> D[Build rootfs + kernel + U-Boot]
     D --> E[Previous-release upgrade gate]
     E --> F[GitHub Release]
     F --> G[atlantian-sysupgrade]
@@ -207,7 +209,7 @@ atlantian-sysupgrade
 | Update type | Tool | Scope |
 |---|---|---|
 | Debian packages | `apt` | userspace within the installed Debian major |
-| AtlANTian release | `atlantian-sysupgrade` | platform, board kernel, DT/FPGA support and release tooling |
+| AtlANTian release | `atlantian-sysupgrade` | platform, boot firmware, board kernel, DT/FPGA support and release tooling |
 | Debian major | `atlantian-sysupgrade` | staged one-major transition; third-party APT sources are backed up/disabled |
 
 > [!NOTE]
@@ -225,8 +227,9 @@ build, source contracts and upgrade-compatibility checks pass.
 <details>
 <summary><b>Show the publication gates</b></summary>
 
-- immutable Debian Snapshot, Linux and `BOOT.bin` pins;
+- immutable Debian Snapshot, Linux and U-Boot source pins;
 - shell/YAML/source contracts and image-layout checks;
+- source-built Zynq SPL + `u-boot.img` + `boot.scr` presence and package-update contract;
 - dynamic-memory contract: no Linux `mem=` cap, 1 GiB DT probe ceiling and HIGHMEM;
 - exact package/release identity and SHA-256 checks;
 - frozen-build vs live-runtime APT separation;
@@ -248,7 +251,7 @@ Release artifacts also receive GitHub/Sigstore build-provenance attestations.
 flowchart LR
     A[Daily Dependabot] --> B[Grouped pin update]
     B --> C[Read-only PR CI]
-    C --> D[Trusted pin-only gate]
+    C --> D[Pin-only trusted policy]
     D --> E[Auto-merge]
     E --> F[Trusted canary]
     F -->|pass| G[Done]
@@ -284,7 +287,7 @@ sudo ./scripts/bootstrap-host.sh
 ./scripts/build-incremental.sh all
 ```
 
-Useful targets: `rootfs`, `kernel`, `image`, `all`.
+Useful targets: `rootfs`, `kernel`, `bootloader`, `image`, `all`.
 
 </details>
 
@@ -298,12 +301,12 @@ Published releases are produced only from `main` by GitHub Actions.
 | Path | Purpose |
 |---|---|
 | `board/` | canonical CTRL_C41 device tree |
-| `config/` | Debian, kernel, package and image policy |
+| `config/` | Debian, kernel, U-Boot, package and image policy |
 | `kernel-overlay/` | kernel-side OF/configfs support |
 | `fpga/` | shipped FPGA profiles and firmware |
 | `systemd/` | board services and first-boot policy |
 | `scripts/` | build, package, update and validation tooling |
-| `boot-candidate/` | pinned external boot firmware |
+| `boot-candidate/` | legacy vendor boot-binary reference; not a production build input |
 | `docs/` | operator, developer and hardware documentation |
 | `.github/workflows/` | PR CI, Debian watcher, dependency canary/recovery and production release automation |
 | `.github/scripts/` | trusted GitHub Actions dependency policy |
@@ -321,8 +324,9 @@ Published releases are produced only from `main` by GitHub Actions.
 - The base DT intentionally keeps the conflicted PS USB route disabled.
 - A DT overlay describes PL hardware; a matching FPGA bitstream must implement it.
 - Reflashing intentionally creates a new machine ID and SSH host identity.
-- [`BOOT.bin`](boot-candidate/README.md) is a pinned external vendor binary, not a
-  reproducible build product of this repository.
+- SD first-stage firmware is built from the immutable U-Boot commit pinned in
+  [`config/u-boot.env`](config/u-boot.env); real-board cold-boot validation still
+  remains outside what CI can prove.
 
 </details>
 

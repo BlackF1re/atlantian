@@ -1,30 +1,44 @@
-# Boot firmware input
+# Legacy boot firmware reference
 
-`BOOT.bin` is the board boot-firmware input used by the factory image. It is
-kept as a pinned binary because the current AtlANTian build does not recreate
-the vendor FSBL/U-Boot bundle from source.
+The binary in this directory is retained only as a **legacy comparison input**.
+It is no longer used to assemble AtlANTian factory images.
 
-Production CI verifies its Git object ID against `BOOT.bin.gitsha` before any
-release is built. Replacing the file therefore requires an explicit update of
-the pin and hardware validation on CTRL_C41.
+Real-board testing on 2026-08-09 established the failure boundary precisely:
 
-## DDR handoff contract
+- the same AtlANTian SD card boots a 512 MiB CTRL_C41;
+- on two 1 GiB CTRL_C41 boards the legacy SD `BOOT.bin` produces no UART output;
+- the factory NAND FSBL/U-Boot on a 1 GiB board detects `1008 MiB` correctly;
+- that NAND U-Boot can read the AtlANTian FAT partition and manually boot the
+  AtlANTian kernel + DT + ext4 rootfs;
+- Linux 6.12.100 then reports the full 1 GiB physical address range and about
+  980 MiB usable RAM.
 
-AtlANTian relies on the Antminer S9 U-Boot memory model: **1 GiB is the maximum
-probe window, not a fixed installed size**. U-Boot discovers the populated DDR
-bank and ARM `bootm` fixes the `/memory` node passed to Linux. The factory
-`uEnv.txt` therefore deliberately contains no Linux `mem=` limit.
+That isolates the old SD first-stage bundle rather than Linux, the DT, the SD
+slot, or the root filesystem.
 
-This lets the same image use 512 MiB and 1 GiB CTRL_C41 variants. Linux reports
-less than the nominal fitted capacity because reserved-memory and kernel
-bookkeeping are excluded; that is expected.
+## Production boot chain
+
+AtlANTian now builds the SD boot firmware from pinned upstream **mainline
+U-Boot** using `bitmain_antminer_s9_defconfig`:
+
+```text
+Zynq BootROM
+   -> spl/boot.bin (copied as BOOT.bin)
+   -> u-boot.img from FAT partition 1
+   -> boot.scr
+   -> AtlANTian uImage + devicetree.dtb
+   -> /dev/mmcblk0p2
+```
+
+The pinned version/commit lives in [`config/u-boot.env`](../config/u-boot.env)
+and is built by [`scripts/build-uboot.sh`](../scripts/build-uboot.sh).
+
+Upstream Antminer S9 support was introduced specifically for the 256 MiB,
+512 MiB and 1 GiB board variants and uses `get_ram_size()` against a 1 GiB
+maximum probe window. AtlANTian therefore keeps one image for 512 MiB and 1 GiB
+boards and does not pass a Linux `mem=` limit.
 
 > [!IMPORTANT]
-> A replacement boot firmware must preserve runtime DDR sizing. A binary that
-> hard-codes one DRAM capacity would break AtlANTian's single-image memory
-> contract even if the Linux kernel and DT remain unchanged.
-
-AtlANTian does not claim that this binary itself is reproducible from this
-repository. The Debian root filesystem, Linux kernel, device tree, packages and
-image assembly remain source-controlled build inputs around this pinned boot
-component.
+> CI can prove the source pin, generated SPL/U-Boot artifacts, FAT boot layout,
+> boot script and dynamic-memory contracts. A new boot-firmware revision still
+> requires real-board cold-boot validation on both 512 MiB and 1 GiB CTRL_C41.

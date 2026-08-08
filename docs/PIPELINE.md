@@ -5,7 +5,7 @@ packages: `atlantian-platform`, `atlantian-kernel` and `atlantian-release`.
 
 ```mermaid
 flowchart LR
-    A[Pinned inputs] --> B[Build rootfs + kernel]
+    A[Pinned Debian + Linux + U-Boot] --> B[Build rootfs + kernel + S9 U-Boot]
     B --> C[Assemble image + .deb set]
     C --> D[Static + image contracts]
     D --> E[Upgrade previous release in QEMU]
@@ -64,30 +64,53 @@ freezes a new Debian base.
 This keeps factory images reproducible without turning an installed board into a
 package time capsule.
 
-## Kernel and boot
+## Kernel and SD boot firmware
 
-- Linux source is pinned to one immutable upstream stable commit.
-- Board kernel config is checked for required Zynq/FPGA interfaces and ARM HIGHMEM.
-- The Linux command line must not contain a fixed `mem=` limit.
-- Board DTs expose the 1 GiB S9 probe ceiling; U-Boot supplies the detected DDR bank at boot.
-- `BOOT.bin` is a separately pinned external vendor trust boundary.
-- `atlantian-kernel` stores boot assets under `/usr/lib/atlantian/boot`.
-- Package post-install copies `zImage`, `uImage` and DTB to FAT `/boot`.
+AtlANTian no longer treats a vendor `BOOT.bin` as an opaque production input.
+The complete SD first stage is built from the immutable upstream U-Boot commit
+in `config/u-boot.env` using `bitmain_antminer_s9_defconfig`.
 
-See [Boot firmware input](../boot-candidate/README.md) for the one pinned binary
-component that this repository does not rebuild from source.
+```text
+Zynq BootROM
+   -> BOOT.bin        (U-Boot SPL, built as spl/boot.bin)
+   -> u-boot.img      (U-Boot proper, FAT p1)
+   -> boot.scr        (AtlANTian SD policy)
+   -> uImage + DTB
+   -> /dev/mmcblk0p2
+```
+
+The Antminer S9 target has a 1 GiB maximum DDR probe window and uses runtime
+`get_ram_size()` detection. The Linux command line therefore carries no fixed
+`mem=` limit, and ARM `CONFIG_HIGHMEM=y` remains mandatory for 1 GiB boards.
+
+`atlantian-kernel` owns both the Linux and SD boot-chain payloads under
+`/usr/lib/atlantian/boot`. Its post-install step copies `u-boot.img`, `boot.scr`,
+`uEnv.txt`, kernel and DT first, and replaces `BOOT.bin` last. This ordering
+avoids exposing a new SPL while its matching second stage is still absent.
+
+The old binary under `boot-candidate/` is retained only as a diagnostic/legacy
+reference. Real-board testing showed that it cold-boots a 512 MiB board but is
+silent on two 1 GiB boards, while the same kernel/DT/rootfs boots correctly on a
+1 GiB board when launched through its factory NAND U-Boot.
+
+> [!IMPORTANT]
+> CI validates the source pin, generated boot artifacts, FAT layout and boot
+> script, but cannot prove Zynq cold boot. Any change of the U-Boot pin still
+> requires physical cold-boot testing on both 512 MiB and 1 GiB CTRL_C41 before
+> the boot path should be described as hardware-validated.
 
 ## Publication gates
 
 | Gate | What it protects |
 |---|---|
-| immutable input validation | Debian/kernel/BOOT inputs cannot drift silently |
+| immutable input validation | Debian/Linux/U-Boot source inputs cannot drift silently |
 | source and shell contracts | lifecycle/build invariants remain present |
+| source-built first stage | SPL `BOOT.bin`, `u-boot.img` and `boot.scr` are present and coherent |
 | dynamic-memory contract | no Linux RAM cap; 1 GiB probe ceiling and HIGHMEM remain intact |
 | image-layout tests | partitions, boot memory contract, ownership and first-boot identity stay valid |
 | package identity checks | the three `.deb` files cannot be mixed/mis-versioned |
 | updater/LED contract | update-state behavior remains coherent |
-| previous-release upgrade test | candidate can replace the prior release safely |
+| previous-release upgrade test | candidate can replace the prior release safely, including boot files |
 | final `main` tip check | a superseded build cannot publish |
 | SHA-256 + provenance | release bytes and build origin are independently inspectable |
 
@@ -116,8 +139,9 @@ For a one-major Debian transition it also performs the target Debian
 `full-upgrade` and verifies the resulting codename.
 
 > [!NOTE]
-> QEMU validates userspace/package transitions. Zynq boot, FPGA configuration,
-> Ethernet PHY and physical I/O remain real-board validation boundaries.
+> QEMU validates userspace/package transitions. Zynq BootROM/SPL execution,
+> FPGA configuration, Ethernet PHY and physical I/O remain real-board validation
+> boundaries.
 
 </details>
 
@@ -127,7 +151,8 @@ For a one-major Debian transition it also performs the target Debian
 |---|---|
 | Linux source/build | key includes kernel and board inputs |
 | rootfs archive | numeric owners, modes, xattrs and ACLs are preserved |
-| boot artifacts | invalidated by kernel/board inputs |
+| kernel boot artifacts | invalidated by kernel/board inputs |
+| U-Boot | rebuilt from the exact pinned commit when an image is assembled |
 
 Cached rootfs state is restamped with the current release identity before
 packaging.
@@ -169,6 +194,10 @@ flowchart LR
 The policy implementation is `.github/scripts/actions-policy.py`. The canary and
 recovery workflows are intentionally separate from the production release path,
 so routine infrastructure maintenance does not create a new AtlANTian image.
+
+U-Boot and Linux pins are deliberately **not** Dependabot-managed because a CI
+build cannot prove that a changed low-level firmware/kernel still cold-boots the
+physical board.
 
 ## Installed updates
 

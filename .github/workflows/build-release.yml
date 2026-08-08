@@ -59,12 +59,12 @@ jobs:
               reason='previous push tip is unavailable; safe full build'
             fi
             rootfs=false kernel=false image=false
-            if grep -qE '^(debian-.*\.sha256|config/(release|debian-snapshot|image-layout)\.env|scripts/(build-incremental|build-atlantian-debs|make-sd-image|validate-release-inputs)\.sh)$' <<<"$changed"; then
-              scope=all; reason='base, release, or build-logic change'
+            if grep -qE '^(debian-.*\.sha256|config/(release|debian-snapshot|image-layout)\.env|scripts/(build-incremental|build-atlantian-debs|make-sd-image|populate-boot-files|validate-release-inputs)\.sh)$' <<<"$changed"; then
+              scope=all; reason='base, release, package, or build-logic change'
             else
               grep -qE '^(config/packages\.base|config/atlantian-releases\.conf|fpga/|systemd/|scripts/(atlantian-|build-rootfs|configure-rootfs-access|stamp-release))' <<<"$changed" && rootfs=true || true
               grep -qE '^(board/|config/kernel-c41|kernel-overlay/|scripts/build-kernel\.sh)' <<<"$changed" && kernel=true || true
-              grep -qE '^(boot-candidate/|scripts/(make-sd-image|build-atlantian-debs)\.sh)' <<<"$changed" && image=true || true
+              grep -qE '^(boot-candidate/|config/u-boot\.env|scripts/build-uboot\.sh)' <<<"$changed" && image=true || true
               if [[ $rootfs = true && $kernel = true ]]; then
                 scope=all; reason='root filesystem and kernel inputs changed together'
               elif [[ $rootfs = true ]]; then
@@ -72,7 +72,7 @@ jobs:
               elif [[ $kernel = true ]]; then
                 scope=kernel-image; reason='kernel or board-description change'
               elif [[ $image = true ]]; then
-                scope=image; reason='boot, package, or image-assembly change'
+                scope=image; reason='bootloader input change'
               else
                 scope=all; reason='unclassified system input'
               fi
@@ -130,7 +130,8 @@ jobs:
             gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
             bc bison flex libssl-dev libncurses-dev device-tree-compiler \
             u-boot-tools kmod cpio rsync pigz xz-utils zstd e2fsprogs dosfstools parted \
-            libelf-dev libdw-dev git curl ca-certificates sudo
+            libelf-dev libdw-dev git curl ca-certificates sudo \
+            python3 python3-dev python3-setuptools python3-pyelftools swig
 
       - name: Restore Linux source and build cache
         id: kernel-cache
@@ -195,7 +196,7 @@ jobs:
               ;;
             image)
               [[ -d out/rootfs && -f out/boot/zImage && -f out/boot/devicetree.dtb ]] || {
-                echo 'Rootfs or boot cache unavailable; using a complete build.'; scope=all;
+                echo 'Rootfs or kernel boot cache unavailable; using a complete build.'; scope=all;
               }
               ;;
           esac
@@ -210,7 +211,7 @@ jobs:
               -cf out/cache/rootfs.tar.zst -C out/rootfs .
             sudo chown "$USER:$USER" out/cache/rootfs.tar.zst
           fi
-          sudo chown -R "$USER:$USER" out/linux-src out/boot artifacts
+          sudo chown -R "$USER:$USER" out/linux-src out/boot out/u-boot-src out/u-boot-build out/bootloader artifacts
 
       - name: Verify release artifacts
         id: artifact-check
@@ -222,8 +223,12 @@ jobs:
           kernel_deb=$(find artifacts/current -maxdepth 1 -name 'atlantian-kernel_*.deb' -type f -print -quit)
           test -n "$kernel_deb"
           ! dpkg-deb -c "$kernel_deb" | grep -qE ' ./boot/'
+          dpkg-deb -c "$kernel_deb" | grep -q 'usr/lib/atlantian/boot/BOOT.bin'
+          dpkg-deb -c "$kernel_deb" | grep -q 'usr/lib/atlantian/boot/u-boot.img'
+          dpkg-deb -c "$kernel_deb" | grep -q 'usr/lib/atlantian/boot/boot.scr'
           dpkg-deb -e "$kernel_deb" /tmp/atlantian-kernel-control
           grep -q '/usr/lib/atlantian/boot' /tmp/atlantian-kernel-control/postinst
+          grep -q '.BOOT.bin.new' /tmp/atlantian-kernel-control/postinst
           platform_deb=$(find artifacts/current -maxdepth 1 -name 'atlantian-platform_*.deb' -type f -print -quit)
           ! dpkg-deb -c "$platform_deb" | grep -qE ' ./etc/(issue\.net|os-release|default/zramswap)$'
           bash scripts/test-build.sh "$image" artifacts/current/SHA256SUMS
@@ -267,6 +272,7 @@ jobs:
         if: steps.release-head.outputs.publish == 'true'
         run: |
           . config/release.env
+          . config/u-boot.env
           {
             echo "AtlANTian GNU/Linux $ATLANTIAN_VERSION"
             echo "Release tag: $RELEASE_TAG"
@@ -277,6 +283,7 @@ jobs:
             echo "Debian Release SHA-256: $(cat debian-release.sha256)"
             echo "Package manifest SHA-256: $(sha256sum artifacts/current/*.packages.tsv | awk '{print $1}')"
             echo "Linux kernel: $ATLANTIAN_KERNEL_VERSION$ATLANTIAN_KERNEL_LOCALVERSION"
+            echo "U-Boot: $ATLANTIAN_UBOOT_VERSION ($ATLANTIAN_UBOOT_COMMIT)"
             echo "Build workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > artifacts/current/BUILD-INFO.txt
 

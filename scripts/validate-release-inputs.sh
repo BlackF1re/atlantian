@@ -6,6 +6,7 @@ PROJECT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$PROJECT"
 . config/release.env
 . config/debian-snapshot.env
+. config/u-boot.env
 ARCH=${DEBIAN_ARCH:-armhf}
 
 fail() { printf 'release-input validation: %s\n' "$*" >&2; exit 1; }
@@ -41,16 +42,11 @@ verify_arch_index() {
 [[ $DEBIAN_MAJOR =~ ^[0-9]+$ ]] || fail 'DEBIAN_MAJOR must be numeric'
 [[ $ARCH =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail 'DEBIAN_ARCH is invalid'
 [[ $ATLANTIAN_KERNEL_COMMIT =~ ^[0-9a-f]{40}$ ]] || fail 'ATLANTIAN_KERNEL_COMMIT must be an immutable 40-character commit ID'
-
-boot_line=$(cat boot-candidate/BOOT.bin.gitsha)
-if [[ $boot_line =~ ^([0-9a-f]{40})[[:space:]]+BOOT\.bin$ ]]; then
-  boot_expected=${BASH_REMATCH[1]}
-else
-  fail 'boot-candidate/BOOT.bin.gitsha must contain: <git-object-id>  BOOT.bin'
-fi
-boot_actual=$(git hash-object boot-candidate/BOOT.bin)
-[[ $boot_actual == "$boot_expected" ]] || fail "BOOT.bin Git object mismatch: expected $boot_expected, got $boot_actual"
-printf 'validated %-22s %s\n' 'BOOT.bin' "$boot_expected"
+[[ $ATLANTIAN_UBOOT_COMMIT =~ ^[0-9a-f]{40}$ ]] || fail 'ATLANTIAN_UBOOT_COMMIT must be an immutable 40-character commit ID'
+[[ $ATLANTIAN_UBOOT_VERSION =~ ^[0-9]{4}\.[0-9]{2}$ ]] || fail 'ATLANTIAN_UBOOT_VERSION must be YYYY.MM'
+[[ $ATLANTIAN_UBOOT_REPOSITORY == https://github.com/u-boot/u-boot.git ]] || fail 'unexpected U-Boot source repository'
+[[ $ATLANTIAN_UBOOT_DEFCONFIG == bitmain_antminer_s9_defconfig ]] || fail 'unexpected U-Boot board defconfig'
+printf 'validated %-22s %s (%s)\n' 'U-Boot source' "$ATLANTIAN_UBOOT_COMMIT" "$ATLANTIAN_UBOOT_VERSION"
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT

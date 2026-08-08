@@ -5,6 +5,7 @@ This matrix separates **physical evidence** from **software availability**.
 | Status | Meaning |
 |---|---|
 | **Ready** | available through the base image and backed by board/runtime evidence |
+| **Validation** | implementation exists, but this exact low-level revision still needs cold-boot confirmation |
 | **Profile** | framework is present; a matching FPGA bitstream/DT overlay owns the pins |
 | **External** | board function exists but is not a Linux-controlled peripheral |
 | **Not fitted** | expected device/function is not populated on CTRL_C41 |
@@ -20,8 +21,9 @@ This matrix separates **physical evidence** from **software availability**.
 | Hardware / function | Status | Linux interface / decision |
 |---|---|---|
 | XC7Z010 PS, dual Cortex-A9 | Ready | ARM/Zynq SMP platform, timers, PMU, reset/SLCR |
-| 512 MiB / 1 GiB DDR3 | Ready | one image; U-Boot probes installed DDR and fixes Linux DT; HIGHMEM enabled |
-| microSD / SDHCI0 | Ready | `/dev/mmcblk0`; boot-critical FAT + ext4 root |
+| 512 MiB / 1 GiB DDR3 | Ready | Linux + DT validated on both capacities; no `mem=` cap; HIGHMEM enabled |
+| source-built SD first stage | Validation | mainline S9 U-Boot SPL + `u-boot.img`; exact new revision needs 512 MiB + 1 GiB cold-boot confirmation |
+| microSD root | Ready | `/dev/mmcblk0`; FAT boot + ext4 root; first boot expands ext4 |
 | 256 MiB Micron MT29F2G08 NAND | Ready | MTD + UBI/UBIFS; software BCH 4-bit/512-byte ECC |
 | Gigabit Ethernet GEM0/RGMII-ID | Ready | MACB, PHY address 1, MDIO, `ethtool`, DHCP, persistent local MAC |
 | UART1 on J12 | Ready | `ttyPS0`, console/getty `115200 8N1` |
@@ -47,21 +49,34 @@ This matrix separates **physical evidence** from **software availability**.
 
 ## Memory sizing
 
-AtlANTian deliberately has **no fixed Linux RAM limit**. The Antminer S9 U-Boot
-board design uses a 1 GiB maximum probe window and `get_ram_size()` to discover
-the physically installed DDR. During ARM `bootm`, U-Boot fixes the `/memory`
-node passed to Linux to that detected bank size.
+AtlANTian deliberately has **no fixed Linux RAM limit**. Mainline U-Boot's
+Antminer S9 target uses a 1 GiB maximum probe window and `get_ram_size()` to
+discover the physically installed DDR. During ARM `bootm`, U-Boot fixes the
+`/memory` node passed to Linux to the detected bank size.
 
 The AtlANTian boot contract therefore is:
 
 | Layer | Memory policy |
 |---|---|
 | U-Boot / DT ceiling | 1 GiB maximum probe range; not a claim of installed capacity |
-| 512 MiB board | U-Boot reports the detected 512 MiB bank |
-| 1 GiB board | U-Boot reports the detected 1 GiB bank |
+| 512 MiB board | bootloader reports the detected 512 MiB bank |
+| 1 GiB board | bootloader reports the detected 1 GiB bank |
 | Kernel command line | no `mem=` parameter |
 | ARM kernel | `CONFIG_HIGHMEM=y` is mandatory so upper 1 GiB-board RAM remains usable |
 | Reserved regions | 16 MiB FPGA window at `0x0f000000` + 16-byte bootcount area |
+
+Physical 1 GiB evidence from 2026-08-09:
+
+```text
+factory U-Boot: DRAM: 1008 MiB
+Linux: Memory: 934920K/1048572K available
+/proc/meminfo: MemTotal: 1004312 kB
+free -h: Mem: 980Mi
+```
+
+This Linux boot used the current AtlANTian 6.12.100 kernel, DT and ext4 rootfs,
+started manually from the factory NAND U-Boot. It proves the Linux-side dynamic
+memory design; it does **not** by itself validate a newly built SD SPL.
 
 > [!NOTE]
 > `free`, `/proc/meminfo` and similar tools show **less than the nominal fitted
@@ -70,6 +85,29 @@ The AtlANTian boot contract therefore is:
 
 The source and image tests reject a reintroduced `mem=` boot argument, a DT
 probe ceiling below 1 GiB, or a kernel configuration without HIGHMEM.
+
+## SD boot-chain evidence
+
+The previous opaque SD `BOOT.bin` was physically isolated as the 1 GiB failure:
+
+1. one AtlANTian SD card cold-boots the known 512 MiB board;
+2. the same card is completely silent on UART on **two** 1 GiB boards in SD mode;
+3. both 1 GiB boards boot their factory NAND firmware normally;
+4. the factory U-Boot reports 1 GiB DDR and reads the same SD/FAT files normally;
+5. loading AtlANTian `uImage` + `devicetree.dtb` from that SD and running `bootm`
+   starts AtlANTian successfully with the full 1 GiB address range.
+
+The production design therefore replaces the opaque first stage with the
+source-built mainline `bitmain_antminer_s9_defconfig` chain:
+
+```text
+BootROM -> SPL BOOT.bin -> u-boot.img -> boot.scr -> uImage + DTB -> ext4 root
+```
+
+The upstream S9 board support explicitly targets 256/512/1024 MiB variants and
+uses runtime DDR probing. The new AtlANTian first stage remains marked
+**Validation** until its exact release artifact is cold-booted on both 512 MiB
+and 1 GiB hardware.
 
 ## Pin reference
 
@@ -160,14 +198,16 @@ requirement.
 
 | Record | Value |
 |---|---|
-| Board | CTRL_C41 V1.30 |
-| Bench baseline | pre-genesis development image |
-| Recorded audit | 2026-08-03 |
+| Board family | CTRL_C41 V1.30 |
+| 512 MiB SD baseline | current AtlANTian 13.1.2 image cold-boots successfully |
+| 1 GiB Linux validation | 2026-08-09, AtlANTian 13.1.2 manually launched from factory NAND U-Boot |
+| 1 GiB observed RAM | `MemTotal: 1004312 kB`, `free`: 980 MiB |
+| legacy SD first stage | fails before UART on two 1 GiB boards; same card works on 512 MiB |
+| source-built U-Boot first stage | pending exact-release cold-boot confirmation |
 | Access | Ethernet + UART |
 
-Verified observations include:
+Other verified observations include:
 
-- SD boot from `/dev/mmcblk0p2`;
 - working FPGA Manager/Region path;
 - XADC temperature and rail telemetry;
 - D3 MIO37/MIO38 electrical behavior;
@@ -175,10 +215,6 @@ Verified observations include:
 - disabled PS I2C/SPI/USB nodes matching the base DT safety policy;
 - `systemctl reboot` as the tested restart path;
 - `poweroff` halting Linux without removing external 12 V.
-
-A current release is not labelled "physically re-tested" merely because build
-and upgrade gates pass. DDR capacity selection is source/boot-contract validated;
-confirming a new physical board variant still requires a real boot observation.
 
 </details>
 

@@ -126,19 +126,14 @@ systemctl enable atlantian-grow-rootfs.service atlantian-status-leds.service \
   atlantian-fpga-status-leds.service atlantian-release-check.timer || true
 
 # `/etc/apt/sources.list` became user-owned when AtlANTian stopped shipping it
-# as a dpkg conffile. Normally dpkg leaves an obsolete conffile in place, but a
-# migration must also be correct if it is absent/empty. Restore only the
-# AtlANTian base template in that case. Existing custom live sources are never
-# overwritten here.
+# as a dpkg conffile. The factory image contains it, and the managed template
+# lives in /usr/lib/atlantian.
 template=/usr/lib/atlantian/runtime-sources.list
 if [ -s "$template" ]; then
   if [ ! -s /etc/apt/sources.list ]; then
     install -d -m 0755 /etc/apt
     install -m 0644 "$template" /etc/apt/sources.list
   elif grep -q 'snapshot\.debian\.org' /etc/apt/sources.list 2>/dev/null; then
-    # Releases older than the live-APT migration used an immutable Snapshot on
-    # the installed board. Preserve it once for diagnostics, then move only this
-    # recognisable AtlANTian-generated layout to the live codename repositories.
     backup=/etc/apt/sources.list.atlantian-snapshot.bak
     [ -e "$backup" ] || cp -a /etc/apt/sources.list "$backup"
     install -m 0644 "$template" /etc/apt/sources.list
@@ -150,25 +145,31 @@ dpkg-deb --build --root-owner-group "$p" "$OUT/atlantian-platform_${VERSION}_all
 
 k="$work/kernel"
 mkdir -p "$k"
-control "$k" atlantian-kernel armhf 'AtlANTian CTRL_C41 kernel and modules'
+control "$k" atlantian-kernel armhf 'AtlANTian CTRL_C41 kernel and boot firmware'
 major_guard "$k"
 mkdir -p "$k/usr/lib/atlantian/boot" "$k/lib/modules"
 cp -a "$RFS/lib/modules/." "$k/lib/modules/"
-cp "$ROOT/out/boot/zImage" "$k/usr/lib/atlantian/boot/zImage"
-cp "$ROOT/out/boot/devicetree.dtb" "$k/usr/lib/atlantian/boot/devicetree.dtb"
-mkimage -A arm -O linux -T kernel -C none -a 0x00008000 -e 0x00008000 \
-  -n "AtlANTian ${ATLANTIAN_RELEASE_ID}" -d "$ROOT/out/boot/zImage" \
-  "$k/usr/lib/atlantian/boot/uImage"
+BOOT_BIN="$ROOT/out/bootloader/BOOT.bin" \
+UBOOT_IMG="$ROOT/out/bootloader/u-boot.img" \
+DTB="$ROOT/out/boot/devicetree.dtb" \
+ZIMAGE="$ROOT/out/boot/zImage" \
+  "$ROOT/scripts/populate-boot-files.sh" "$k/usr/lib/atlantian/boot"
 cat >"$k/DEBIAN/postinst" <<'EOF_KERNEL_POST'
 #!/bin/sh
 set -eu
 source=/usr/lib/atlantian/boot
 target=/boot
 [ -d "$target" ] || { echo 'AtlANTian boot partition is not mounted at /boot' >&2; exit 1; }
-for name in zImage devicetree.dtb uImage; do
+
+# Install the second stage, boot policy and Linux payload first. BOOT.bin (SPL)
+# is committed last so a power loss cannot expose a new first stage without its
+# matching u-boot.img already present on FAT.
+for name in u-boot.img boot.scr uEnv.txt zImage devicetree.dtb uImage; do
   install -m 0644 "$source/$name" "$target/.$name.new"
   mv -f "$target/.$name.new" "$target/$name"
 done
+install -m 0644 "$source/BOOT.bin" "$target/.BOOT.bin.new"
+mv -f "$target/.BOOT.bin.new" "$target/BOOT.bin"
 sync
 EOF_KERNEL_POST
 chmod 0755 "$k/DEBIAN/postinst"

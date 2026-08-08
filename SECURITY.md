@@ -8,7 +8,7 @@
 | Upgrade compatibility | every release after the first is tested from the latest older published release |
 | Debian userspace | follows Debian support for the installed codename |
 | Kernel/board support | pinned board kernel until deliberately changed and validated |
-| `BOOT.bin` | pinned external vendor binary trust boundary |
+| SD boot firmware | pinned upstream U-Boot commit, built from source; low-level changes require board validation |
 
 Older supported releases should move through the newest reachable same-major
 AtlANTian release before a Debian-major transition.
@@ -30,11 +30,14 @@ Use GitHub's private security-advisory mechanism and include:
 |---|---|
 | immutable Debian Snapshot metadata | reproducible factory package baseline |
 | pinned Linux commit | deterministic kernel source |
-| pinned `BOOT.bin` Git object | detects accidental vendor-binary drift |
+| pinned upstream U-Boot commit | deterministic source for SPL `BOOT.bin` + `u-boot.img` |
 | release `SHA256SUMS` | artifact integrity for image/packages |
 | version-matched `.deb` set | prevents mixed platform/kernel/release installs |
 | GitHub/Sigstore provenance | ties published artifacts to source/workflow/commit |
 | previous-release upgrade gate | blocks incompatible package migrations after the initial release |
+
+The previous opaque vendor `BOOT.bin` remains only as a legacy diagnostic
+reference. It is not a production release input.
 
 > [!NOTE]
 > The on-device updater verifies GitHub HTTPS downloads against the published
@@ -71,10 +74,12 @@ codename-pinned Debian HTTPS repositories, including security updates. The movin
 
 ## Hardware validation boundary
 
-CI can validate build products, package transitions and software contracts, but
-cannot prove physical Zynq/FPGA routing or electrical behavior. Unverified or
-conflicting routes therefore stay disabled/profile-only.
+CI can validate source pins, build products, package transitions and software
+contracts, but cannot prove physical Zynq BootROM/SPL execution, FPGA routing or
+electrical behavior. U-Boot and kernel pin changes therefore remain deliberate
+hardware-validation events rather than automatically merged dependency updates.
+Unverified or conflicting routes stay disabled/profile-only.
 
 See [Hardware support](docs/hardware-support-matrix.md),
-[Boot firmware input](boot-candidate/README.md) and
+[Boot firmware](boot-candidate/README.md) and
 [Release pipeline](docs/PIPELINE.md).

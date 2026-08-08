@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Assemble the factory SD image.  This script never writes a physical disk.
+# Assemble the factory SD image. This script never writes a physical disk.
 set -euo pipefail
 PROJECT=$(cd "$(dirname "$0")/.." && pwd)
 . "$PROJECT/config/release.env"
 . "$PROJECT/config/image-layout.env"
 ROOTFS=${ROOTFS:-$PROJECT/out/rootfs}
 OUT=${OUT:-$PROJECT/out/${ATLANTIAN_IMAGE_NAME}.img}
-BOOT_BIN=${BOOT_BIN:?set BOOT_BIN}; DTB=${DTB:?set DTB}; ZIMAGE=${ZIMAGE:?set ZIMAGE}
-for f in "$BOOT_BIN" "$DTB" "$ZIMAGE"; do [ -f "$f" ] || { echo "missing $f" >&2; exit 2; }; done
+BOOT_BIN=${BOOT_BIN:?set BOOT_BIN}
+UBOOT_IMG=${UBOOT_IMG:?set UBOOT_IMG}
+DTB=${DTB:?set DTB}
+ZIMAGE=${ZIMAGE:?set ZIMAGE}
+for f in "$BOOT_BIN" "$UBOOT_IMG" "$DTB" "$ZIMAGE"; do [ -f "$f" ] || { echo "missing $f" >&2; exit 2; }; done
 [ -d "$ROOTFS" ] || { echo "missing ROOTFS" >&2; exit 2; }
 # `du` cannot account precisely for ext4 metadata, inode tables and xattrs.
 # Start compactly, then retry only ENOSPC with a larger disposable filesystem.
@@ -39,12 +42,9 @@ while :; do
   root_mib=$((root_mib + 128))
   echo "rootfs did not fit; retrying image with p2=${root_mib} MiB" >&2
 done
-cp "$BOOT_BIN" "$BOOT/BOOT.bin"; cp "$DTB" "$BOOT/devicetree.dtb"; cp "$ZIMAGE" "$BOOT/zImage"
-mkimage -A arm -O linux -T kernel -C none -a 0x00008000 -e 0x00008000 -n "AtlANTian ${ATLANTIAN_RELEASE_ID}" -d "$ZIMAGE" "$BOOT/uImage"
-cat >"$BOOT/uEnv.txt" <<'EOF'
-atlantian_normal_bootargs=console=ttyPS0,115200n8 root=/dev/mmcblk0p2 rootfstype=ext4 rw rootwait
-bootcmd=setenv bootargs ${atlantian_normal_bootargs}; mmcinfo && fatload mmc 0:1 0x03000000 uImage && fatload mmc 0:1 0x02A00000 devicetree.dtb && bootm 0x03000000 - 0x02A00000
-EOF
+
+BOOT_BIN="$BOOT_BIN" UBOOT_IMG="$UBOOT_IMG" DTB="$DTB" ZIMAGE="$ZIMAGE" \
+  "$PROJECT/scripts/populate-boot-files.sh" "$BOOT"
 sync
 cp "$ROOTFS/usr/share/atlantian/debian-package-manifest.tsv" "${OUT%.img}.packages.tsv"
 cp "$ROOTFS/usr/share/atlantian/debian-snapshot.txt" "${OUT%.img}.snapshot.txt"

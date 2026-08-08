@@ -21,12 +21,21 @@ LOOP=$(losetup --find --show --partscan "$IMAGE"); sleep 1
 
 BOOT=$WORK/boot; ROOT=$WORK/root; mkdir -p "$BOOT" "$ROOT"
 mount -o ro "${LOOP}p1" "$BOOT"; mount -o ro "${LOOP}p2" "$ROOT"
-for f in BOOT.bin devicetree.dtb zImage uImage uEnv.txt; do [ -s "$BOOT/$f" ] || { echo "missing boot asset: $f" >&2; exit 3; }; done
+for f in BOOT.bin u-boot.img boot.scr devicetree.dtb zImage uImage uEnv.txt; do
+  [ -s "$BOOT/$f" ] || { echo "missing boot asset: $f" >&2; exit 3; }
+done
 
 # The image must never cap RAM from the Linux command line. The DT carries the
-# 1 GiB S9 probe ceiling; U-Boot bootm replaces /memory with detected DDR size.
+# 1 GiB S9 probe ceiling; source-built U-Boot probes DDR and fixes /memory.
 ! grep -Eq '(^|[[:space:]])mem=[^[:space:]]+' "$BOOT/uEnv.txt"
+! strings "$BOOT/boot.scr" | grep -Eq '(^|[[:space:]])mem=[^[:space:]]+'
 grep -Fq 'atlantian_normal_bootargs=console=ttyPS0,115200n8 root=/dev/mmcblk0p2' "$BOOT/uEnv.txt"
+strings "$BOOT/boot.scr" | grep -Fq 'root=/dev/mmcblk0p2 rootfstype=ext4 rw rootwait'
+strings "$BOOT/boot.scr" | grep -Fq 'fatload mmc 0:1 0x02000000 uImage'
+strings "$BOOT/boot.scr" | grep -Fq 'fatload mmc 0:1 0x01F00000 devicetree.dtb'
+strings "$BOOT/boot.scr" | grep -Fq 'bootm 0x02000000 - 0x01F00000'
+mkimage -l "$BOOT/boot.scr" | grep -q 'Script'
+mkimage -l "$BOOT/uImage" | grep -q 'ARM Linux Kernel Image'
 [ "$(fdtget -t x "$BOOT/devicetree.dtb" /memory@0 reg)" = '0 40000000' ] || {
   echo 'device tree no longer exposes the 1 GiB DDR probe ceiling' >&2
   exit 3
@@ -58,4 +67,4 @@ grep -qx 'MACAddressPolicy=persistent' "$ROOT/etc/systemd/network/10-atlantian-e
 if [ -n "${SUDO_UID:-}" ] && [ "$SUDO_UID" != 0 ]; then ! find "$ROOT" -xdev -uid "$SUDO_UID" -print -quit | grep -q .; fi
 ! [ -e "$ROOT/usr/local/sbin/atlantian-persist-state" ]; ! [ -e "$ROOT/usr/local/sbin/atlantian-grow-data" ]
 
-echo 'two-partition image, dynamic DDR, live APT, Debian lifecycle, identity and ownership contracts passed'
+echo 'two-partition image, source-built boot chain, dynamic DDR, live APT, Debian lifecycle, identity and ownership contracts passed'
