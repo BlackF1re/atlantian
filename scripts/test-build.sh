@@ -40,4 +40,14 @@ dpkg-deb -e "$platform" "$work/control"
 [ "$(cat "$work/root/etc/atlantian-release")" = "$ATLANTIAN_VERSION" ]
 ! grep -qx '/etc/atlantian-release' "$work/control/conffiles"
 
-echo 'release image, package checksums, Debian lifecycle and identity passed'
+# Production Actions additionally prove that the newly built package set can be
+# installed over the latest published image. Local builds can opt in/out with
+# ATLANTIAN_UPGRADE_COMPAT_TEST=true|false.
+run_upgrade_test=${ATLANTIAN_UPGRADE_COMPAT_TEST:-${GITHUB_ACTIONS:-false}}
+case "$run_upgrade_test" in
+  1|true) bash "$ROOT/scripts/test-upgrade-from-release.sh" "$DIR" ;;
+  0|false|'') ;;
+  *) echo "invalid ATLANTIAN_UPGRADE_COMPAT_TEST value: $run_upgrade_test" >&2; exit 64 ;;
+esac
+
+echo 'release image, package checksums, Debian lifecycle, upgrade compatibility and identity passed'

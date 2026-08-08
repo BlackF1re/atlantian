@@ -42,6 +42,19 @@ grep -q 'major-upgrade-pending.env' scripts/atlantian-login-info.sh
 ! grep -qE '^[[:space:]]+etc/apt/sources\.list' scripts/build-atlantian-debs.sh
 ! grep -q 'snapshot configured by atlantian-platform' scripts/build-atlantian-debs.sh
 
+# Upgrade compatibility is a production publication gate. It must exercise a
+# checksummed previous image under armhf emulation rather than merely inspecting
+# package metadata.
+grep -q 'test-upgrade-from-release.sh' scripts/test-build.sh
+grep -q 'GITHUB_ACTIONS' scripts/test-build.sh
+grep -q 'losetup --find --show --partscan' scripts/test-upgrade-from-release.sh
+grep -q 'previous release image checksum mismatch' scripts/test-upgrade-from-release.sh
+grep -q 'atlantian-major-upgrade-authorized' scripts/test-upgrade-from-release.sh
+grep -q 'machine-id changed during package upgrade' scripts/test-upgrade-from-release.sh
+grep -q 'sources.list.atlantian-snapshot.bak' scripts/test-upgrade-from-release.sh
+grep -q 'dpkg --audit' scripts/test-upgrade-from-release.sh
+grep -q 'full-upgrade -y' scripts/test-upgrade-from-release.sh
+
 # Update and release integrity.
 grep -q 'dpkg --compare-versions' scripts/atlantian-release-check.sh
 ! grep -q -- '--allow-downgrades' scripts/atlantian-sysupgrade.sh

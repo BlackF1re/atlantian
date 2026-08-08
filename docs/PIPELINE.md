@@ -58,6 +58,24 @@ fetches `main` and publishes only if its own commit is still the branch tip.
 Artifacts are checksum-verified and receive GitHub/Sigstore build-provenance
 attestations. Superseded builds may finish but cannot become the newest release.
 
+Before a production build reaches publication, `scripts/test-build.sh` also
+runs `scripts/test-upgrade-from-release.sh`. The gate downloads the newest
+published AtlANTian image older than the candidate, verifies that image against
+its published `SHA256SUMS`, expands its root partition like a first-booted SD
+card and mounts its FAT `/boot` plus ext4 root filesystem. Under `armhf`
+QEMU/binfmt chroot execution it then installs the candidate package set and
+checks package guards, legacy Snapshot-to-live-APT migration, `/boot` replacement,
+`dpkg --audit`, repository reachability and preservation of machine identity,
+SSH host keys and representative `/etc`, `/root`, `/home` and `/var` state.
+
+For a real one-major Debian transition the same gate additionally runs the
+target Debian `full-upgrade` and verifies the resulting userspace codename.
+Downgrades, skipped majors and unauthorized one-major package transitions are
+negative tests. Hardware-only behavior such as Zynq boot, FPGA configuration,
+physical I/O and Ethernet PHY operation remains outside emulation and is covered
+by source contracts plus real-board validation. If no older release exists, the
+gate is not applicable; otherwise any failure blocks publication.
+
 ## Installed updates
 
 `atlantian-release-check` scans complete GitHub releases and enforces staged
