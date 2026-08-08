@@ -169,16 +169,22 @@ timedatectl status
 CTRL_C41 has no battery-backed RTC, so network time is important after a cold
 power-off.
 
-Install normal Debian packages as usual:
+Install and update normal Debian packages as usual:
 
 ```sh
 apt update
+apt upgrade
 apt install git python3 tmux
 ```
 
-The default APT sources point to the immutable Debian Snapshot associated with
-the installed AtlANTian release. This is intentional: packages within one
-release stay internally consistent and reproducible.
+Published systems use the normal live Debian stable repositories for `trixie`,
+`trixie-updates` and `trixie-security`. Therefore an installation does not have
+to wait for a newer AtlANTian image before Debian publishes a newer package or
+security fix.
+
+The **factory build** is still produced from an immutable Debian Snapshot. That
+Snapshot records exactly which Debian package versions were used to create the
+image; it does not restrict APT after the image is installed.
 
 ## 8. Update AtlANTian
 
@@ -212,7 +218,7 @@ It then:
 1. downloads the exact three AtlANTian packages for one newer release;
 2. verifies checksums and package versions;
 3. installs the platform, kernel and release packages;
-4. runs `apt full-upgrade` against that release's pinned Debian Snapshot;
+4. refreshes the configured Debian repositories and runs `apt full-upgrade`;
 5. reboots the board.
 
 D3 shows three red flashes followed by three green flashes during the confirmed
@@ -277,15 +283,19 @@ validated.
 The standard installation boots and runs from microSD. NAND remains a separate
 MTD device for experiments, backups or future layouts.
 
-### APT follows a frozen snapshot
+### Builds are snapshot-pinned; runtime APT is not
 
-`apt update` does not automatically jump to whatever Debian mirrors happen to
-serve today. AtlANTian's release automation checks Debian main, updates and
-security every day, freezes a matching Snapshot, and publishes a new AtlANTian
-release when the base changes.
+AtlANTian's release automation checks Debian main, updates and security every
+day and freezes a matching Snapshot for reproducible factory builds. The image
+records that Snapshot as build provenance.
 
-Use `atlantian-sysupgrade` to move a normal installation to that newer release
-and snapshot.
+After assembly, however, `/etc/apt/sources.list` points at the normal live
+Debian stable mirrors. `apt update` therefore follows current Debian stable,
+updates and security repositories even on an older AtlANTian installation.
+
+Use `atlantian-sysupgrade` for AtlANTian-owned changes such as the board kernel,
+platform policy, FPGA plumbing and release tooling; use normal APT for ordinary
+Debian userspace maintenance.
 
 ## 11. Troubleshooting
 
