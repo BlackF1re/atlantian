@@ -1,0 +1,105 @@
+name: Daily Debian base update check
+
+on:
+  schedule:
+    # 06:00 Asia/Tomsk (UTC+7).
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: atlantian-debian-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check Debian stable and freeze build snapshot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Select Debian base and freeze exact Snapshot metadata
+        id: debian
+        run: bash scripts/refresh-debian-base.sh
+
+      - name: Validate frozen release inputs
+        if: steps.debian.outputs.changed == 'true'
+        run: bash scripts/validate-release-inputs.sh
+
+      # A major promotion is rare and deserves a real userspace compatibility
+      # test before main is changed. This catches renamed/removed packages and
+      # debootstrap changes while the previous Debian generation stays intact.
+      - name: Preflight a new Debian major root filesystem
+        if: steps.debian.outputs.promoted == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            debootstrap qemu-user-static binfmt-support
+          sudo -E bash scripts/build-rootfs.sh
+          sudo rm -rf out/rootfs
+
+      - name: Commit frozen Debian base and start release build
+        if: steps.debian.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          . config/release.env
+          git config user.name github-actions
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add debian-release.sha256 debian-updates-release.sha256 debian-security-release.sha256 \
+            config/debian-snapshot.env config/release.env
+          if [[ '${{ steps.debian.outputs.promoted }}' == true ]]; then
+            message="chore: promote Debian stable to ${DEBIAN_CODENAME} (AtlANTian ${DEBIAN_MAJOR}.${ATLANTIAN_BUILD})"
+          else
+            message="chore: freeze Debian ${DEBIAN_CODENAME} snapshot (AtlANTian ${DEBIAN_MAJOR}.${ATLANTIAN_BUILD})"
+          fi
+          git commit -m "$message"
+          git push origin main
+          # A push made by GITHUB_TOKEN does not recursively start push workflows.
+          gh workflow run 'Build and release AtlANTian' --ref main
+
+      # GitHub can disable scheduled workflows in an inactive public repository.
+      # A monthly workflow-only commit keeps the watcher alive but is deliberately
+      # outside the production release workflow's path filters.
+      - name: Keep the scheduled watcher active on quiet repositories
+        if: steps.debian.outputs.changed != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          month=$(date -u +%Y-%m)
+          current=$(cat .github/debian-watch-heartbeat 2>/dev/null || true)
+          [[ "$current" == "$month" ]] && exit 0
+          printf '%s\n' "$month" > .github/debian-watch-heartbeat
+          git config user.name github-actions
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/debian-watch-heartbeat
+          git commit -m "chore: keep Debian watcher active ($month)"
+          git push origin main
+
+      # If a watcher-triggered production build failed, the frozen generation
+      # would otherwise remain committed forever with no future metadata change
+      # to retrigger it. Retry until this Debian generation has a published tag.
+      - name: Ensure the current Debian generation has a release
+        if: steps.debian.outputs.changed != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          . config/release.env
+          prefix="v${DEBIAN_MAJOR}.${ATLANTIAN_BUILD}."
+          if gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -Fq "$prefix"; then
+            echo "A published release already exists for AtlANTian ${DEBIAN_MAJOR}.${ATLANTIAN_BUILD}."
+            exit 0
+          fi
+          echo "No published release exists for AtlANTian ${DEBIAN_MAJOR}.${ATLANTIAN_BUILD}; retrying production build."
+          gh workflow run 'Build and release AtlANTian' --ref main

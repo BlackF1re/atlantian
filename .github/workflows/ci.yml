@@ -1,0 +1,144 @@
+name: AtlANTian pull-request CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/**'
+      - 'board/**'
+      - 'boot-candidate/**'
+      - 'config/**'
+      - 'debian-*.sha256'
+      - 'fpga/**'
+      - 'kernel-overlay/**'
+      - 'scripts/**'
+      - 'systemd/**'
+      - 'README.md'
+      - 'SECURITY.md'
+      - 'CONTRIBUTING.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlantian-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck python3-yaml
+
+      - name: Validate automation YAML
+        run: |
+          python3 - <<'PY'
+          import glob
+          import yaml
+
+          paths = sorted(glob.glob('.github/workflows/*.yml')) + ['.github/dependabot.yml']
+          parsed = {}
+          for path in paths:
+              with open(path, encoding='utf-8') as f:
+                  data = yaml.safe_load(f)
+              if not isinstance(data, dict):
+                  raise SystemExit(f'invalid top-level YAML object: {path}')
+              parsed[path] = data
+              print(f'valid: {path}')
+
+          dep = parsed['.github/dependabot.yml']
+          updates = dep.get('updates') or []
+          if len(updates) != 1:
+              raise SystemExit('Dependabot must have exactly one maintained ecosystem')
+          cfg = updates[0]
+          expected = {
+              'package-ecosystem': 'github-actions',
+              'directory': '/',
+              'open-pull-requests-limit': 1,
+              'rebase-strategy': 'auto',
+          }
+          for key, value in expected.items():
+              if cfg.get(key) != value:
+                  raise SystemExit(f'Dependabot {key} must remain {value!r}')
+          if (cfg.get('schedule') or {}).get('interval') != 'monthly':
+              raise SystemExit('Dependabot GitHub Actions version updates must remain monthly')
+          PY
+
+      - name: Validate documentation links
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import urllib.parse
+
+          root = Path.cwd().resolve()
+          docs = sorted(
+              p for p in Path('.').rglob('*.md')
+              if '.git' not in p.parts and 'artifacts' not in p.parts and 'out' not in p.parts
+          )
+          link_re = re.compile(r'(?<!!)\[[^\]]*\]\(([^)]+)\)')
+          errors = []
+
+          for source in docs:
+              text = source.read_text(encoding='utf-8')
+              for raw in link_re.findall(text):
+                  target = raw.strip().split()[0].strip('<>')
+                  if not target or target.startswith(('#', 'http://', 'https://', 'mailto:')):
+                      continue
+                  path_part = urllib.parse.unquote(target.split('#', 1)[0])
+                  if not path_part:
+                      continue
+                  destination = (source.parent / path_part).resolve()
+                  try:
+                      destination.relative_to(root)
+                  except ValueError:
+                      errors.append(f'{source}: link escapes repository: {target}')
+                      continue
+                  if not destination.exists():
+                      errors.append(f'{source}: missing local link target: {target}')
+
+          if errors:
+              raise SystemExit('\n'.join(errors))
+          print(f'validated local links in {len(docs)} Markdown files')
+          PY
+
+      - name: Validate shell and source contracts
+        run: |
+          shellcheck -S error -x scripts/*.sh
+          bash scripts/test-source-contracts.sh
+          bash scripts/test-update-leds.sh
+
+      - name: Validate immutable release inputs
+        run: bash scripts/validate-release-inputs.sh
+
+      - name: Validate APT build/runtime separation
+        run: |
+          snapshot_line=$(grep -nF 'deb [check-valid-until=no] $MIRROR $SUITE main non-free-firmware' scripts/build-rootfs.sh | head -n1 | cut -d: -f1)
+          runtime_line=$(grep -nF 'deb https://deb.debian.org/debian $SUITE main non-free-firmware' scripts/build-rootfs.sh | tail -n1 | cut -d: -f1)
+          test -n "$snapshot_line"
+          test -n "$runtime_line"
+          test "$runtime_line" -gt "$snapshot_line"
+          grep -Fq 'deb https://deb.debian.org/debian ${SUITE}-updates main non-free-firmware' scripts/build-rootfs.sh
+          grep -Fq 'deb https://security.debian.org/debian-security ${SUITE}-security main non-free-firmware' scripts/build-rootfs.sh
+          grep -Fq 'runtime-sources.list' scripts/build-atlantian-debs.sh
+          grep -Fq 'atlantian-major-upgrade-authorized' scripts/build-atlantian-debs.sh
+
+      - name: Validate package and image contract sources
+        run: |
+          grep -q '/usr/lib/atlantian/boot' scripts/build-atlantian-debs.sh
+          ! grep -q 'etc/default/zramswap.*copy' scripts/build-atlantian-debs.sh
+          ! sed -n '/^for f in /p' scripts/build-atlantian-debs.sh | grep -qE 'etc/(os-release|issue\.net|default/zramswap)'
+          . config/image-layout.env
+          test "$ATLANTIAN_BOOT_MIB" = 64
+          test "$ATLANTIAN_INITIAL_ROOT_SLACK_MIB" -gt 0
+          ! grep -q 'mmcblk0p3\|/data' scripts/make-sd-image.sh scripts/build-rootfs.sh
