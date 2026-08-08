@@ -125,14 +125,24 @@ ln -sfn ../atlantian-ssh-hostkeys.service \
 systemctl enable atlantian-grow-rootfs.service atlantian-status-leds.service \
   atlantian-fpga-status-leds.service atlantian-release-check.timer || true
 
-# Releases older than the live-APT migration used an immutable Snapshot on the
-# installed board. Move only that recognisable AtlANTian-generated layout; an
-# administrator's custom live sources are not overwritten here.
-if grep -q 'snapshot\.debian\.org' /etc/apt/sources.list 2>/dev/null && \
-   [ -s /usr/lib/atlantian/runtime-sources.list ]; then
-  backup=/etc/apt/sources.list.atlantian-snapshot.bak
-  [ -e "$backup" ] || cp -a /etc/apt/sources.list "$backup"
-  install -m 0644 /usr/lib/atlantian/runtime-sources.list /etc/apt/sources.list
+# `/etc/apt/sources.list` became user-owned when AtlANTian stopped shipping it
+# as a dpkg conffile. Normally dpkg leaves an obsolete conffile in place, but a
+# migration must also be correct if it is absent/empty. Restore only the
+# AtlANTian base template in that case. Existing custom live sources are never
+# overwritten here.
+template=/usr/lib/atlantian/runtime-sources.list
+if [ -s "$template" ]; then
+  if [ ! -s /etc/apt/sources.list ]; then
+    install -d -m 0755 /etc/apt
+    install -m 0644 "$template" /etc/apt/sources.list
+  elif grep -q 'snapshot\.debian\.org' /etc/apt/sources.list 2>/dev/null; then
+    # Releases older than the live-APT migration used an immutable Snapshot on
+    # the installed board. Preserve it once for diagnostics, then move only this
+    # recognisable AtlANTian-generated layout to the live codename repositories.
+    backup=/etc/apt/sources.list.atlantian-snapshot.bak
+    [ -e "$backup" ] || cp -a /etc/apt/sources.list "$backup"
+    install -m 0644 "$template" /etc/apt/sources.list
+  fi
 fi
 EOF_POSTINST
 chmod 0755 "$p/DEBIAN/postinst"

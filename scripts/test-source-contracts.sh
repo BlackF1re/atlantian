@@ -32,6 +32,8 @@ grep -Fq 'deb [check-valid-until=no] $MIRROR $SUITE main non-free-firmware' scri
 grep -Fq 'deb https://deb.debian.org/debian $SUITE main non-free-firmware' scripts/build-rootfs.sh
 grep -Fq 'Managed by AtlANTian' scripts/build-rootfs.sh
 grep -Fq 'runtime-sources.list' scripts/build-atlantian-debs.sh
+grep -Fq '[ ! -s /etc/apt/sources.list ]' scripts/build-atlantian-debs.sh
+grep -q 'sources.list.atlantian-snapshot.bak' scripts/build-atlantian-debs.sh
 grep -q 'atlantian-major-upgrade-authorized' scripts/build-atlantian-debs.sh
 grep -q 'atlantian-major-upgrade-authorized' scripts/atlantian-sysupgrade.sh
 grep -q 'major-upgrade-pending.env' scripts/atlantian-sysupgrade.sh
