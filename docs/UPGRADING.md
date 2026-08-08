@@ -1,33 +1,28 @@
 # Upgrading AtlANTian
 
-AtlANTian has **two update paths**. Use the one that matches what you want to
-change.
+AtlANTian uses **two update mechanisms**:
 
-| Goal | Command | Scope |
+| Goal | Tool | Scope |
 |---|---|---|
-| update Debian packages | `apt update && apt upgrade` | userspace within the installed Debian major |
+| update Debian packages | `apt` | userspace within the installed Debian major |
 | update AtlANTian | `atlantian-sysupgrade` | platform package, board kernel and release tooling |
 | move to next Debian major | `atlantian-sysupgrade` | staged one-major Debian transition |
 
 > [!NOTE]
-> Runtime APT is intentionally pinned to the installed Debian **codename**, not
-> the moving `stable` alias. A normal `apt upgrade` therefore cannot silently
-> jump to a new Debian major.
+> Runtime APT is pinned to the installed Debian **codename**, not the moving
+> `stable` alias. A normal `apt upgrade` therefore cannot silently jump to a new
+> Debian major.
 
 ## Normal Debian maintenance
 
 ```sh
 apt update
 apt upgrade
-```
-
-Install packages normally:
-
-```sh
 apt install <package>
 ```
 
-These commands use Debian's live main, updates and security repositories.
+These commands use Debian's live main, updates and security repositories for the
+installed codename.
 
 ## AtlANTian release update
 
@@ -38,34 +33,35 @@ atlantian-sysupgrade --check
 atlantian-sysupgrade --notes
 ```
 
-Install:
+Install interactively:
 
 ```sh
 atlantian-sysupgrade
 ```
 
-Non-interactive mode:
+Or non-interactively:
 
 ```sh
 atlantian-sysupgrade --yes
 ```
 
-The updater downloads exactly three version-matched packages, checks their
+The updater downloads exactly three version-matched packages, verifies their
 published SHA-256 values and embedded versions, installs them through APT/dpkg,
-refreshes Debian packages and reboots.
+updates the current Debian package set and reboots.
 
-## What survives
+## What normally survives
 
-| Preserved | Updated by AtlANTian |
+| Preserved state | AtlANTian-owned state that may change |
 |---|---|
-| `/etc` and normal conffiles | board kernel and modules |
-| `/root` and `/home` | DT/boot assets |
-| `/var` and package database | AtlANTian platform files |
-| machine ID | release/update tooling |
-| SSH host keys | managed Debian base template when required |
-| user-installed packages | release version markers |
+| normal `/etc` configuration | board kernel/modules and boot assets |
+| `/root` and `/home` | AtlANTian platform/release files |
+| `/var` and package database | managed Debian base source during a major transition |
+| machine ID | release/update state |
+| SSH host keys | version markers |
+| ordinary user-installed packages | packages Debian itself must replace/remove during a major `full-upgrade` |
 
-Normal updates do not repartition the card and do not rewrite NAND.
+Normal AtlANTian updates do not repartition the card and do not rewrite NAND.
+See [Persistence](PERSISTENCE.md) for the exact storage model.
 
 ## Debian major transition
 
@@ -82,9 +78,10 @@ flowchart LR
     F --> G[Reboot]
 ```
 
-Before the transition, third-party `.list` and `.sources` files are moved to a
-backup under `/var/lib/atlantian/update/`. They are **not** automatically
-re-enabled against the new Debian major.
+Before starting, the updater requires at least **512 MiB free on `/`** by
+default. Third-party `.list` and `.sources` files are moved to a backup under
+`/var/lib/atlantian/update/` and are **not** automatically re-enabled against
+the new Debian major.
 
 > [!IMPORTANT]
 > Review third-party repositories after a major upgrade. Re-enable only sources
@@ -92,21 +89,21 @@ re-enabled against the new Debian major.
 
 ## Interrupted major upgrade
 
-Once a major transition reaches the sensitive phase, AtlANTian writes resumable
-state to:
+Once a major transition reaches its sensitive phase, resumable state is stored
+at:
 
 ```text
 /var/lib/atlantian/update/major-upgrade-pending.env
 ```
 
-If the process is interrupted, run:
+If that file exists, run:
 
 ```sh
 atlantian-sysupgrade
 ```
 
-The updater detects the pending transition and asks to resume it before offering
-another release.
+The updater resumes the recorded transition before considering another release.
+Do not delete pending state merely to silence the warning.
 
 Useful state paths:
 
@@ -119,7 +116,14 @@ Useful state paths:
 
 ## Recovery checks
 
-If an update stops unexpectedly:
+First determine whether a Debian-major transition is pending:
+
+```sh
+test -s /var/lib/atlantian/update/major-upgrade-pending.env && \
+  echo 'resume with: atlantian-sysupgrade'
+```
+
+If **no** transition is pending, ordinary Debian repair checks are appropriate:
 
 ```sh
 dpkg --audit
@@ -127,24 +131,15 @@ apt-get -f install
 atlantian-sysupgrade --check
 ```
 
-For a recorded major transition, prefer **resuming `atlantian-sysupgrade`**
-over manually deleting its state.
+> [!CAUTION]
+> During a recorded major transition, prefer `atlantian-sysupgrade` over manual
+> APT/source surgery. The updater knows which release and Debian major must be
+> completed.
 
-## Compatibility assurance
+## Publication compatibility gate
 
-Before GitHub publishes a new AtlANTian release, CI installs the candidate
-packages over the latest older published image under `armhf` QEMU/chroot and
-checks:
+Every release after the first is tested by installing it over the latest older
+published image under `armhf` QEMU/chroot before publication. The detailed test
+contract belongs to the build system; see [Release pipeline](PIPELINE.md).
 
-- package guards and checksums;
-- APT source migration;
-- `/boot` replacement;
-- `dpkg --audit`;
-- machine ID and SSH host-key preservation;
-- representative `/etc`, `/root`, `/home` and `/var` state;
-- major-upgrade and downgrade rejection rules.
-
-Hardware-only boot/FPGA behavior remains a real-board validation boundary.
-
-See also [Persistence](PERSISTENCE.md), [Debian lifecycle](DEBIAN-LIFECYCLE.md)
-and [Release pipeline](PIPELINE.md).
+See also [Debian lifecycle](DEBIAN-LIFECYCLE.md).
