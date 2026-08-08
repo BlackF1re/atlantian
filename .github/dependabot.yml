@@ -1,15 +1,15 @@
 version: 2
 
-# AtlANTian has no language-level dependency manifest of its own; Debian owns
-# userspace packages. Dependabot therefore maintains only GitHub Actions
-# infrastructure. Routine version updates are grouped to keep maintenance quiet.
+# Debian owns userspace package maintenance; Dependabot is intentionally limited
+# to GitHub Actions infrastructure. Routine updates are grouped so maintenance
+# stays quiet, while security updates can still surface when GitHub flags them.
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
-      time: "07:00"
-      timezone: "Asia/Tomsk"
+      time: "04:17"
+      timezone: "Etc/UTC"
     open-pull-requests-limit: 1
     rebase-strategy: "auto"
     commit-message:
