@@ -1,0 +1,79 @@
+name: GitHub Actions infrastructure canary
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: atlantian-actions-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exercise:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Prepare canary payload
+        run: |
+          set -euo pipefail
+          mkdir -p .actions-canary-cache
+          printf 'AtlANTian Actions canary %s %s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > .actions-canary-cache/payload.txt
+          sha256sum .actions-canary-cache/payload.txt > actions-canary.SHA256SUMS
+
+      # v6.1.0
+      - name: Exercise Actions cache save path
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .actions-canary-cache
+          key: atlantian-actions-canary-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # v7.0.1
+      - name: Exercise artifact upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: actions-canary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .actions-canary-cache/payload.txt
+          retention-days: 1
+
+      - name: Exercise GitHub CLI/API
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh --version
+          test "$(gh api "repos/$GITHUB_REPOSITORY" --jq '.full_name')" = "$GITHUB_REPOSITORY"
+
+      # v4.2.2
+      - name: Exercise build provenance attestation
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-checksums: actions-canary.SHA256SUMS
+
+  restore-cache:
+    needs: exercise
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # v6.1.0
+      - name: Exercise Actions cache restore path
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .actions-canary-cache
+          key: atlantian-actions-canary-${{ github.run_id }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
+
+      - name: Verify restored payload
+        run: test -s .actions-canary-cache/payload.txt
