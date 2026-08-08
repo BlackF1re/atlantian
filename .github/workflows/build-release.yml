@@ -134,16 +134,16 @@ jobs:
 
       - name: Restore Linux source and build cache
         id: kernel-cache
-        # v4.2.3
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        # v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: out/linux-src
           key: linux-6.12.100-${{ hashFiles('debian-*.sha256', 'config/release.env', 'board/**', 'config/kernel-c41*.fragment', 'kernel-overlay/**', 'scripts/build-kernel.sh') }}
 
       - name: Restore root filesystem archive
         id: rootfs-cache
-        # v4.2.3
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        # v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: out/cache/rootfs.tar.zst
           # The archive contains kernel modules, so kernel inputs deliberately
@@ -161,8 +161,8 @@ jobs:
 
       - name: Restore boot artefacts
         id: boot-cache
-        # v4.2.3
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        # v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: out/boot
           key: boot-6.12.100-${{ hashFiles('debian-*.sha256', 'config/release.env', 'board/**', 'config/kernel-c41*.fragment', 'kernel-overlay/**', 'scripts/build-kernel.sh') }}
@@ -287,8 +287,8 @@ jobs:
         with:
           subject-checksums: artifacts/current/SHA256SUMS
 
-      # v4.6.2
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      # v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: steps.release-head.outputs.publish == 'true'
         with:
           name: atlantian-image-${{ env.ATLANTIAN_VERSION }}
@@ -302,19 +302,20 @@ jobs:
 
       - name: Publish GitHub release
         if: steps.release-head.outputs.publish == 'true'
-        # v2.2.2
-        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          target_commitish: ${{ github.sha }}
-          name: AtlANTian GNU/Linux ${{ env.ATLANTIAN_VERSION }}
-          body_path: release-notes.md
-          files: |
-            artifacts/current/*.img
-            artifacts/current/*.deb
-            artifacts/current/*.packages.tsv
-            artifacts/current/*.snapshot.txt
-            artifacts/current/SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "AtlANTian GNU/Linux $ATLANTIAN_VERSION" \
+            --notes-file release-notes.md \
+            artifacts/current/*.img \
+            artifacts/current/*.deb \
+            artifacts/current/*.packages.tsv \
+            artifacts/current/*.snapshot.txt \
+            artifacts/current/SHA256SUMS \
             artifacts/current/BUILD-INFO.txt
 
       - name: Publish CI outcome summary

@@ -91,6 +91,10 @@ component that this repository does not rebuild from source.
 | final `main` tip check | a superseded build cannot publish |
 | SHA-256 + provenance | release bytes and build origin are independently inspectable |
 
+Release publication uses the GitHub-hosted runner's `gh release` command rather
+than a third-party release Action. Build provenance remains produced by GitHub's
+official attestation Action.
+
 <details>
 <summary><strong>Previous-release upgrade gate</strong></summary>
 
@@ -128,15 +132,43 @@ For a one-major Debian transition it also performs the target Debian
 Cached rootfs state is restamped with the current release identity before
 packaging.
 
-## Dependency maintenance
+## GitHub Actions maintenance
 
-Dependabot maintains **GitHub Actions only**. Routine version updates are grouped
-into one monthly PR; security updates may appear when GitHub raises a relevant
-alert. PR CI validates automation YAML and repository contracts before an
-infrastructure change is merged.
+GitHub Actions infrastructure is designed to maintain itself without routine
+operator work.
 
-Debian userspace is deliberately outside Dependabot and remains owned by the
-Debian lifecycle described above.
+```mermaid
+flowchart LR
+    A[Dependabot daily check] --> B[Grouped Actions PR]
+    B --> C[Read-only PR CI + action smoke test]
+    C --> D[Pin-only trusted policy]
+    D --> E[Automatic squash merge]
+    E --> F[Post-merge trusted canary]
+    F -->|pass| G[Keep update]
+    F -->|fail once| H[Retry]
+    H -->|fail again| I[Auto-revert Dependabot merge]
+```
+
+| Control | Policy |
+|---|---|
+| ecosystem | only `github-actions`; Debian is never managed by Dependabot |
+| cadence | daily version check; available updates are grouped |
+| allowed external Actions | `actions/checkout`, `actions/cache`, `actions/upload-artifact`, `actions/attest-build-provenance` |
+| pinning | every external Action must use a full 40-hex immutable commit SHA |
+| PR permissions | normal Dependabot PR CI is read-only |
+| auto-merge | only a successful Dependabot PR that changes Action pins and optional version comments, nothing else |
+| trusted merge gate | `workflow_run`; validates API diff and never executes PR code with a write token |
+| post-merge canary | checkout, cache save/restore, artifact upload, GitHub API and provenance attestation |
+| recovery | retry once; a second failure on the current Dependabot merge is automatically reverted |
+
+> [!IMPORTANT]
+> Automatic dependency merging is deliberately narrower than normal contributor
+> merging. A structural workflow edit, a new third-party Action or a floating
+> `@vN` reference cannot pass the trusted pin-only gate.
+
+The policy implementation is `.github/scripts/actions-policy.py`. The canary and
+recovery workflows are intentionally separate from the production release path,
+so routine infrastructure maintenance does not create a new AtlANTian image.
 
 ## Installed updates
 

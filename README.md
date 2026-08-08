@@ -4,6 +4,7 @@
 [![Build and release](https://github.com/BlackF1re/atlantian/actions/workflows/build-release.yml/badge.svg)](https://github.com/BlackF1re/atlantian/actions/workflows/build-release.yml)
 [![Debian base](https://github.com/BlackF1re/atlantian/actions/workflows/debian-watch.yml/badge.svg)](https://github.com/BlackF1re/atlantian/actions/workflows/debian-watch.yml)
 [![PR CI](https://github.com/BlackF1re/atlantian/actions/workflows/ci.yml/badge.svg)](https://github.com/BlackF1re/atlantian/actions/workflows/ci.yml)
+[![Actions canary](https://github.com/BlackF1re/atlantian/actions/workflows/actions-canary.yml/badge.svg)](https://github.com/BlackF1re/atlantian/actions/workflows/actions-canary.yml)
 [![License: GPL-2.0](https://img.shields.io/badge/license-GPL--2.0--only-blue.svg)](LICENSE)
 
 **AtlANTian** is a compact Debian GNU/Linux distribution for the Bitmain
@@ -77,6 +78,7 @@ Everything needed to use or modify AtlANTian is linked here.
 bash scripts/test-source-contracts.sh
 bash scripts/test-update-leds.sh
 bash scripts/validate-release-inputs.sh
+python3 .github/scripts/actions-policy.py scan .github/workflows
 ```
 
 For a full local build:
@@ -86,8 +88,8 @@ sudo ./scripts/bootstrap-host.sh
 ./scripts/build-incremental.sh all
 ```
 
-PR CI also validates shell, YAML, documentation links and release-input
-contracts.
+PR CI also validates shell, YAML, documentation links, release-input contracts
+and the maintained GitHub Actions themselves.
 
 </details>
 
@@ -102,7 +104,7 @@ contracts.
 | Persistent system | ordinary Debian `/etc`, `/root`, `/home` and `/var` survive normal updates |
 | RAM portability | U-Boot probes installed DDR and fixes the DT; ARM HIGHMEM remains enabled |
 | Release confidence | every release after the first is tested against the previous published image |
-| Low maintenance | daily Debian watcher + grouped Dependabot maintenance for GitHub Actions |
+| Low maintenance | daily Debian watcher + daily guarded Actions updates + post-merge canary/rollback |
 
 ## Quick start
 
@@ -239,6 +241,32 @@ Release artifacts also receive GitHub/Sigstore build-provenance attestations.
 
 </details>
 
+<details>
+<summary><b>Show self-maintaining GitHub Actions policy</b></summary>
+
+```mermaid
+flowchart LR
+    A[Daily Dependabot] --> B[Grouped pin update]
+    B --> C[Read-only PR CI]
+    C --> D[Trusted pin-only gate]
+    D --> E[Auto-merge]
+    E --> F[Trusted canary]
+    F -->|pass| G[Done]
+    F -->|fails twice| H[Auto-revert]
+```
+
+Only GitHub's official `checkout`, `cache`, `upload-artifact` and
+`attest-build-provenance` Actions are allow-listed, and every reference must be
+pinned to a full immutable commit SHA. The trusted merge workflow validates the
+API diff and never executes Dependabot PR code with a write token. The
+post-merge canary exercises checkout, cache save/restore, artifact upload, API
+access and provenance attestation; a repeatedly failing current Dependabot merge
+is reverted automatically.
+
+Full contract: **[Release pipeline](docs/PIPELINE.md#github-actions-maintenance)**.
+
+</details>
+
 > [!CAUTION]
 > CI cannot prove physical Zynq boot, FPGA wiring or electrical behavior. Those
 > remain explicit real-board validation boundaries.
@@ -277,7 +305,8 @@ Published releases are produced only from `main` by GitHub Actions.
 | `scripts/` | build, package, update and validation tooling |
 | `boot-candidate/` | pinned external boot firmware |
 | `docs/` | operator, developer and hardware documentation |
-| `.github/workflows/` | PR CI, Debian watcher and production release automation |
+| `.github/workflows/` | PR CI, Debian watcher, dependency canary/recovery and production release automation |
+| `.github/scripts/` | trusted GitHub Actions dependency policy |
 
 </details>
 

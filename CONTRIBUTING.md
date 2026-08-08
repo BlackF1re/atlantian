@@ -14,6 +14,7 @@ failing test/contract for every regression you fix.
 | persistence/update | preserve ordinary Debian state unless the change explicitly says otherwise |
 | initial access | passwordless root provisioning is deliberate appliance policy, not an accidental default |
 | release tooling | fail closed; a failed validation must block publication |
+| GitHub Actions | use only the allow-listed official Actions and immutable 40-hex commit pins |
 
 Use the [README contributor fast path](README.md#contributor-fast-path) to find
 the subsystem documentation before editing it.
@@ -26,6 +27,7 @@ Run the relevant fast checks before pushing:
 bash scripts/validate-release-inputs.sh
 bash scripts/test-source-contracts.sh
 bash scripts/test-update-leds.sh
+python3 .github/scripts/actions-policy.py scan .github/workflows
 ```
 
 For a complete local build:
@@ -73,13 +75,20 @@ Zynq driver exists.
 ## Pull requests
 
 External contributions should use pull requests. PR CI is read-only and checks
-workflow/dependency YAML, Markdown links, shell/source contracts, immutable
-inputs, APT separation and package/image contract sources.
+workflow/dependency YAML, immutable Action pins, Markdown links, shell/source
+contracts, immutable inputs, APT separation and package/image contract sources.
 
-Dependabot maintains GitHub Actions only. Routine version updates are grouped in
-one monthly PR; a relevant security update may appear outside that cadence.
-These are infrastructure changes, not part of the automatic Debian-base release
-cycle.
+Dependabot is a deliberately narrower exception to normal contributor review:
+it checks GitHub Actions daily and groups available updates. A trusted
+`workflow_run` may squash-merge the PR automatically **only** when read-only PR
+CI passes and the API diff contains nothing except allow-listed immutable Action
+pin replacements (plus optional version comments). Structural workflow edits,
+new third-party Actions and floating tags remain manual changes.
+
+After such a merge, a trusted canary exercises checkout, cache save/restore,
+artifact upload, GitHub API access and provenance attestation. It retries once;
+a second failure on the current Dependabot merge triggers an automatic revert.
+See [Release pipeline](docs/PIPELINE.md#github-actions-maintenance).
 
 Published releases are produced only from `main` after all production gates
 pass.

@@ -1,13 +1,15 @@
 version: 2
 
-# Debian owns userspace package maintenance; Dependabot is intentionally limited
-# to GitHub Actions infrastructure. Routine updates are grouped so maintenance
-# stays quiet, while security updates can still surface when GitHub flags them.
+# Debian owns userspace package maintenance; Dependabot owns only GitHub Actions
+# infrastructure. Updates are checked daily, grouped, pinned to immutable commit
+# SHAs by Dependabot, validated by PR CI, and merged only by the trusted
+# workflow_run gate when the change is strictly pin-only.
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "main"
     schedule:
-      interval: "monthly"
+      interval: "daily"
       time: "04:17"
       timezone: "Etc/UTC"
     open-pull-requests-limit: 1

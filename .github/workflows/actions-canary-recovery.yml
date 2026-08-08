@@ -1,0 +1,84 @@
+name: GitHub Actions canary recovery
+
+on:
+  workflow_run:
+    workflows:
+      - GitHub Actions infrastructure canary
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: atlantian-actions-canary-recovery-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Retry once, then revert a proven Dependabot workflow update
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_id=$(jq -r '.workflow_run.id' "$GITHUB_EVENT_PATH")
+          attempt=$(jq -r '.workflow_run.run_attempt // 1' "$GITHUB_EVENT_PATH")
+          failed_sha=$(jq -r '.workflow_run.head_sha' "$GITHUB_EVENT_PATH")
+
+          if (( attempt < 2 )); then
+            echo "Actions canary failed on attempt $attempt; rerunning the complete canary once."
+            gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/rerun"
+            exit 0
+          fi
+
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$main_sha" != "$failed_sha" ]]; then
+            echo "Canary failure belongs to superseded commit $failed_sha; current main is $main_sha. No rollback."
+            exit 0
+          fi
+
+          prs=$(mktemp)
+          gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/commits/$failed_sha/pulls" > "$prs"
+          mapfile -t candidates < <(jq -r \
+            '.[] | select(.user.login == "dependabot[bot]" and .merged_at != null and .base.ref == "main") | .number' \
+            "$prs")
+          if [[ ${#candidates[@]} -ne 1 ]]; then
+            echo "Repeated canary failure was not caused by exactly one merged Dependabot PR; refusing automatic rollback."
+            exit 0
+          fi
+
+          pr=${candidates[0]}
+          files=$(mktemp)
+          policy=$(mktemp)
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$pr/files?per_page=100" > "$files"
+          gh api "repos/$GITHUB_REPOSITORY/contents/.github/scripts/actions-policy.py?ref=main" \
+            --jq '.content' | tr -d '\n' | base64 -d > "$policy"
+          python3 "$policy" dependabot-files "$files"
+
+          gh auth setup-git
+          work=$(mktemp -d)
+          git clone --quiet --filter=blob:none --branch main \
+            "https://github.com/$GITHUB_REPOSITORY.git" "$work/repo"
+          cd "$work/repo"
+          [[ $(git rev-parse HEAD) == "$failed_sha" ]]
+          [[ $(git rev-list --parents -n1 "$failed_sha" | awk '{print NF}') -eq 2 ]] || {
+            echo 'Refusing to auto-revert a non-single-parent commit.' >&2
+            exit 1
+          }
+          git config user.name github-actions
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git revert --no-edit "$failed_sha"
+          git push origin HEAD:main
+
+          # A GITHUB_TOKEN push does not recursively start push workflows. Run
+          # the trusted canary explicitly against the restored main tip.
+          gh workflow run 'GitHub Actions infrastructure canary' --ref main
+          echo "Reverted failed Dependabot Actions update from PR #$pr after two canary failures and dispatched rollback verification."
