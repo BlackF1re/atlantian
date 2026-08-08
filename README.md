@@ -94,6 +94,9 @@ AtlANTian follows a few simple rules:
   monolithic bitstream on every use case.
 - **Releases are reproducible from pinned inputs:** Debian Snapshot metadata,
   Linux source commit and boot firmware input are fixed for each source release.
+- **Runtime Debian stays current:** installed systems use the normal live Debian
+  stable, updates and security repositories rather than remaining bound to the
+  factory-build Snapshot.
 - **Normal user state survives updates:** `/etc`, `/root`, `/home`, `/var`, APT
   state and user-installed packages remain ordinary Debian state.
 
@@ -157,17 +160,24 @@ ignored by Git and does not change the identity of published releases.
 
 ## Installing software
 
-AtlANTian is ordinary Debian, so package installation is normal:
+AtlANTian is ordinary Debian, so package installation and maintenance are
+normal:
 
 ```sh
 apt update
+apt upgrade
 apt install git python3 tmux
 ```
 
-Published images intentionally point APT at a **frozen Debian Snapshot** rather
-than a moving mirror. This makes a release internally consistent and
-reproducible. A newer AtlANTian release moves the default system to a newer
-verified Debian snapshot.
+Published systems point APT at the normal live Debian stable repositories:
+`trixie`, `trixie-updates` and `trixie-security`. An installation therefore
+continues to see newly published Debian packages and security fixes even if its
+AtlANTian image is much older than the newest release.
+
+The factory image itself is still built from an **immutable Debian Snapshot**.
+That Snapshot is build provenance: it records the exact Debian package set used
+to create a release and keeps the image reproducible. It is deliberately not a
+runtime package-availability restriction.
 
 The base image already contains practical board/debugging tools including:
 
@@ -205,7 +215,7 @@ The updater:
    `atlantian-release` for that version;
 3. verifies `SHA256SUMS` and the version embedded in every package;
 4. installs the AtlANTian packages with normal APT/dpkg;
-5. runs `apt full-upgrade` against that release's pinned Debian Snapshot;
+5. refreshes the configured Debian repositories and runs `apt full-upgrade`;
 6. reboots normally.
 
 During the confirmed update D3 shows three red flashes followed by three green
@@ -218,6 +228,10 @@ for users who deliberately want it.
 
 The release endpoint can be redirected to a compatible repository or API mirror
 through `/etc/atlantian/releases.conf`.
+
+Ordinary Debian userspace updates do not require `atlantian-sysupgrade`; use
+normal APT for those. AtlANTian releases are primarily the delivery path for the
+board kernel, device-tree policy, FPGA plumbing and AtlANTian-owned tooling.
 
 ## How releases stay current with Debian
 
@@ -250,9 +264,11 @@ security metadata changed, it waits until Debian Snapshot contains the exact
 observed `Release` files. Only then does it freeze the new snapshot, advance the
 AtlANTian Debian build number and start the normal release workflow.
 
-This gives the project two properties at once: published AtlANTian follows
-Debian closely, while each individual release remains tied to immutable Debian
-metadata.
+This keeps every factory image tied to immutable Debian build metadata while
+runtime APT independently follows current Debian stable repositories. The
+watcher therefore refreshes the reproducible **factory baseline**; it is not a
+gate that old installed boards must wait behind to obtain normal Debian package
+updates.
 
 Version example:
 
@@ -370,8 +386,8 @@ are documented in [`boot-candidate/README.md`](boot-candidate/README.md).
   Base DT keeps it disabled because of known MIO overlap.
 - **PL peripherals require both hardware logic and a matching DT overlay.** A
   device tree entry cannot create logic that is absent from the bitstream.
-- **APT is intentionally snapshot-pinned.** `atlantian-sysupgrade` is the normal
-  path for moving an installed board to the next AtlANTian/Debian snapshot.
+- **Snapshot pinning applies to factory builds, not runtime APT.** Installed
+  systems follow live Debian stable, updates and security repositories.
 - **Reflashing creates a new SSH identity.** A host-key warning from your SSH
   client after a deliberate reflash is expected.
 
