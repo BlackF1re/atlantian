@@ -5,10 +5,16 @@ Describe the board, build, release or documentation change and why it is needed.
 ## Validation
 
 - [ ] Relevant local/static checks pass.
-- [ ] Hardware claims are backed by a schematic, source, or live board test.
-- [ ] Release/build changes preserve the pinned Debian and kernel inputs.
-- [ ] No generated build output or secrets are committed.
+- [ ] Behavior changes update the owning documentation.
+- [ ] Hardware claims are backed by schematic/source/live-board evidence.
+- [ ] Release/build changes preserve or deliberately update pinned inputs and pass validation.
+- [ ] No generated build output, local machine state or secrets are committed.
 
 ## Hardware impact
 
 State which CTRL_C41 interfaces are affected, or write `none`.
+
+## Release impact
+
+State whether this is documentation-only, infrastructure-only, or requires a new
+AtlANTian image/package release.
