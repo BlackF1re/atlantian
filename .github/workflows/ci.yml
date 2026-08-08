@@ -40,13 +40,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck python3-yaml
 
-      - name: Validate automation YAML
+      - name: Validate automation YAML and dependency policy
         run: |
           python3 - <<'PY'
           import glob
           import yaml
 
-          paths = sorted(glob.glob('.github/workflows/*.yml')) + ['.github/dependabot.yml']
+          paths = sorted(glob.glob('.github/workflows/*.yml')) + sorted(glob.glob('.github/workflows/*.yaml')) + ['.github/dependabot.yml']
           parsed = {}
           for path in paths:
               with open(path, encoding='utf-8') as f:
@@ -70,9 +70,15 @@ jobs:
           for key, value in expected.items():
               if cfg.get(key) != value:
                   raise SystemExit(f'Dependabot {key} must remain {value!r}')
-          if (cfg.get('schedule') or {}).get('interval') != 'monthly':
-              raise SystemExit('Dependabot GitHub Actions version updates must remain monthly')
+          if (cfg.get('schedule') or {}).get('interval') != 'daily':
+              raise SystemExit('Dependabot GitHub Actions version updates must remain daily')
+          groups = cfg.get('groups') or {}
+          if (groups.get('github-actions') or {}).get('applies-to') != 'version-updates':
+              raise SystemExit('Dependabot version updates must remain grouped')
+          if (groups.get('github-actions-security') or {}).get('applies-to') != 'security-updates':
+              raise SystemExit('Dependabot security updates must remain grouped')
           PY
+          python3 .github/scripts/actions-policy.py scan .github/workflows
 
       - name: Validate documentation links
         run: |
@@ -142,3 +148,23 @@ jobs:
           test "$ATLANTIAN_BOOT_MIB" = 64
           test "$ATLANTIAN_INITIAL_ROOT_SLACK_MIB" -gt 0
           ! grep -q 'mmcblk0p3\|/data' scripts/make-sd-image.sh scripts/build-rootfs.sh
+
+      - name: Prepare GitHub Actions smoke payload
+        run: |
+          mkdir -p .actions-pr-smoke
+          printf 'AtlANTian PR Actions smoke %s\n' "$GITHUB_SHA" > .actions-pr-smoke/payload.txt
+
+      # v6.1.0
+      - name: Exercise maintained cache Action
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .actions-pr-smoke
+          key: atlantian-pr-actions-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # v7.0.1
+      - name: Exercise maintained artifact Action
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr-actions-smoke-${{ github.event.pull_request.number }}-${{ github.run_attempt }}
+          path: .actions-pr-smoke/payload.txt
+          retention-days: 1
