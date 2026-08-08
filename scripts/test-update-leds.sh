@@ -19,11 +19,13 @@ grep -Fqx 'systemctl stop $SERVICES >/dev/null 2>&1 || true' "$SOURCE"
 ! grep -qi 'recovery' "$SOURCE"
 
 grep -Fq 'ATLANTIAN_UPDATE_RESTART_SERVICES=0 "$LED_HELPER" &' "$UPGRADER"
-grep -Fqx 'trap restore_update_leds EXIT' "$UPGRADER"
-grep -Fqx 'trap - EXIT INT TERM HUP' "$UPGRADER"
-grep -Fqx 'wait "$ledpid" || true' "$UPGRADER"
-start_line=$(grep -n '^start_update_leds$' "$UPGRADER" | cut -d: -f1)
-download_line=$(grep -n '^download_and_verify$' "$UPGRADER" | cut -d: -f1)
+grep -Fq 'trap restore_update_leds EXIT' "$UPGRADER"
+# These commands live inside reboot_now(), so indentation is implementation
+# detail. Match the command text rather than requiring column-zero placement.
+grep -Fq 'trap - EXIT INT TERM HUP' "$UPGRADER"
+grep -Fq 'wait "$ledpid" || true' "$UPGRADER"
+start_line=$(grep -n '^start_update_leds$' "$UPGRADER" | tail -n1 | cut -d: -f1)
+download_line=$(grep -n '^download_and_verify$' "$UPGRADER" | tail -n1 | cut -d: -f1)
 [[ -n $start_line && -n $download_line && $start_line -lt $download_line ]]
 
 echo 'update LED contract passed'
