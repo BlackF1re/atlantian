@@ -10,6 +10,15 @@
 Antminer S9 **CTRL_C41** control board. It turns the Xilinx Zynq-7010 board into
 a small general-purpose Linux/FPGA platform instead of a mining appliance.
 
+<p align="center">
+  <a href="#quick-start"><b>Install</b></a> ·
+  <a href="#updating-atlantian"><b>Update</b></a> ·
+  <a href="#hardware-status"><b>Hardware</b></a> ·
+  <a href="#contributor-fast-path"><b>Contribute</b></a> ·
+  <a href="#release-model"><b>Release model</b></a> ·
+  <a href="docs/README.md"><b>All docs</b></a>
+</p>
+
 | Platform | AtlANTian policy |
 |---|---|
 | SoC | Xilinx Zynq-7010, dual Cortex-A9 + programmable logic |
@@ -25,6 +34,61 @@ a small general-purpose Linux/FPGA platform instead of a mining appliance.
 > AtlANTian stays deliberately close to Debian. Debian owns normal userspace and
 > package maintenance; this repository owns the board description, kernel
 > policy, FPGA plumbing, factory image and AtlANTian release tooling.
+
+## Start here
+
+Everything needed to use or modify AtlANTian is linked here so contributors do
+not have to discover documentation by browsing the repository.
+
+| I want to… | Read |
+|---|---|
+| flash and boot the board | **[Quick Start](docs/QUICKSTART.md)** |
+| update Debian or AtlANTian | **[Upgrading](docs/UPGRADING.md)** |
+| understand automatic Debian releases | **[Debian lifecycle](docs/DEBIAN-LIFECYCLE.md)** |
+| understand build, CI and publication | **[Release pipeline](docs/PIPELINE.md)** |
+| change DT, FPGA or board support | **[Hardware support matrix](docs/hardware-support-matrix.md)** |
+| know what survives upgrades | **[Persistence](docs/PERSISTENCE.md)** |
+| understand trust/security boundaries | **[Security policy](SECURITY.md)** |
+| submit code or documentation | **[Contributing](CONTRIBUTING.md)** |
+| browse the whole documentation set | **[Documentation index](docs/README.md)** |
+
+> [!TIP]
+> **New contributor?** Start with [Contributing](CONTRIBUTING.md), then open the
+> document for the subsystem you intend to touch. Hardware claims should always
+> be checked against the [hardware matrix](docs/hardware-support-matrix.md).
+
+## Contributor fast path
+
+| Change | Read first | What happens after merge to `main` |
+|---|---|---|
+| README / docs | [Contributing](CONTRIBUTING.md) | documentation only; no production image |
+| CI / GitHub automation | [Pipeline](docs/PIPELINE.md) | workflow-only unless a build input also changes |
+| Debian selection / APT | [Debian lifecycle](docs/DEBIAN-LIFECYCLE.md) + [Upgrading](docs/UPGRADING.md) | normally produces a new release |
+| rootfs / packaging / updater | [Pipeline](docs/PIPELINE.md) + [Persistence](docs/PERSISTENCE.md) | new release + previous-release upgrade gate |
+| kernel / DT / boot | [Hardware matrix](docs/hardware-support-matrix.md) + [Pipeline](docs/PIPELINE.md) | new release; real-board validation still matters |
+| FPGA / PL profile | [Hardware matrix](docs/hardware-support-matrix.md) | new release when bundled into the base/profile set |
+| security-sensitive behavior | [Security policy](SECURITY.md) | review trust boundary and release impact first |
+
+<details>
+<summary><b>Contributor pre-flight commands</b></summary>
+
+```sh
+bash scripts/test-source-contracts.sh
+bash scripts/test-update-leds.sh
+bash scripts/validate-release-inputs.sh
+```
+
+For a full local build:
+
+```sh
+sudo ./scripts/bootstrap-host.sh
+./scripts/build-incremental.sh all
+```
+
+PR CI also validates shell, YAML, documentation links and release-input
+contracts.
+
+</details>
 
 ## Design at a glance
 
@@ -78,7 +142,13 @@ Full procedure: **[Quick Start](docs/QUICKSTART.md)**.
 | Other PL I/O | Profile-dependent | matching bitstream + DT overlay required |
 | RTC | Not fitted | systemd-timesyncd restores network time |
 
-Electrical evidence and profile boundaries: **[Hardware support matrix](docs/hardware-support-matrix.md)**.
+> [!WARNING]
+> Driver support does not prove safe physical routing. USB and profile-dependent
+> PL functions stay disabled/profile-only until their board wiring and pin
+> ownership are validated.
+
+Electrical evidence, exact pins and profile boundaries:
+**[Hardware support matrix](docs/hardware-support-matrix.md)**.
 
 ## Release model
 
@@ -89,6 +159,11 @@ flowchart LR
     C --> D[Build image + packages]
     D --> E[Previous-release upgrade gate]
     E --> F[GitHub Release]
+    F --> G[atlantian-sysupgrade]
+
+    H[Live Debian repositories] --> I[apt update / upgrade]
+    I --> J[Installed board]
+    G --> J
 ```
 
 The watcher runs daily at **06:00 Asia/Tomsk**. It tracks Debian stable without
@@ -106,8 +181,7 @@ apt install git python3 tmux
 ```
 
 The runtime repository uses the installed codename rather than the moving
-`stable` alias, so a normal APT operation cannot silently perform a Debian major
-upgrade.
+`stable` alias, so normal APT cannot silently perform a Debian major upgrade.
 
 More detail: **[Debian lifecycle](docs/DEBIAN-LIFECYCLE.md)**.
 
@@ -125,12 +199,20 @@ atlantian-sysupgrade
 | AtlANTian release | `atlantian-sysupgrade` | platform policy, board kernel, DT/FPGA support and release tooling |
 | Debian major | `atlantian-sysupgrade` | staged one-major transition with third-party APT sources disabled/backed up |
 
-Interrupted major transitions are recorded and resumable. See
-**[Upgrading](docs/UPGRADING.md)**.
+> [!NOTE]
+> Interrupted Debian-major transitions are recorded and resumable. Third-party
+> repositories are preserved for manual review rather than silently reused on a
+> new Debian major.
+
+Full procedure and recovery paths: **[Upgrading](docs/UPGRADING.md)**.
 
 ## Release safety
 
-Production publication is gated by:
+Production publication fails closed. A candidate is not published unless its
+build, source contracts and upgrade compatibility checks pass.
+
+<details>
+<summary><b>Show the publication gates</b></summary>
 
 - immutable Debian Snapshot, Linux and `BOOT.bin` pins;
 - shell/YAML/source contracts and image-layout checks;
@@ -138,17 +220,25 @@ Production publication is gated by:
 - frozen-build vs live-runtime APT separation;
 - rootfs ownership, first-boot identity and SSH-host-key checks;
 - updater/LED lifecycle contracts;
-- a QEMU/chroot upgrade from the latest older published AtlANTian image;
-- preservation checks for machine ID, SSH host key, `/etc`, `/root`, `/home`,
-  `/var`, custom APT state and `/boot` replacement;
+- QEMU/chroot upgrade from the latest older published AtlANTian image;
+- preservation of machine ID, SSH host key, `/etc`, `/root`, `/home`, `/var`,
+  custom APT state and `/boot` replacement;
 - negative downgrade, skipped-major and unauthorized-major tests;
-- a final check that the build commit is still the tip of `main`.
+- final verification that the build commit is still the tip of `main`.
 
 Release artifacts also receive GitHub/Sigstore build-provenance attestations.
-Hardware-only behavior such as Zynq boot and physical FPGA/I/O remains a real-board
-validation boundary.
+
+</details>
+
+> [!CAUTION]
+> CI cannot prove physical Zynq boot, FPGA wiring or electrical behavior. Those
+> remain explicit real-board validation boundaries; documentation distinguishes
+> bench-tested claims from CI-validated claims.
 
 ## Building locally
+
+<details>
+<summary><b>Show local build commands</b></summary>
 
 ```sh
 git clone https://github.com/BlackF1re/atlantian.git
@@ -158,24 +248,35 @@ sudo ./scripts/bootstrap-host.sh
 ./scripts/build-incremental.sh all
 ```
 
-Useful targets: `rootfs`, `kernel`, `image`, `all`. Published releases are
-produced only from `main` by GitHub Actions.
+Useful targets: `rootfs`, `kernel`, `image`, `all`.
 
-## Documentation
+</details>
 
-| Need | Read |
+Published releases are produced only from `main` by GitHub Actions.
+
+## Repository map
+
+<details>
+<summary><b>Show repository layout</b></summary>
+
+| Path | Purpose |
 |---|---|
-| First boot | [Quick Start](docs/QUICKSTART.md) |
-| Update an installed board | [Upgrading](docs/UPGRADING.md) |
-| Debian automation | [Debian lifecycle](docs/DEBIAN-LIFECYCLE.md) |
-| Build/release internals | [Release pipeline](docs/PIPELINE.md) |
-| Hardware and FPGA boundaries | [Hardware support matrix](docs/hardware-support-matrix.md) |
-| Persistent state | [Persistence](docs/PERSISTENCE.md) |
-| Security/trust model | [Security policy](SECURITY.md) |
-| Contributing | [Contributing](CONTRIBUTING.md) |
-| All docs | [Documentation index](docs/README.md) |
+| `board/` | canonical CTRL_C41 device tree |
+| `config/` | Debian, kernel, package and image policy |
+| `kernel-overlay/` | kernel-side OF/configfs support |
+| `fpga/` | shipped FPGA profiles and firmware |
+| `systemd/` | board services and first-boot policy |
+| `scripts/` | build, package, update and validation tooling |
+| `boot-candidate/` | pinned external boot firmware |
+| `docs/` | operator, developer and hardware documentation |
+| `.github/workflows/` | PR CI, Debian watcher and production release automation |
+
+</details>
 
 ## Important boundaries
+
+<details>
+<summary><b>Show board and trust boundaries</b></summary>
 
 - `poweroff` halts Linux but cannot disconnect the external 12 V supply.
 - There is no battery-backed RTC.
@@ -184,6 +285,8 @@ produced only from `main` by GitHub Actions.
 - Reflashing intentionally creates a new machine ID and SSH host identity.
 - `boot-candidate/BOOT.bin` is a pinned external vendor binary, not a reproducible
   build product of this repository.
+
+</details>
 
 ## License
 
