@@ -62,6 +62,7 @@ sync
 | User | `root` |
 | Password | empty by design for initial provisioning |
 | UART | `115200 8N1` |
+| RAM | detected by U-Boot; the same image supports 512 MiB and 1 GiB boards |
 
 > [!IMPORTANT]
 > Passwordless root provisioning is intentional appliance-style behavior,
@@ -84,6 +85,7 @@ lsblk
 networkctl
 ip address
 free -h
+grep MemTotal /proc/meminfo
 atlantian-fpga status
 ```
 
@@ -91,9 +93,16 @@ Expected high-level state:
 
 - current AtlANTian-selected Debian stable, `armhf` userspace;
 - pinned CTRL_C41 board kernel;
+- installed DDR detected at boot without a Linux `mem=` cap;
 - FAT boot partition + ext4 root partition;
 - root filesystem expanded to the microSD card;
 - live Debian runtime repositories.
+
+> [!NOTE]
+> `free` and `/proc/meminfo` report less than the nominal 512 MiB or 1 GiB.
+> Reserved FPGA/bootcount regions and normal kernel reservations are not
+> available to userspace; AtlANTian does not impose an additional fixed RAM
+> allowance.
 
 ## 5. Install packages
 
@@ -132,6 +141,7 @@ bitstream must implement the peripheral described by the overlay.
 
 | Topic | Behavior |
 |---|---|
+| RAM | U-Boot probes installed DDR; Linux receives the detected bank via DT fixup |
 | `reboot` | supported restart path |
 | `poweroff` | halts Linux; external 12 V remains present |
 | suspend/hibernate | intentionally not advertised; reliable resume is not validated |
@@ -147,6 +157,7 @@ Electrical and pin-level detail belongs in the
 
 | Symptom | Check |
 |---|---|
+| unexpected RAM size | `grep MemTotal /proc/meminfo`; confirm the board's fitted DDR population |
 | no Ethernet address | `networkctl`, `ip link`, `ip address` |
 | network service issue | `journalctl -u systemd-networkd --no-pager` |
 | wrong time | `timedatectl status` |

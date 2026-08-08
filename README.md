@@ -22,7 +22,7 @@ a small general-purpose Linux/FPGA platform instead of a mining appliance.
 | Platform | AtlANTian policy |
 |---|---|
 | SoC | Xilinx Zynq-7010, dual Cortex-A9 + programmable logic |
-| RAM | 512 MiB DDR3 |
+| RAM | 512 MiB or 1 GiB DDR3, detected at boot; no Linux `mem=` cap |
 | Debian | current compatible Debian stable, `armhf`, selected automatically |
 | Kernel | pinned CTRL_C41 board kernel, updated deliberately |
 | Storage | microSD: FAT boot + ext4 root; NAND remains separate |
@@ -100,6 +100,7 @@ contracts.
 | Safe Debian majors | only one major at a time; `armhf` and repositories are preflighted |
 | Safe AtlANTian updates | exact three-package set, SHA-256 verification and downgrade guards |
 | Persistent system | ordinary Debian `/etc`, `/root`, `/home` and `/var` survive normal updates |
+| RAM portability | U-Boot probes installed DDR and fixes the DT; ARM HIGHMEM remains enabled |
 | Release confidence | every release after the first is tested against the previous published image |
 | Low maintenance | daily Debian watcher + grouped Dependabot maintenance for GitHub Actions |
 
@@ -116,6 +117,7 @@ cat /etc/os-release
 uname -a
 lsblk
 networkctl
+grep MemTotal /proc/meminfo
 atlantian-fpga status
 ```
 
@@ -130,6 +132,7 @@ Full procedure: **[Quick Start](docs/QUICKSTART.md)**.
 
 | Function | Status | Notes |
 |---|---|---|
+| DDR3 | Ready | 512 MiB and 1 GiB boards use the same image; size is bootloader-detected |
 | microSD boot/root | Ready | first boot expands ext4 root |
 | Gigabit Ethernet | Ready | MACB/GEM, DHCP, persistent local MAC |
 | UART | Ready | `ttyPS0`, 115200 8N1 |
@@ -143,12 +146,17 @@ Full procedure: **[Quick Start](docs/QUICKSTART.md)**.
 | Other PL I/O | Profile | matching bitstream + DT overlay required |
 | RTC | Not fitted | network time after cold boot |
 
+> [!NOTE]
+> Linux intentionally reports slightly less memory than the nominal DRAM
+> capacity: board-reserved regions and normal kernel reservations are excluded.
+> AtlANTian does not subtract an additional fixed `mem=` allowance.
+
 > [!WARNING]
 > Driver support does not prove safe physical routing. USB and profile-dependent
 > PL functions stay disabled/profile-only until board wiring and pin ownership
 > are validated.
 
-Electrical evidence, exact pins, power behavior and profile boundaries:
+Electrical evidence, exact pins, memory sizing, power behavior and profile boundaries:
 **[Hardware support matrix](docs/hardware-support-matrix.md)**.
 
 ## Release model
@@ -217,6 +225,7 @@ build, source contracts and upgrade-compatibility checks pass.
 
 - immutable Debian Snapshot, Linux and `BOOT.bin` pins;
 - shell/YAML/source contracts and image-layout checks;
+- dynamic-memory contract: no Linux `mem=` cap, 1 GiB DT probe ceiling and HIGHMEM;
 - exact package/release identity and SHA-256 checks;
 - frozen-build vs live-runtime APT separation;
 - rootfs ownership, first-boot identity and SSH-host-key checks;

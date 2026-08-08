@@ -27,6 +27,19 @@ grep -q 'best_same' scripts/atlantian-release-check.sh
 grep -q 'refusing to skip Debian majors' scripts/atlantian-sysupgrade.sh
 grep -q 'major-upgrade-sources-backup' scripts/atlantian-sysupgrade.sh
 
+# Memory sizing is a bootloader-discovered hardware property, never a Linux
+# command-line policy. Both source DTs expose the 1 GiB S9 probe ceiling;
+# U-Boot bootm fixes /memory to the detected bank before Linux starts.
+for dts in board/zynq-bitmain-antminer-s9.dts board/uboot_bitmain-antminer-s9.dts; do
+  grep -Fq 'reg = <0x0 0x40000000>;' "$dts"
+done
+! grep -Eq 'atlantian_normal_bootargs=.*mem=' scripts/make-sd-image.sh
+! grep -Fq 'mem=496M' scripts/make-sd-image.sh board/*.dts config/kernel-c41.fragment
+grep -qx 'CONFIG_HIGHMEM=y' config/kernel-c41.fragment
+grep -q 'CONFIG_ARCH_ZYNQ CONFIG_HIGHMEM' scripts/build-kernel.sh
+grep -Fq '512 MiB or 1 GiB DDR3' README.md
+grep -Fq '512 MiB / 1 GiB DDR3' docs/hardware-support-matrix.md
+
 # Runtime APT is live, codename-pinned and separated from immutable build input.
 grep -Fq 'deb [check-valid-until=no] $MIRROR $SUITE main non-free-firmware' scripts/build-rootfs.sh
 grep -Fq 'deb https://deb.debian.org/debian $SUITE main non-free-firmware' scripts/build-rootfs.sh
@@ -86,4 +99,4 @@ grep -q 'actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd
 ! grep -R -nE --exclude=test-source-contracts.sh '/home/[^/[:space:]]+/atlantian' scripts config .github README.md docs .gitignore
 ! test -e state/board.address.example
 
-echo 'source, lifecycle and release contracts passed'
+echo 'source, lifecycle, dynamic-memory and release contracts passed'

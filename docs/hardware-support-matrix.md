@@ -20,7 +20,7 @@ This matrix separates **physical evidence** from **software availability**.
 | Hardware / function | Status | Linux interface / decision |
 |---|---|---|
 | XC7Z010 PS, dual Cortex-A9 | Ready | ARM/Zynq SMP platform, timers, PMU, reset/SLCR |
-| 512 MiB DDR3 | Ready | ~496 MiB usable by boot contract; no ECC |
+| 512 MiB / 1 GiB DDR3 | Ready | one image; U-Boot probes installed DDR and fixes Linux DT; HIGHMEM enabled |
 | microSD / SDHCI0 | Ready | `/dev/mmcblk0`; boot-critical FAT + ext4 root |
 | 256 MiB Micron MT29F2G08 NAND | Ready | MTD + UBI/UBIFS; software BCH 4-bit/512-byte ECC |
 | Gigabit Ethernet GEM0/RGMII-ID | Ready | MACB, PHY address 1, MDIO, `ethtool`, DHCP, persistent local MAC |
@@ -44,6 +44,32 @@ This matrix separates **physical evidence** from **software availability**.
 | D9-D14 | External | 1N4148 tach-input protection diodes, not LEDs |
 | JTAG / boot jumper / 12 V power | External | recovery/power facilities, not Linux devices |
 | unused PS QSPI/I2C/SPI/CAN/etc. | Disabled | no base DT claim until populated/routed hardware is verified |
+
+## Memory sizing
+
+AtlANTian deliberately has **no fixed Linux RAM limit**. The Antminer S9 U-Boot
+board design uses a 1 GiB maximum probe window and `get_ram_size()` to discover
+the physically installed DDR. During ARM `bootm`, U-Boot fixes the `/memory`
+node passed to Linux to that detected bank size.
+
+The AtlANTian boot contract therefore is:
+
+| Layer | Memory policy |
+|---|---|
+| U-Boot / DT ceiling | 1 GiB maximum probe range; not a claim of installed capacity |
+| 512 MiB board | U-Boot reports the detected 512 MiB bank |
+| 1 GiB board | U-Boot reports the detected 1 GiB bank |
+| Kernel command line | no `mem=` parameter |
+| ARM kernel | `CONFIG_HIGHMEM=y` is mandatory so upper 1 GiB-board RAM remains usable |
+| Reserved regions | 16 MiB FPGA window at `0x0f000000` + 16-byte bootcount area |
+
+> [!NOTE]
+> `free`, `/proc/meminfo` and similar tools show **less than the nominal fitted
+> capacity**. Reserved-memory regions and normal kernel bookkeeping are excluded;
+> that difference is expected and is not an AtlANTian artificial cap.
+
+The source and image tests reject a reintroduced `mem=` boot argument, a DT
+probe ceiling below 1 GiB, or a kernel configuration without HIGHMEM.
 
 ## Pin reference
 
@@ -97,7 +123,7 @@ the PL353 driver's legacy 1-bit Hamming mode.
 
 ### Built in: cold-boot/recovery critical
 
-- Zynq ARMv7 SMP, IRQ/timer/clock/reset/pinctrl/GPIO;
+- Zynq ARMv7 SMP, IRQ/timer/clock/reset/pinctrl/GPIO + HIGHMEM;
 - MMC block + Arasan SDHCI + FAT/ext4;
 - MACB/GEM + PHYLIB + IPv4/IPv6;
 - UARTPS console;
@@ -151,7 +177,8 @@ Verified observations include:
 - `poweroff` halting Linux without removing external 12 V.
 
 A current release is not labelled "physically re-tested" merely because build
-and upgrade gates pass.
+and upgrade gates pass. DDR capacity selection is source/boot-contract validated;
+confirming a new physical board variant still requires a real boot observation.
 
 </details>
 

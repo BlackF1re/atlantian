@@ -22,6 +22,16 @@ LOOP=$(losetup --find --show --partscan "$IMAGE"); sleep 1
 BOOT=$WORK/boot; ROOT=$WORK/root; mkdir -p "$BOOT" "$ROOT"
 mount -o ro "${LOOP}p1" "$BOOT"; mount -o ro "${LOOP}p2" "$ROOT"
 for f in BOOT.bin devicetree.dtb zImage uImage uEnv.txt; do [ -s "$BOOT/$f" ] || { echo "missing boot asset: $f" >&2; exit 3; }; done
+
+# The image must never cap RAM from the Linux command line. The DT carries the
+# 1 GiB S9 probe ceiling; U-Boot bootm replaces /memory with detected DDR size.
+! grep -Eq '(^|[[:space:]])mem=[^[:space:]]+' "$BOOT/uEnv.txt"
+grep -Fq 'atlantian_normal_bootargs=console=ttyPS0,115200n8 root=/dev/mmcblk0p2' "$BOOT/uEnv.txt"
+[ "$(fdtget -t x "$BOOT/devicetree.dtb" /memory@0 reg)" = '0 40000000' ] || {
+  echo 'device tree no longer exposes the 1 GiB DDR probe ceiling' >&2
+  exit 3
+}
+
 for f in etc/atlantian-release etc/fstab etc/apt/sources.list etc/systemd/network/10-atlantian-ethernet.link \
   usr/lib/atlantian/version usr/lib/atlantian/debian-major usr/lib/atlantian/debian-codename usr/lib/atlantian/runtime-sources.list \
   usr/local/sbin/atlantian-grow-rootfs usr/local/sbin/atlantian-sysupgrade usr/local/sbin/atlantian-release-check; do
@@ -48,4 +58,4 @@ grep -qx 'MACAddressPolicy=persistent' "$ROOT/etc/systemd/network/10-atlantian-e
 if [ -n "${SUDO_UID:-}" ] && [ "$SUDO_UID" != 0 ]; then ! find "$ROOT" -xdev -uid "$SUDO_UID" -print -quit | grep -q .; fi
 ! [ -e "$ROOT/usr/local/sbin/atlantian-persist-state" ]; ! [ -e "$ROOT/usr/local/sbin/atlantian-grow-data" ]
 
-echo 'two-partition image, live APT, Debian lifecycle, identity and ownership contracts passed'
+echo 'two-partition image, dynamic DDR, live APT, Debian lifecycle, identity and ownership contracts passed'

@@ -1,4 +1,8 @@
 # AtlANTian CTRL_C41: keep the boot path resident and expose programmable logic.
+# 1 GiB CTRL_C41 variants extend beyond the ARMv7 lowmem mapping. Keep HIGHMEM
+# explicit even though multi_v7_defconfig currently enables it, so a future
+# base-config change cannot silently hide the upper part of installed DDR.
+CONFIG_HIGHMEM=y
 CONFIG_FPGA=y
 CONFIG_FPGA_MGR_ZYNQ_FPGA=y
 CONFIG_FPGA_BRIDGE=y

@@ -42,7 +42,7 @@ done
 cp "$BOOT_BIN" "$BOOT/BOOT.bin"; cp "$DTB" "$BOOT/devicetree.dtb"; cp "$ZIMAGE" "$BOOT/zImage"
 mkimage -A arm -O linux -T kernel -C none -a 0x00008000 -e 0x00008000 -n "AtlANTian ${ATLANTIAN_RELEASE_ID}" -d "$ZIMAGE" "$BOOT/uImage"
 cat >"$BOOT/uEnv.txt" <<'EOF'
-atlantian_normal_bootargs=mem=496M console=ttyPS0,115200n8 root=/dev/mmcblk0p2 rootfstype=ext4 rw rootwait
+atlantian_normal_bootargs=console=ttyPS0,115200n8 root=/dev/mmcblk0p2 rootfstype=ext4 rw rootwait
 bootcmd=setenv bootargs ${atlantian_normal_bootargs}; mmcinfo && fatload mmc 0:1 0x03000000 uImage && fatload mmc 0:1 0x02A00000 devicetree.dtb && bootm 0x03000000 - 0x02A00000
 EOF
 sync

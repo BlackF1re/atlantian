@@ -54,7 +54,7 @@ make ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
 for opt in \
   CONFIG_EXT4_FS CONFIG_MMC CONFIG_MMC_BLOCK CONFIG_MMC_SDHCI \
   CONFIG_MMC_SDHCI_PLTFM CONFIG_MMC_SDHCI_OF_ARASAN CONFIG_MACB \
-  CONFIG_PHYLIB CONFIG_BROADCOM_PHY CONFIG_ARCH_ZYNQ; do
+  CONFIG_PHYLIB CONFIG_BROADCOM_PHY CONFIG_ARCH_ZYNQ CONFIG_HIGHMEM; do
   grep -qx "${opt}=y" .config || { echo "required boot option missing: $opt" >&2; exit 3; }
 done
 # A release must never silently regress to the enormous universal ARM kernel.

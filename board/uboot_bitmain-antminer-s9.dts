@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* AtlANTian base hardware contract for Bitmain CTRL_C41 / Antminer S9. */
+/* AtlANTian U-Boot hardware contract for Bitmain CTRL_C41 / Antminer S9. */
 /dts-v1/;
 #include "zynq-7000.dtsi"
 
@@ -15,9 +15,13 @@
 		nand0 = &nfc0;
 	};
 
+	/*
+	 * Maximum DDR probe window. Antminer S9 U-Boot probes the installed RAM
+	 * with get_ram_size(), so 512 MiB and 1 GiB boards share this description.
+	 */
 	memory@0 {
 		device_type = "memory";
-		reg = <0x0 0x20000000>; /* measured 512 MiB */
+		reg = <0x0 0x40000000>;
 	};
 
 	reserved-memory {

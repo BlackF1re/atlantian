@@ -67,7 +67,9 @@ package time capsule.
 ## Kernel and boot
 
 - Linux source is pinned to one immutable upstream stable commit.
-- Board kernel config is checked for required Zynq/FPGA interfaces.
+- Board kernel config is checked for required Zynq/FPGA interfaces and ARM HIGHMEM.
+- The Linux command line must not contain a fixed `mem=` limit.
+- Board DTs expose the 1 GiB S9 probe ceiling; U-Boot supplies the detected DDR bank at boot.
 - `BOOT.bin` is a separately pinned external vendor trust boundary.
 - `atlantian-kernel` stores boot assets under `/usr/lib/atlantian/boot`.
 - Package post-install copies `zImage`, `uImage` and DTB to FAT `/boot`.
@@ -81,7 +83,8 @@ component that this repository does not rebuild from source.
 |---|---|
 | immutable input validation | Debian/kernel/BOOT inputs cannot drift silently |
 | source and shell contracts | lifecycle/build invariants remain present |
-| image-layout tests | partitions, ownership and first-boot identity stay valid |
+| dynamic-memory contract | no Linux RAM cap; 1 GiB probe ceiling and HIGHMEM remain intact |
+| image-layout tests | partitions, boot memory contract, ownership and first-boot identity stay valid |
 | package identity checks | the three `.deb` files cannot be mixed/mis-versioned |
 | updater/LED contract | update-state behavior remains coherent |
 | previous-release upgrade test | candidate can replace the prior release safely |
