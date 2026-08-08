@@ -4,9 +4,10 @@ This matrix separates **physical evidence** from **software availability**.
 
 | Status | Meaning |
 |---|---|
-| **Ready** | enabled in the base image and backed by board/runtime evidence |
+| **Ready** | available through the base image and backed by board/runtime evidence |
 | **Profile** | framework is present; a matching FPGA bitstream/DT overlay owns the pins |
 | **External** | board function exists but is not a Linux-controlled peripheral |
+| **Not fitted** | expected device/function is not populated on CTRL_C41 |
 | **Disabled** | intentionally not enabled until routing/electrical safety is proven |
 
 > [!NOTE]
@@ -26,7 +27,7 @@ This matrix separates **physical evidence** from **software availability**.
 | UART1 on J12 | Ready | `ttyPS0`, console/getty `115200 8N1` |
 | D2 / D3 status LEDs | Ready | Linux LED class; D3 red heartbeat, green SD activity |
 | S1 / S2 buttons | Ready | Linux input; no destructive default action |
-| buzzer / J1-J9 enables | Ready framework | GPIO-visible; input/high-Z until explicitly claimed |
+| buzzer / J1-J9 enables | Ready | named GPIO lines; intentionally left input/high-Z until claimed |
 | XADC | Ready | IIO/hwmon: die temperature and Zynq rails |
 | Zynq watchdog | Ready | `/dev/watchdog0`; automatic recovery policy remains conservative |
 | FPGA DevCfg/PCAP | Ready | FPGA Manager/Region + firmware loader + configfs overlays |
@@ -38,10 +39,10 @@ This matrix separates **physical evidence** from **software availability**.
 | HDMI/VGA/TFT | Profile | DRM/KMS or fbdev; **no GPU** is claimed |
 | camera/video capture | Profile | V4L2/media framework + matching PL design |
 | PS USB0 | Disabled | known MIO28-39 collision with hashboard enables/D3 |
-| RTC | External/not fitted | no battery-backed RTC; use network time |
+| RTC | Not fitted | no battery-backed RTC; use network time |
 | D1 / D15 | External | FPGA DONE / regulator power-good indicators |
 | D9-D14 | External | 1N4148 tach-input protection diodes, not LEDs |
-| JTAG / boot jumper / 12 V rails | External | recovery/power facilities, not Linux devices |
+| JTAG / boot jumper / 12 V power | External | recovery/power facilities, not Linux devices |
 | unused PS QSPI/I2C/SPI/CAN/etc. | Disabled | no base DT claim until populated/routed hardware is verified |
 
 ## Pin reference
@@ -62,7 +63,14 @@ This matrix separates **physical evidence** from **software availability**.
 | fan PWM | PL J18 | shared by all six fan headers |
 | fan tach 1-6 | PL F19/F20/G17/G18/J20/H20 | independent tach inputs |
 
-## Important electrical notes
+## Power and electrical behavior
+
+| Topic | Behavior |
+|---|---|
+| Board power | external 12 V supply |
+| `reboot` | tested restart path |
+| `poweroff` | halts Linux; cannot disconnect external 12 V |
+| suspend/hibernate | not advertised; reliable resume is not validated |
 
 - **USB0 is not safe as a default feature.** The known Astra-style PS route uses
   MIO28-39, colliding with hashboard enables (28-36) and D3 (37/38).
@@ -85,7 +93,7 @@ the PL353 driver's legacy 1-bit Hamming mode.
 > BCH-formatted storage is not OOB-compatible with the old Hamming layout.
 
 <details>
-<summary><strong>Kernel policy</strong></summary>
+<summary><strong>Kernel support policy</strong></summary>
 
 ### Built in: cold-boot/recovery critical
 
@@ -109,15 +117,15 @@ the PL353 driver's legacy 1-bit Hamming mode.
 - TUN, bridge, VLAN, bonding, nftables/conntrack/NAT;
 - zram with LZ4.
 
-### Deliberately absent from the base image
+### Deliberately absent
 
 No desktop, GPU userspace, PYNQ/Jupyter, Docker, Samba, Wi-Fi/BT stack, PCI/PCIe,
 printer stack, generic vendor firmware collection or random USB/media device
 catalogue. Small frameworks required by declared PL profiles remain available.
 
-The current kernel starts from upstream `multi_v7_defconfig` plus the board
-fragment. A measured CTRL_C41-only defconfig is a possible future size
-optimization, not a correctness requirement.
+The kernel starts from upstream `multi_v7_defconfig` plus the CTRL_C41 board
+fragment. A smaller board-only defconfig is a size optimization, not a support
+requirement.
 
 </details>
 
@@ -127,7 +135,7 @@ optimization, not a correctness requirement.
 | Record | Value |
 |---|---|
 | Board | CTRL_C41 V1.30 |
-| Historical bench baseline | AtlANTian 13-2 |
+| Bench baseline | pre-genesis development image |
 | Recorded audit | 2026-08-03 |
 | Access | Ethernet + UART |
 
@@ -142,8 +150,8 @@ Verified observations include:
 - `systemctl reboot` as the tested restart path;
 - `poweroff` halting Linux without removing external 12 V.
 
-Current releases are not automatically labelled "physically re-tested" merely
-because build and upgrade gates pass.
+A current release is not labelled "physically re-tested" merely because build
+and upgrade gates pass.
 
 </details>
 
@@ -160,22 +168,13 @@ A publishable FPGA profile should contain:
 6. non-destructive smoke test;
 7. safe reset/reload state where relevant.
 
-Planned capability classes include `safe-base`, `fan-hwmon`, `gpio-header`,
-`i2c-spi-uart`, `mining-header`, display, audio, microphone, camera, SDR and MIDI
-profiles when their exact hardware implementation is available and tested.
-
 A larger custom design may preserve existing AXI ABIs while adding peripherals.
 
 </details>
 
-## Base userspace
-
-The image intentionally keeps a compact engineering toolkit: systemd/networkd,
-OpenSSH, CA certificates, iproute2, ethtool, nftables, curl, gpiod, I2C/SPI
-utilities, sensors/IIO tools, ALSA/V4L utilities, USB/MTD tools, dtc, kmod,
-procps, htop, less and nano.
-
-There is no `sudo`: the base system is root-oriented by design.
+The base userspace package allow-list lives in
+[`config/packages.base`](../config/packages.base); this document intentionally
+tracks hardware support rather than duplicating the package manifest.
 
 See [Quick Start](QUICKSTART.md) for first boot and [Documentation index](README.md)
 for the rest of the project documentation.
