@@ -33,6 +33,10 @@ EOF
 
 install -D -m 0644 "$PROJECT/config/packages.base" "$ROOT/usr/local/share/atlantian/packages.base"
 install -D -m 0644 "$PROJECT/config/image-layout.env" "$ROOT/usr/local/share/atlantian/image-layout.env"
+
+# Factory package selection is intentionally performed only against immutable
+# Debian Snapshot inputs. This keeps a published image reproducible even after
+# the live Debian mirrors have moved on.
 cat >"$ROOT/etc/apt/sources.list" <<EOF
 deb [check-valid-until=no] $MIRROR $SUITE main non-free-firmware
 deb [check-valid-until=no] $MIRROR ${SUITE}-updates main non-free-firmware
@@ -169,6 +173,25 @@ chroot "$ROOT" /usr/bin/dpkg-query -W -f='${binary:Package}\t${Version}\n' \
 printf 'snapshot=%s\nmirror=%s\nsecurity_mirror=%s\n' \
   "$DEBIAN_SNAPSHOT_TIMESTAMP" "$MIRROR" "$DEBIAN_SECURITY_SNAPSHOT_MIRROR" \
   >"$ROOT/usr/share/atlantian/debian-snapshot.txt"
+
+# Snapshot pinning ends at the build boundary. A flashed board is a normal
+# long-lived Debian stable installation and must keep seeing current package and
+# security updates even when its AtlANTian factory image is old.
+cat >"$ROOT/etc/apt/sources.list" <<EOF
+deb https://deb.debian.org/debian $SUITE main non-free-firmware
+deb https://deb.debian.org/debian ${SUITE}-updates main non-free-firmware
+deb https://security.debian.org/debian-security ${SUITE}-security main non-free-firmware
+EOF
+
+# Fail the build rather than accidentally publishing another runtime-pinned
+# image. The immutable Snapshot remains recorded separately as build provenance.
+grep -qxF "deb https://deb.debian.org/debian $SUITE main non-free-firmware" "$ROOT/etc/apt/sources.list"
+grep -qxF "deb https://deb.debian.org/debian ${SUITE}-updates main non-free-firmware" "$ROOT/etc/apt/sources.list"
+grep -qxF "deb https://security.debian.org/debian-security ${SUITE}-security main non-free-firmware" "$ROOT/etc/apt/sources.list"
+if grep -q 'snapshot.debian.org' "$ROOT/etc/apt/sources.list"; then
+  echo 'runtime APT sources must not point at snapshot.debian.org' >&2
+  exit 1
+fi
 
 # Drop host pseudo-filesystems before image assembly. Package ownership created
 # by debootstrap/dpkg is intentionally preserved exactly; never recursively
