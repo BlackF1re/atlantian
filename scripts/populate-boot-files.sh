@@ -124,14 +124,6 @@ echo AtlANTian active FIT failed; trying rollback slot...
 if fatload mmc 0:1 0x02000000 ${atlantian_fallback}; then
     bootm 0x02000000
 fi
-
-# This path exists only for the one-time migration from releases that predate
-# transactional FIT slots. The package postinst installs both FIT slots before
-# replacing boot.scr, so power loss cannot make the legacy generation disappear.
-echo AtlANTian FIT slots failed; trying legacy migration payload...
-if fatload mmc 0:1 0x02000000 uImage && fatload mmc 0:1 0x01F00000 devicetree.dtb; then
-    bootm 0x02000000 - 0x01F00000
-fi
 echo AtlANTian boot failed; returning to U-Boot
 EOF_BOOT
 mkimage -A arm -T script -C none -n 'AtlANTian microSD transactional boot' -d "$cmd" "$TARGET/boot.scr" >/dev/null

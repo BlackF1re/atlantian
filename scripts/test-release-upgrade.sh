@@ -163,6 +163,11 @@ SOURCE_INSTALLED=$(cat "$ROOTFS/usr/lib/atlantian/version" 2>/dev/null || true)
 [[ $SOURCE_INSTALLED == "$SOURCE_VERSION" ]] || fail "release/image version mismatch: tag $SOURCE_VERSION, image $SOURCE_INSTALLED"
 SOURCE_MAJOR=${SOURCE_INSTALLED%%.*}
 [[ $SOURCE_MAJOR =~ ^[0-9]+$ ]] || fail 'source image has invalid Debian-major marker'
+SOURCE_BOOT_ABI=$(cat "$ROOTFS/boot/atlantian-boot-abi" 2>/dev/null || true)
+if [[ $SOURCE_BOOT_ABI != 1 || ! -s "$ROOTFS/boot/atlantian-A.itb" || ! -s "$ROOTFS/boot/atlantian-B.itb" ]]; then
+  echo "Source release $SOURCE_TAG predates transactional A/B SD boot; release-upgrade gate is not applicable. Reflash is required."
+  exit 0
+fi
 
 printf 'upgrade-persistence-sentinel\n' >"$ROOTFS/etc/atlantian-upgrade-test.conf"
 printf '0123456789abcdef0123456789abcdef\n' >"$ROOTFS/etc/machine-id"

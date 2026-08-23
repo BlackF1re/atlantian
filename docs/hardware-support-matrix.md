@@ -37,7 +37,7 @@ claims them.
 | 512 MiB and 1 GiB DDR3 | Ready | U-Boot runtime probe, HIGHMEM, no fixed Linux `mem=` cap | retain both sizes in release/bench coverage |
 | source-built SD first stage | Ready | exact accepted U-Boot commit, SPL + `u-boot.img`; cold boot/reboot proven on both RAM sizes | stable U-Boot candidates are software-gated automatically; low-level physical validation remains required |
 | microSD boot and root | Ready | FAT BOOT + ext4 ROOT, first-boot expansion | large-card/endurance behavior is ordinary media-dependent storage |
-| transactional SD kernel/DT | Validation | A/B SHA-256 FIT slots inside existing BOOT; inactive write/verify/sync before marker switch; CI validates layout and fallback script | bench both slots, fallback, historical migration and controlled power-loss points |
+| transactional SD kernel/DT | Validation | A/B SHA-256 FIT slots inside existing BOOT; inactive write/verify/sync before marker switch; CI validates layout and fallback script | bench both slots, fallback and controlled power-loss points |
 | 256 MiB Micron NAND visibility | Ready | PL35X MTD; verified raw+OOB backup path | preserve backup before destructive operations |
 | AtlANTian NAND install/boot, 512 MiB | Ready | destructive install and cold/warm boot through OverlayFS proven | regression-test low-level changes |
 | AtlANTian NAND install/boot, 1 GiB | Ready | destructive install and cold/warm boot through OverlayFS proven | regression-test low-level changes |
@@ -114,9 +114,9 @@ BootROM -> SPL BOOT.bin -> u-boot.img -> boot.scr
                                       -> ext4 root
 ```
 
-Historical releases used `boot.scr -> uImage + devicetree.dtb`. The first update
-to the current layout retains that old payload as a one-generation migration
-fallback only after both new FIT slots have already been written.
+Releases that predate the A/B FIT layout are outside online platform-update
+compatibility and require a fresh image. The current boot script has no legacy
+`uImage`/DTB fallback.
 
 The early SD first-stage files are not replaced by online platform updates.
 Fresh factory images use the accepted U-Boot source pin; NAND updates replace
