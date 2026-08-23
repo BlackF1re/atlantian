@@ -13,7 +13,7 @@ BOOT_BIN=${BOOT_BIN:-$ROOT/out/bootloader/BOOT.bin}
 UBOOT_IMG=${UBOOT_IMG:-$ROOT/out/bootloader/u-boot.img}
 DTB=${DTB:-$ROOT/out/boot/devicetree.dtb}
 ZIMAGE=${ZIMAGE:-$ROOT/out/boot/zImage}
-BOOT_ABI=1
+BOOT_ABI=${ATLANTIAN_SD_BOOT_ABI:?}
 
 case "$MODE" in image|package) ;; *) echo "invalid boot population mode: $MODE" >&2; exit 64;; esac
 for f in "$DTB" "$ZIMAGE"; do

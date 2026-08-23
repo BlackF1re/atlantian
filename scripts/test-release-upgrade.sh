@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Release-upgrade gate: install the newly built AtlANTian packages into the
-# newest eligible published SD release whose verified Actions artifact is still
-# retained, then verify that persistent state survives. Public Release assets
-# are intentionally never downloaded here so CI cannot pollute download metrics.
+# newest eligible published SD release with the same transactional boot ABI and
+# a retained verified Actions artifact, then verify persistent state survives.
+# Public Release assets are intentionally never downloaded here so CI cannot
+# pollute download metrics.
 set -euo pipefail
 
 ARTIFACT_DIR=${1:?artifact directory}
@@ -11,6 +12,7 @@ PROJECT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TARGET_VERSION=${ATLANTIAN_VERSION:?}
 TARGET_PACKAGE_VERSION=${ATLANTIAN_DEB_VERSION:?}
 TARGET_MAJOR=${DEBIAN_MAJOR:?}
+TARGET_BOOT_ABI=${ATLANTIAN_SD_BOOT_ABI:?}
 REPO=${ATLANTIAN_RELEASE_UPGRADE_REPO:-${GITHUB_REPOSITORY:-BlackF1re/atlantian}}
 API=${ATLANTIAN_RELEASE_UPGRADE_API:-https://api.github.com}
 EXPAND_MIB=${ATLANTIAN_RELEASE_UPGRADE_EXPAND_MIB:-2048}
@@ -21,10 +23,11 @@ fi
 
 fail() { printf 'release upgrade: %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "required command is missing: $1"; }
-for cmd in curl gh python3 jq dpkg dpkg-deb sha256sum losetup mount umount mountpoint parted e2fsck resize2fs chroot cmp awk truncate update-binfmts; do
+for cmd in curl gh git sed python3 jq dpkg dpkg-deb sha256sum losetup mount umount mountpoint parted e2fsck resize2fs chroot cmp awk truncate update-binfmts; do
   need "$cmd"
 done
 [[ $TARGET_MAJOR =~ ^[0-9]+$ ]] || fail 'target Debian major is not numeric'
+[[ $TARGET_BOOT_ABI =~ ^[1-9][0-9]*$ ]] || fail 'target SD boot ABI is invalid'
 [[ $EXPAND_MIB =~ ^[0-9]+$ ]] && (( EXPAND_MIB >= 1024 )) || fail 'ATLANTIAN_RELEASE_UPGRADE_EXPAND_MIB must be at least 1024'
 
 canonical_version() {
@@ -41,6 +44,15 @@ ordering_version() {
   fi
 }
 version_lt() { dpkg --compare-versions "$(ordering_version "$1")" lt "$(ordering_version "$2")"; }
+
+source_boot_abi() {
+  local source_sha=$1
+  # A source without this declaration predates transactional A/B SD boot and is
+  # discarded before any large Actions artifact is looked up or downloaded.
+  git show "${source_sha}:config/release.env" 2>/dev/null \
+    | sed -n 's/^ATLANTIAN_SD_BOOT_ABI=\([1-9][0-9]*\)$/\1/p' \
+    | head -n1
+}
 
 platform=$(find "$ARTIFACT_DIR" -maxdepth 1 -name 'atlantian-platform_*.deb' -type f -print -quit)
 kernel=$(find "$ARTIFACT_DIR" -maxdepth 1 -name 'atlantian-kernel_*.deb' -type f -print -quit)
@@ -85,10 +97,10 @@ while IFS= read -r tag; do
     continue
   fi
 
-  release_json=$(jq -c --arg tag "$tag" '.[] | select(.draft == false and .tag_name == $tag)' "$WORK/releases.json" | head -n1)
-  [[ -n $release_json ]] || continue
   source_sha=$(gh api "repos/$REPO/commits/$tag" --jq .sha 2>/dev/null || true)
   [[ $source_sha =~ ^[0-9a-f]{40}$ ]] || continue
+  [[ $(source_boot_abi "$source_sha") == "$TARGET_BOOT_ABI" ]] || continue
+
   artifact_name="atlantian-verified-${source_sha}"
   run_id=$(
     SOURCE_SHA_CANDIDATE="$source_sha" gh api --method GET "repos/$REPO/actions/artifacts" \
@@ -107,11 +119,11 @@ while IFS= read -r tag; do
 done < <(jq -r '.[] | select(.draft == false) | .tag_name // empty' "$WORK/releases.json")
 
 if [[ -z $SOURCE_TAG ]]; then
-  echo 'No eligible published source release has a retained verified Actions artifact; release-upgrade gate is not applicable.'
+  echo "No earlier published SD release with boot ABI $TARGET_BOOT_ABI has a retained verified Actions artifact; release-upgrade gate is not applicable."
   exit 0
 fi
 
-echo "SD release upgrade gate: $SOURCE_TAG -> v$TARGET_VERSION"
+echo "SD release upgrade gate (boot ABI $TARGET_BOOT_ABI): $SOURCE_TAG -> v$TARGET_VERSION"
 gh run download "$SOURCE_RUN_ID" \
   --repo "$REPO" \
   --name "$SOURCE_ARTIFACT_NAME" \
@@ -164,10 +176,8 @@ SOURCE_INSTALLED=$(cat "$ROOTFS/usr/lib/atlantian/version" 2>/dev/null || true)
 SOURCE_MAJOR=${SOURCE_INSTALLED%%.*}
 [[ $SOURCE_MAJOR =~ ^[0-9]+$ ]] || fail 'source image has invalid Debian-major marker'
 SOURCE_BOOT_ABI=$(cat "$ROOTFS/boot/atlantian-boot-abi" 2>/dev/null || true)
-if [[ $SOURCE_BOOT_ABI != 1 || ! -s "$ROOTFS/boot/atlantian-A.itb" || ! -s "$ROOTFS/boot/atlantian-B.itb" ]]; then
-  echo "Source release $SOURCE_TAG predates transactional A/B SD boot; release-upgrade gate is not applicable. Reflash is required."
-  exit 0
-fi
+[[ $SOURCE_BOOT_ABI == "$TARGET_BOOT_ABI" ]] || fail "source image boot ABI mismatch: source tree declares $TARGET_BOOT_ABI, image contains ${SOURCE_BOOT_ABI:-none}"
+[[ -s "$ROOTFS/boot/atlantian-A.itb" && -s "$ROOTFS/boot/atlantian-B.itb" ]] || fail 'source image declares the current SD boot ABI but does not contain both A/B FIT slots'
 
 printf 'upgrade-persistence-sentinel\n' >"$ROOTFS/etc/atlantian-upgrade-test.conf"
 printf '0123456789abcdef0123456789abcdef\n' >"$ROOTFS/etc/machine-id"
