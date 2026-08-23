@@ -120,12 +120,18 @@ is created.
 During a normal platform update the kernel package:
 
 1. chooses the **inactive** FIT slot;
-2. writes the complete new FIT to a hidden temporary name;
-3. byte-compares the staged file with the package payload;
-4. `sync`s it before exposing the slot;
+2. removes only that inactive rollback copy, immediately freeing its FAT clusters
+   while the selected active slot remains untouched and bootable;
+3. writes the complete new FIT to a hidden temporary name in the freed space;
+4. byte-compares the staged file with the package payload and `sync`s it;
 5. renames it to the inactive A/B slot and syncs again;
 6. commits the transaction by changing only the tiny active-slot marker;
 7. leaves the previous active FIT untouched as rollback.
+
+The BOOT partition therefore needs space for only the normal A and B FIT slots,
+not a third FIT-sized staging reserve. If power is lost while the inactive slot is
+being replaced, the marker still selects the untouched active slot. The marker is
+changed only after the replacement FIT has been fully written, verified and synced.
 
 At boot, `boot.scr` tries the selected FIT first and the other FIT second. A power
 loss before the marker commit leaves the previous slot selected. A power loss
