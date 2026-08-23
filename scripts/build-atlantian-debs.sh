@@ -189,7 +189,6 @@ UBOOT_IMG="$ROOT/out/bootloader/u-boot.img" \
 DTB="$ROOT/out/boot/devicetree.dtb" \
 ZIMAGE="$ROOT/out/boot/zImage" \
   bash "$ROOT/scripts/populate-boot-files.sh" "$k/usr/lib/atlantian/boot" package
-install -m 0644 "$ROOT/out/boot/zImage" "$k/usr/lib/atlantian/boot/zImage"
 cat >"$k/DEBIAN/postinst" <<'EOF_KERNEL_POST'
 #!/bin/sh
 # Power-loss-safe SD kernel transaction. Early BOOT.bin/u-boot.img stay on the
@@ -205,7 +204,12 @@ case "$abi" in ''|*[!0-9]*) echo 'invalid AtlANTian boot ABI' >&2; exit 1;; esac
 
 write_fit() {
   dest=$1
+  # The destination is inactive. Drop only that rollback copy before staging so
+  # the 48 MiB BOOT partition never has to hold A + B + a third full FIT. The
+  # selected active slot remains untouched until the commit marker changes.
   rm -f "$target/.$dest.new"
+  rm -f "$target/$dest"
+  sync
   install -m 0644 "$fit" "$target/.$dest.new"
   cmp -s "$fit" "$target/.$dest.new" || { echo "FIT staging verification failed: $dest" >&2; exit 1; }
   sync
