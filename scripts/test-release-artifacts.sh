@@ -49,8 +49,11 @@ platform_deb=$(find "$DIR" -maxdepth 1 -name 'atlantian-platform_*.deb' -type f 
 
 dpkg-deb -c "$kernel_deb" >"$work/kernel.list"
 ! grep -qE ' ./boot/' "$work/kernel.list" || fail 'kernel package must not own live /boot paths'
-for path in BOOT.bin u-boot.img boot.scr; do
+for path in atlantian.itb atlantian-boot-abi boot.scr; do
   grep -q "usr/lib/atlantian/boot/$path" "$work/kernel.list" || fail "kernel package is missing $path"
+done
+for path in BOOT.bin u-boot.img; do
+  ! grep -q "usr/lib/atlantian/boot/$path" "$work/kernel.list" || fail "kernel package must not carry factory boot payload: $path"
 done
 dpkg-deb -e "$kernel_deb" "$work/kernel-control"
 grep -q '/usr/lib/atlantian/boot' "$work/kernel-control/postinst" || fail 'kernel postinst does not refresh SD boot payload'
