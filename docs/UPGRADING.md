@@ -139,19 +139,17 @@ filesystem is not treated as a general multi-file transaction—the design reduc
 the commit point to one tiny directory-entry change after all large writes are
 complete.
 
-### Migration from historical SD layout
+### SD update compatibility boundary
 
-Older AtlANTian releases booted separate `uImage` and `devicetree.dtb` files.
-Their first update to the transactional layout is ordered as follows:
+In-place platform updates are supported only from images that already use the
+transactional A/B FIT layout above. Releases that still boot separate `uImage`
+and `devicetree.dtb` payloads are not migration sources; flash a current image
+instead.
 
-1. write and verify both FIT A and FIT B;
-2. only after both exist, atomically replace `boot.scr` with the FIT-aware loader;
-3. begin with slot A active;
-4. retain the old `uImage`/DTB as an additional migration fallback;
-5. remove those legacy payloads after a later normal A/B transaction succeeds.
-
-The FIT-aware boot script also contains a legacy fallback path specifically for
-this migration window.
+The kernel package checks for both FIT slots, the expected boot ABI and the
+matching FIT-aware `boot.scr` before it writes the inactive slot. If that contract
+is absent or changed, the update fails closed and requests a reflash. The current
+boot script contains no legacy payload fallback.
 
 ### Why online updates do not rewrite `BOOT.bin`/`u-boot.img`
 

@@ -120,8 +120,8 @@ require_text 'SD FIT slot B' 'atlantian-B.itb' scripts/populate-boot-files.sh sc
 require_text 'SD active-slot marker' 'atlantian-slot-B' scripts/populate-boot-files.sh scripts/build-atlantian-debs.sh
 require_text 'SD FIT SHA-256' 'hash-1 { algo = "sha256"; };' scripts/populate-boot-files.sh
 require_text 'SD FIT boot' 'bootm 0x02000000' scripts/populate-boot-files.sh
-require_text 'legacy SD kernel migration fallback' 'fatload mmc 0:1 0x02000000 uImage' scripts/populate-boot-files.sh
-require_text 'legacy SD DT migration fallback' 'fatload mmc 0:1 0x01F00000 devicetree.dtb' scripts/populate-boot-files.sh
+reject_text 'no legacy SD kernel fallback' 'fatload mmc 0:1 0x02000000 uImage' scripts/populate-boot-files.sh
+reject_text 'no legacy SD DT fallback' 'fatload mmc 0:1 0x01F00000 devicetree.dtb' scripts/populate-boot-files.sh
 require_text 'NAND stage hook is explicit' 'atln-stage.scr' scripts/populate-boot-files.sh
 
 # NAND U-Boot.
@@ -198,7 +198,9 @@ require_text 'live NAND .deb update refusal' 'atlantian-kernel cannot update a l
 require_text 'SD inactive FIT staging' 'inactive=' scripts/build-atlantian-debs.sh
 require_text 'SD FIT byte verification' 'cmp -s "$fit" "$target/.$dest.new"' scripts/build-atlantian-debs.sh
 require_text 'SD FIT active marker' 'atlantian-slot-B' scripts/build-atlantian-debs.sh
-require_text 'SD legacy migration detection' 'if [ ! -s "$target/atlantian-A.itb" ] || [ ! -s "$target/atlantian-B.itb" ]; then' scripts/build-atlantian-debs.sh
+require_text 'SD A/B update compatibility gate' 'online SD kernel updates require a transactional A/B AtlANTian image' scripts/build-atlantian-debs.sh
+reject_text 'no SD legacy migration branch' 'write_fit atlantian-A.itb' scripts/build-atlantian-debs.sh
+require_text 'release upgrade A/B source gate' 'predates transactional A/B SD boot' scripts/test-release-upgrade.sh
 require_text 'NAND sysupgrade wrapper' 'atlantian-sysupgrade-nand' scripts/build-atlantian-debs.sh scripts/install-nand-tools.sh
 require_text 'NAND maintenance tool' 'atlantian-nand-upgrade' scripts/install-nand-tools.sh scripts/atlantian-sysupgrade-nand.sh
 require_text 'NAND cross-major fail closed' 'requires a clean NAND reinstall' scripts/atlantian-nand-upgrade.sh

@@ -213,29 +213,14 @@ write_fit() {
   sync
 }
 
-# Migration from the historical uImage+DTB layout is itself ordered safely:
-# both FIT slots land first, then boot.scr is atomically replaced. Until that
-# final rename the old loader and old payload remain untouched and bootable.
-if [ ! -s "$target/atlantian-A.itb" ] || [ ! -s "$target/atlantian-B.itb" ]; then
-  write_fit atlantian-A.itb
-  write_fit atlantian-B.itb
-  install -m 0644 "$source/boot.scr" "$target/.boot.scr.new"
-  cmp -s "$source/boot.scr" "$target/.boot.scr.new" || exit 1
-  sync
-  mv -f "$target/.boot.scr.new" "$target/boot.scr"
-  printf '%s\n' "$abi" >"$target/.atlantian-boot-abi.new"
-  sync
-  mv -f "$target/.atlantian-boot-abi.new" "$target/atlantian-boot-abi"
-  rm -f "$target/atlantian-slot-B"
-  sync
-  # Keep the historical uImage/DTB for one boot generation as an additional
-  # migration fallback. A later normal slot transaction removes them.
-  exit 0
-fi
+[ -s "$target/atlantian-A.itb" ] && [ -s "$target/atlantian-B.itb" ] || {
+  echo 'online SD kernel updates require a transactional A/B AtlANTian image; reflash with a current image' >&2
+  exit 78
+}
 
 installed_abi=$(cat "$target/atlantian-boot-abi" 2>/dev/null || true)
 [ "$installed_abi" = "$abi" ] || {
-  echo "online boot-loader ABI migration is unsupported ($installed_abi -> $abi); reflash the SD image" >&2
+  echo "online boot-loader ABI change is unsupported ($installed_abi -> $abi); reflash the SD image" >&2
   exit 78
 }
 cmp -s "$source/boot.scr" "$target/boot.scr" || {
@@ -261,12 +246,6 @@ if [ "$next" = B ]; then
 else
   rm -f "$target/atlantian-slot-B"
 fi
-sync
-
-# Legacy files are no longer part of the active or rollback boot path once a
-# normal A/B transaction has completed.
-rm -f "$target/uImage" "$target/devicetree.dtb" \
-  "$target/.uImage.new" "$target/.devicetree.dtb.new" "$target/.atlantian-slot-B.new"
 sync
 EOF_KERNEL_POST
 chmod 0755 "$k/DEBIAN/postinst"

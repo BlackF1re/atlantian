@@ -33,8 +33,8 @@ called bench-proven:
 - [ ] Switch the active marker to B and prove that the identical B FIT boots.
 - [ ] Corrupt the selected FIT deliberately and verify automatic boot from the
   other complete slot.
-- [ ] Upgrade a historical `uImage + devicetree.dtb` installation and verify the
-  one-time migration fallback plus subsequent normal A/B slot transaction.
+- [ ] Attempt an online kernel update with one A/B FIT slot deliberately absent
+  and verify that it refuses before changing the active boot payload.
 - [ ] Interrupt power while writing the **inactive** FIT before the marker switch;
   verify that the old selected slot still boots.
 - [ ] Interrupt power after the marker switch; verify that the new slot boots or
