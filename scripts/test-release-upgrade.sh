@@ -204,7 +204,7 @@ for pkg in "$platform" "$kernel" "$release"; do cp "$pkg" "$ROOTFS/tmp/$(basenam
 if (( TARGET_MAJOR == SOURCE_MAJOR )); then
   chroot "$ROOTFS" /bin/bash -euxc '
     export DEBIAN_FRONTEND=noninteractive
-    dpkg -i /tmp/atlantian-platform_*.deb /tmp/atlantian-kernel_*.deb /tmp/atlantian-release_*.deb || apt-get -f install -y
+    apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y /tmp/atlantian-platform_*.deb /tmp/atlantian-kernel_*.deb /tmp/atlantian-release_*.deb
     dpkg --audit
   '
 elif (( TARGET_MAJOR == SOURCE_MAJOR + 1 )); then
@@ -212,9 +212,9 @@ elif (( TARGET_MAJOR == SOURCE_MAJOR + 1 )); then
   printf '%s\n' "$TARGET_VERSION" >"$ROOTFS/run/atlantian-major-upgrade-authorized"
   chroot "$ROOTFS" /bin/bash -euxc '
     export DEBIAN_FRONTEND=noninteractive
-    dpkg -i /tmp/atlantian-platform_*.deb /tmp/atlantian-kernel_*.deb /tmp/atlantian-release_*.deb || apt-get -f install -y
+    apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y /tmp/atlantian-platform_*.deb /tmp/atlantian-kernel_*.deb /tmp/atlantian-release_*.deb
     apt-get update
-    apt-get full-upgrade -y
+    apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" full-upgrade -y
     dpkg --audit
   '
   rm -f "$ROOTFS/run/atlantian-major-upgrade-authorized"
