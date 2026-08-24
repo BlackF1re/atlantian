@@ -224,13 +224,13 @@ jobs:
           restore-keys: |
             debootstrap-${{ steps.identity.outputs.debian_codename }}-
 
-      - name: Cache Linux build tree
+      - name: Cache Linux source
         id: kernel_cache
         # v6.1.0
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: out/linux-src
-          key: linux-build-${{ steps.identity.outputs.kernel_commit }}-${{ steps.identity.outputs.kernel_localversion }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('board/zynq-bitmain-antminer-s9.dts', 'config/kernel.fragment', 'config/kernel-prune.fragment', 'kernel-overlay/**', 'scripts/build-kernel.sh') }}
+          key: linux-source-${{ steps.identity.outputs.kernel_commit }}
 
       - name: Cache U-Boot source
         id: uboot_cache
@@ -240,40 +240,35 @@ jobs:
           path: out/u-boot-src
           key: uboot-source-${{ steps.identity.outputs.uboot_commit }}
 
-      - name: Prepare Linux source
-        run: |
-          set -euo pipefail
-          mkdir -p out
-          . config/release.env
-          current=$(git -C out/linux-src rev-parse HEAD 2>/dev/null || true)
-          if [[ "$current" = "$ATLANTIAN_KERNEL_COMMIT" ]]; then
-            git -C out/linux-src reset --quiet --hard "$ATLANTIAN_KERNEL_COMMIT"
-          else
-            if [[ ! -d out/linux-src/.git ]]; then
-              rm -rf out/linux-src
-              git init out/linux-src
-              git -C out/linux-src remote add origin https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git
-            fi
-            git -C out/linux-src remote set-url origin https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git
-            git -C out/linux-src fetch --depth 1 origin "$ATLANTIAN_KERNEL_COMMIT"
-            git -C out/linux-src checkout --detach --force FETCH_HEAD
-            git -C out/linux-src clean -ffdqx
-          fi
-          test "$(git -C out/linux-src rev-parse HEAD)" = "$ATLANTIAN_KERNEL_COMMIT"
-
-      - name: Build root filesystems
-        id: rootfs
+      - name: Build root filesystems and Linux kernel in parallel
+        id: core
         env:
           DEBIAN_FRONTEND: noninteractive
           ATLANTIAN_DEBOOTSTRAP_CACHE: ${{ github.workspace }}/.cache/debootstrap
           ATLANTIAN_SKIP_PREFLIGHT: '1'
-        run: sudo -E ./scripts/build-incremental.sh rootfs
+        run: |
+          set -uo pipefail
+          mkdir -p out/build-logs
+          sudo -E ./scripts/build-incremental.sh rootfs >out/build-logs/rootfs.log 2>&1 &
+          rootfs_pid=$!
+          sudo -E ./scripts/build-incremental.sh kernel >out/build-logs/kernel.log 2>&1 &
+          kernel_pid=$!
 
-      - name: Build Linux kernel
-        id: kernel
-        env:
-          ATLANTIAN_SKIP_PREFLIGHT: '1'
-        run: sudo -E ./scripts/build-incremental.sh kernel
+          rootfs_rc=0
+          kernel_rc=0
+          wait "$rootfs_pid" || rootfs_rc=$?
+          wait "$kernel_pid" || kernel_rc=$?
+
+          echo '===== rootfs build ====='
+          cat out/build-logs/rootfs.log
+          echo '===== kernel build ====='
+          cat out/build-logs/kernel.log
+
+          if (( rootfs_rc != 0 || kernel_rc != 0 )); then
+            echo "parallel core build failed: rootfs=$rootfs_rc kernel=$kernel_rc" >&2
+            exit 1
+          fi
+          sudo -E ./scripts/build-incremental.sh join-kernel
 
       - name: Build release artifacts
         id: artifacts
@@ -282,7 +277,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo -E ./scripts/build-incremental.sh artifacts
-          sudo chown -R "$USER:$USER" artifacts .cache/debootstrap out/linux-src out/boot out/bootloader out/u-boot-src out/u-boot-build out/u-boot-nand-build out/nand
+          sudo chown -R "$USER:$USER" artifacts .cache/debootstrap out
 
       - name: Validate release artifacts
         id: artifact_check
@@ -358,10 +353,9 @@ jobs:
             echo '| Release inputs | ${{ steps.inputs.outcome }} |'
             echo '| Dependencies | ${{ steps.dependencies.outcome }} |'
             echo '| Debian package cache | ${{ steps.debootstrap_cache.outputs.cache-hit }} |'
-            echo '| Linux build cache | ${{ steps.kernel_cache.outputs.cache-hit }} |'
+            echo '| Linux source cache | ${{ steps.kernel_cache.outputs.cache-hit }} |'
             echo '| U-Boot source cache | ${{ steps.uboot_cache.outputs.cache-hit }} |'
-            echo '| Root filesystems | ${{ steps.rootfs.outcome }} |'
-            echo '| Linux kernel | ${{ steps.kernel.outcome }} |'
+            echo '| Parallel rootfs/kernel build | ${{ steps.core.outcome }} |'
             echo '| Release artifacts | ${{ steps.artifacts.outcome }} |'
             echo '| Artifact validation | ${{ steps.artifact_check.outcome }} |'
             echo '| SD image layout | ${{ steps.image_check.outcome }} |'

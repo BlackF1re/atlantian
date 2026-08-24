@@ -12,6 +12,7 @@ COMPRESSED_IMAGE=${COMPRESSED_IMAGE:-$SD_IMAGE.xz}
 BOOT_BIN=${BOOT_BIN:-$ROOT/out/bootloader/BOOT.bin}
 UBOOT_IMG=${UBOOT_IMG:-$ROOT/out/bootloader/u-boot.img}
 INITRAMFS=${INITRAMFS:-$ROOT/out/nand/initramfs.cpio.gz}
+KERNEL_ROOTFS=${KERNEL_ROOTFS:-$ROOT/out/kernel-rootfs}
 
 preflight() {
   "$ROOT/scripts/test-build-orchestration.sh"
@@ -32,15 +33,29 @@ rootfs() {
 }
 
 kernel() {
-  need_dir "$ROOT/out/rootfs"; need_dir "$ROOT/out/rootfs-nand"
-  sudo -E "$ROOT/scripts/build-kernel.sh"
+  # Kernel compilation is intentionally independent from Debian userspace. The
+  # modules are installed into a private staging root and joined into both
+  # runtime rootfs trees only after rootfs and kernel have completed.
+  sudo rm -rf "$KERNEL_ROOTFS"
+  sudo mkdir -p "$KERNEL_ROOTFS"
+  sudo -E env ROOTFS="$KERNEL_ROOTFS" "$ROOT/scripts/build-kernel.sh"
   for opt in CONFIG_MTD_NAND_PL35X CONFIG_MTD_NAND_ECC_SW_BCH CONFIG_MTD_UBI CONFIG_MTD_UBI_BLOCK \
     CONFIG_UBIFS_FS CONFIG_SQUASHFS CONFIG_SQUASHFS_ZSTD CONFIG_OVERLAY_FS CONFIG_EXT4_FS; do
     grep -qx "${opt}=y" "$ROOT/out/boot/kernel.config" || { echo "NAND early-root option is not built in: $opt" >&2; exit 3; }
   done
-  sudo "$ROOT/scripts/strip-kernel-modules.sh" "$ROOT/out/rootfs"
-  sudo rm -rf "$ROOT/out/rootfs-nand/lib/modules"; sudo mkdir -p "$ROOT/out/rootfs-nand/lib/modules"
-  sudo rsync -aHAX --numeric-ids "$ROOT/out/rootfs/lib/modules/" "$ROOT/out/rootfs-nand/lib/modules/"
+  sudo "$ROOT/scripts/strip-kernel-modules.sh" "$KERNEL_ROOTFS"
+  need_dir "$KERNEL_ROOTFS/lib/modules"
+}
+
+join_kernel() {
+  need_dir "$ROOT/out/rootfs"
+  need_dir "$ROOT/out/rootfs-nand"
+  need_dir "$KERNEL_ROOTFS/lib/modules"
+  for target in "$ROOT/out/rootfs" "$ROOT/out/rootfs-nand"; do
+    sudo rm -rf "$target/lib/modules" "$target"/boot/vmlinuz-* "$target"/boot/initrd.img-* "$target"/boot/System.map-* "$target"/boot/config-*
+    sudo mkdir -p "$target/lib/modules"
+    sudo rsync -aHAX --numeric-ids "$KERNEL_ROOTFS/lib/modules/" "$target/lib/modules/"
+  done
 }
 
 stamp() {
@@ -67,6 +82,7 @@ embed_nand() {
 }
 artifacts() {
   need_dir "$ROOT/out/rootfs"; need_dir "$ROOT/out/rootfs-nand"; need_file "$ROOT/out/boot/zImage"; need_file "$ROOT/out/boot/devicetree.dtb"
+  join_kernel
   mkdir -p "$DIR"
   rm -f "$DIR"/*.img "$DIR"/*.img.xz "$DIR"/*.deb "$DIR"/*.tar.zst "$DIR"/*.packages.tsv "$DIR"/*.snapshot.txt "$DIR"/RELEASE-METADATA.json "$DIR"/SHA256SUMS
   bootloader; packages; nand_products; embed_nand
@@ -80,15 +96,24 @@ artifacts() {
   (cd "$DIR" && sha256sum *.img *.tar.zst *.deb RELEASE-METADATA.json >SHA256SUMS && sha256sum *.img.xz >>SHA256SUMS)
   sudo chown -R "${SUDO_UID:-$(id -u)}:${SUDO_GID:-$(id -g)}" "$DIR"
 }
-full() { rootfs; kernel; artifacts; }
+full() {
+  rootfs & rootfs_pid=$!
+  kernel & kernel_pid=$!
+  status=0
+  wait "$rootfs_pid" || status=1
+  wait "$kernel_pid" || status=1
+  (( status == 0 )) || { echo 'parallel rootfs/kernel build failed' >&2; exit 1; }
+  artifacts
+}
 
 if [[ ${ATLANTIAN_SKIP_PREFLIGHT:-0} != 1 ]]; then preflight; fi
 case "$TARGET" in
   rootfs) rootfs ;;
   kernel) kernel ;;
+  join-kernel) join_kernel ;;
   bootloader) bootloader ;;
   artifacts) artifacts ;;
   all) full ;;
-  *) echo 'usage: build-incremental.sh {rootfs|kernel|bootloader|artifacts|all}' >&2; exit 64 ;;
+  *) echo 'usage: build-incremental.sh {rootfs|kernel|join-kernel|bootloader|artifacts|all}' >&2; exit 64 ;;
 esac
 echo "AtlANTian build completed: $TARGET"
