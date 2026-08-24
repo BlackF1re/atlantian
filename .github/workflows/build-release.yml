@@ -28,16 +28,18 @@ concurrency:
   group: atlantian-release-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ATLANTIAN_GITHUB_REPO: ${{ github.repository }}
+
 jobs:
   plan:
     name: Plan release
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       actions: read
       contents: read
-    env:
-      ATLANTIAN_GITHUB_REPO: ${{ github.repository }}
     outputs:
       publish_requested: ${{ steps.plan.outputs.publish_requested }}
       build_required: ${{ steps.plan.outputs.build_required }}
@@ -127,19 +129,13 @@ jobs:
             echo "| Reusable workflow run | ${reuse_run_id:-none} |"
           } >>"$GITHUB_STEP_SUMMARY"
 
-  build:
-    name: Build and verify
+  preflight:
+    name: Validate source
     needs: plan
-    if: needs.plan.outputs.build_required == 'true'
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.build_required == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-      attestations: write
+    timeout-minutes: 15
     env:
-      ATLANTIAN_GITHUB_REPO: ${{ github.repository }}
       ATLANTIAN_PATCH_OVERRIDE: ${{ needs.plan.outputs.patch }}
       ATLANTIAN_PRERELEASE_OVERRIDE: ${{ needs.plan.outputs.prerelease }}
     steps:
@@ -150,9 +146,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Prepare release identity
-        id: identity
-        shell: bash
+      - name: Verify release identity
         env:
           EXPECTED_VERSION: ${{ needs.plan.outputs.version }}
         run: |
@@ -160,27 +154,9 @@ jobs:
           export ATLANTIAN_SOURCE_REVISION
           ATLANTIAN_SOURCE_REVISION=$(git rev-parse --short=12 "$GITHUB_SHA")
           . config/release.env
-          . config/u-boot.env
           test "$ATLANTIAN_VERSION" = "$EXPECTED_VERSION"
-          {
-            echo "ATLANTIAN_SOURCE_REVISION=$ATLANTIAN_SOURCE_REVISION"
-            echo "ATLANTIAN_SOURCE_ID=$ATLANTIAN_SOURCE_ID"
-            echo "ATLANTIAN_VERSION=$ATLANTIAN_VERSION"
-            echo "ATLANTIAN_DEB_VERSION=$ATLANTIAN_DEB_VERSION"
-            echo "ATLANTIAN_PRERELEASE=$ATLANTIAN_PRERELEASE"
-            echo "ATLANTIAN_RELEASE_ID=$ATLANTIAN_RELEASE_ID"
-            echo "ATLANTIAN_IMAGE_NAME=$ATLANTIAN_IMAGE_NAME"
-            echo "RELEASE_TAG=v$ATLANTIAN_VERSION"
-          } >>"$GITHUB_ENV"
-          {
-            echo "debian_codename=$DEBIAN_CODENAME"
-            echo "kernel_commit=$ATLANTIAN_KERNEL_COMMIT"
-            echo "kernel_localversion=$ATLANTIAN_KERNEL_LOCALVERSION"
-            echo "uboot_commit=$ATLANTIAN_UBOOT_COMMIT"
-          } >>"$GITHUB_OUTPUT"
 
       - name: Validate source contracts
-        id: preflight
         run: |
           set -euo pipefail
           scripts/test-build-orchestration.sh
@@ -190,15 +166,194 @@ jobs:
           scripts/test-release-metrics.sh
 
       - name: Validate release inputs
-        id: inputs
         run: scripts/validate-release-inputs.sh
 
-      - name: Install build dependencies
-        id: dependencies
+  rootfs:
+    name: Build rootfs
+    needs: [plan, preflight]
+    outputs:
+      handoff_sha256: ${{ steps.handoff.outputs.sha256 }}
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.build_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      ATLANTIAN_PATCH_OVERRIDE: ${{ needs.plan.outputs.patch }}
+      ATLANTIAN_PRERELEASE_OVERRIDE: ${{ needs.plan.outputs.prerelease }}
+      DEBIAN_FRONTEND: noninteractive
+      ATLANTIAN_DEBOOTSTRAP_CACHE: ${{ github.workspace }}/.cache/debootstrap
+      ATLANTIAN_SKIP_PREFLIGHT: '1'
+    steps:
+      - name: Checkout
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare release identity
+        env:
+          EXPECTED_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse --short=12 "$GITHUB_SHA")
+          echo "ATLANTIAN_SOURCE_REVISION=$revision" >>"$GITHUB_ENV"
+          export ATLANTIAN_SOURCE_REVISION=$revision
+          . config/release.env
+          test "$ATLANTIAN_VERSION" = "$EXPECTED_VERSION"
+
+      - name: Install rootfs build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             debootstrap qemu-user-static binfmt-support \
+            cpio rsync xz-utils zstd jq \
+            git curl ca-certificates sudo
+
+      - name: Build SD and NAND root filesystems
+        run: sudo -E ./scripts/build-incremental.sh rootfs
+
+      - name: Verify source tree integrity
+        run: git diff --exit-code
+
+      - name: Pack rootfs handoff
+        id: handoff
+        run: |
+          set -euo pipefail
+          mkdir -p handoff
+          sudo tar --acls --xattrs --xattrs-include='*' --numeric-owner \
+            -I 'zstd -T0 -3' -C out \
+            -cf handoff/rootfs-state.tar.zst rootfs rootfs-nand build-tools
+          sudo chown "$USER:$USER" handoff/rootfs-state.tar.zst
+          echo "sha256=$(sha256sum handoff/rootfs-state.tar.zst | awk '{print $1}')" >>"$GITHUB_OUTPUT"
+
+      - name: Upload rootfs handoff
+        # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: atlantian-rootfs-state
+          path: handoff/rootfs-state.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+          overwrite: true
+
+  kernel:
+    name: Build Linux kernel
+    needs: [plan, preflight]
+    outputs:
+      handoff_sha256: ${{ steps.handoff.outputs.sha256 }}
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.build_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ATLANTIAN_PATCH_OVERRIDE: ${{ needs.plan.outputs.patch }}
+      ATLANTIAN_PRERELEASE_OVERRIDE: ${{ needs.plan.outputs.prerelease }}
+      ATLANTIAN_SKIP_PREFLIGHT: '1'
+    steps:
+      - name: Checkout
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare release identity
+        id: identity
+        env:
+          EXPECTED_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse --short=12 "$GITHUB_SHA")
+          echo "ATLANTIAN_SOURCE_REVISION=$revision" >>"$GITHUB_ENV"
+          export ATLANTIAN_SOURCE_REVISION=$revision
+          . config/release.env
+          test "$ATLANTIAN_VERSION" = "$EXPECTED_VERSION"
+          echo "kernel_commit=$ATLANTIAN_KERNEL_COMMIT" >>"$GITHUB_OUTPUT"
+
+      - name: Install kernel build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
+            bc bison flex libssl-dev libncurses-dev device-tree-compiler \
+            kmod libelf-dev libdw-dev zstd \
+            git ca-certificates sudo python3 python3-pyelftools
+
+      - name: Build Linux kernel and modules
+        run: sudo -E ./scripts/build-incremental.sh kernel
+
+      - name: Verify source tree integrity
+        run: git diff --exit-code
+
+      - name: Pack kernel handoff
+        id: handoff
+        run: |
+          set -euo pipefail
+          mkdir -p handoff
+          sudo tar --acls --xattrs --xattrs-include='*' --numeric-owner \
+            -I 'zstd -T0 -3' -C out \
+            -cf handoff/kernel-state.tar.zst kernel-rootfs boot
+          sudo chown "$USER:$USER" handoff/kernel-state.tar.zst
+          echo "sha256=$(sha256sum handoff/kernel-state.tar.zst | awk '{print $1}')" >>"$GITHUB_OUTPUT"
+
+      - name: Upload kernel handoff
+        # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: atlantian-kernel-state
+          path: handoff/kernel-state.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+          overwrite: true
+
+  assemble:
+    name: Assemble release
+    needs: [plan, rootfs, kernel]
+    outputs:
+      candidate_sha256: ${{ steps.candidate.outputs.sha256 }}
+      rebase_sha256: ${{ steps.rebase.outputs.sha256 }}
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.build_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      actions: read
+      contents: read
+    env:
+      ATLANTIAN_PATCH_OVERRIDE: ${{ needs.plan.outputs.patch }}
+      ATLANTIAN_PRERELEASE_OVERRIDE: ${{ needs.plan.outputs.prerelease }}
+      ATLANTIAN_SKIP_PREFLIGHT: '1'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare release identity
+        id: identity
+        env:
+          EXPECTED_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse --short=12 "$GITHUB_SHA")
+          echo "ATLANTIAN_SOURCE_REVISION=$revision" >>"$GITHUB_ENV"
+          export ATLANTIAN_SOURCE_REVISION=$revision
+          . config/release.env
+          . config/u-boot.env
+          test "$ATLANTIAN_VERSION" = "$EXPECTED_VERSION"
+          {
+            echo "ATLANTIAN_VERSION=$ATLANTIAN_VERSION"
+            echo "ATLANTIAN_IMAGE_NAME=$ATLANTIAN_IMAGE_NAME"
+          } >>"$GITHUB_ENV"
+          echo "uboot_commit=$ATLANTIAN_UBOOT_COMMIT" >>"$GITHUB_OUTPUT"
+
+      - name: Install artifact build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
             gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
             bc bison flex libssl-dev libncurses-dev device-tree-compiler \
             u-boot-tools kmod cpio rsync pigz xz-utils zstd e2fsprogs dosfstools parted \
@@ -206,122 +361,409 @@ jobs:
             libelf-dev libdw-dev git curl ca-certificates sudo \
             python3 python3-dev python3-setuptools python3-pyelftools swig
 
-      - name: Compute toolchain fingerprint
-        id: toolchain
-        shell: bash
+      - name: Download build handoffs
         run: |
           set -euo pipefail
-          fingerprint=$({ arm-linux-gnueabihf-gcc --version; arm-linux-gnueabihf-ld --version; } | sha256sum | awk '{print $1}')
-          echo "fingerprint=$fingerprint" >>"$GITHUB_OUTPUT"
+          mkdir -p handoff/rootfs handoff/kernel
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name atlantian-rootfs-state --dir handoff/rootfs
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name atlantian-kernel-state --dir handoff/kernel
 
-      - name: Cache Debian packages
-        id: debootstrap_cache
-        # v6.1.0
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .cache/debootstrap
-          key: debootstrap-${{ steps.identity.outputs.debian_codename }}-${{ hashFiles('config/debian-snapshot.env') }}
-          restore-keys: |
-            debootstrap-${{ steps.identity.outputs.debian_codename }}-
-
-      - name: Cache Linux source
-        id: kernel_cache
-        # v6.1.0
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: out/linux-src
-          key: linux-source-${{ steps.identity.outputs.kernel_commit }}
-
-      - name: Cache U-Boot source
-        id: uboot_cache
-        # v6.1.0
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: out/u-boot-src
-          key: uboot-source-${{ steps.identity.outputs.uboot_commit }}
-
-      - name: Build root filesystems and Linux kernel in parallel
-        id: core
+      - name: Verify and restore build state
         env:
-          DEBIAN_FRONTEND: noninteractive
-          ATLANTIAN_DEBOOTSTRAP_CACHE: ${{ github.workspace }}/.cache/debootstrap
-          ATLANTIAN_SKIP_PREFLIGHT: '1'
+          ROOTFS_SHA256: ${{ needs.rootfs.outputs.handoff_sha256 }}
+          KERNEL_SHA256: ${{ needs.kernel.outputs.handoff_sha256 }}
         run: |
-          set -uo pipefail
-          mkdir -p out/build-logs
-          sudo -E ./scripts/build-incremental.sh rootfs >out/build-logs/rootfs.log 2>&1 &
-          rootfs_pid=$!
-          sudo -E ./scripts/build-incremental.sh kernel >out/build-logs/kernel.log 2>&1 &
-          kernel_pid=$!
-
-          rootfs_rc=0
-          kernel_rc=0
-          wait "$rootfs_pid" || rootfs_rc=$?
-          wait "$kernel_pid" || kernel_rc=$?
-
-          echo '===== rootfs build ====='
-          cat out/build-logs/rootfs.log
-          echo '===== kernel build ====='
-          cat out/build-logs/kernel.log
-
-          if (( rootfs_rc != 0 || kernel_rc != 0 )); then
-            echo "parallel core build failed: rootfs=$rootfs_rc kernel=$kernel_rc" >&2
-            exit 1
-          fi
-          sudo -E ./scripts/build-incremental.sh join-kernel
+          set -euo pipefail
+          [[ $ROOTFS_SHA256 =~ ^[0-9a-f]{64}$ && $KERNEL_SHA256 =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$ROOTFS_SHA256" handoff/rootfs/rootfs-state.tar.zst | sha256sum -c -
+          printf '%s  %s\n' "$KERNEL_SHA256" handoff/kernel/kernel-state.tar.zst | sha256sum -c -
+          rootfs_restore="$RUNNER_TEMP/atlantian-rootfs-state"
+          kernel_restore="$RUNNER_TEMP/atlantian-kernel-state"
+          rm -rf "$rootfs_restore" "$kernel_restore"
+          mkdir -p "$rootfs_restore" "$kernel_restore" out
+          sudo tar --acls --xattrs --xattrs-include='*' --numeric-owner --same-owner \
+            -I zstd -C "$rootfs_restore" -xf handoff/rootfs/rootfs-state.tar.zst
+          sudo tar --acls --xattrs --xattrs-include='*' --numeric-owner --same-owner \
+            -I zstd -C "$kernel_restore" -xf handoff/kernel/kernel-state.tar.zst
+          for name in rootfs rootfs-nand build-tools; do
+            [[ -d "$rootfs_restore/$name" && ! -L "$rootfs_restore/$name" ]] || { echo "invalid rootfs handoff member: $name" >&2; exit 1; }
+            sudo rm -rf "out/$name"
+            sudo mv "$rootfs_restore/$name" "out/$name"
+          done
+          for name in kernel-rootfs boot; do
+            [[ -d "$kernel_restore/$name" && ! -L "$kernel_restore/$name" ]] || { echo "invalid kernel handoff member: $name" >&2; exit 1; }
+            sudo rm -rf "out/$name"
+            sudo mv "$kernel_restore/$name" "out/$name"
+          done
 
       - name: Build release artifacts
-        id: artifacts
-        env:
-          ATLANTIAN_SKIP_PREFLIGHT: '1'
-        run: |
-          set -euo pipefail
-          sudo -E ./scripts/build-incremental.sh artifacts
-          sudo chown -R "$USER:$USER" artifacts .cache/debootstrap out
-
-      - name: Validate release artifacts
-        id: artifact_check
-        run: scripts/test-release-artifacts.sh artifacts/current
-
-      - name: Validate SD image layout
-        id: image_check
-        run: sudo -E ./scripts/test-image-layout.sh "artifacts/current/$ATLANTIAN_IMAGE_NAME.img"
-
-      - name: Validate NAND bundle
-        id: nand_check
-        run: scripts/test-nand-artifacts.sh out/nand/bundle "artifacts/current/$ATLANTIAN_IMAGE_NAME.img"
-
-      - name: Test SD upgrade
-        id: sd_upgrade
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: sudo -E ./scripts/test-release-upgrade.sh artifacts/current
-
-      - name: Test NAND rebase
-        id: nand_rebase
-        run: sudo -E ./scripts/test-nand-rebase.sh out/rootfs-nand
+        run: sudo -E ./scripts/build-incremental.sh artifacts
 
       - name: Verify source tree integrity
-        id: source_integrity
         run: git diff --exit-code
 
-      - name: Seal verified artifact
-        id: seal
+      - name: Prepare trusted validation handoffs
+        id: rebase
         run: |
           set -euo pipefail
-          printf '%s\n' "$GITHUB_SHA" >artifacts/current/VERIFIED-SOURCE-SHA
-          printf '%s\n' "$ATLANTIAN_VERSION" >artifacts/current/VERIFIED-VERSION
-          (cd artifacts/current && sha256sum -c SHA256SUMS)
+          mkdir -p artifacts/current/.ci handoff
+          install -m 0644 out/bootloader/nand/raw-boot-sizes.env artifacts/current/.ci/raw-boot-sizes.env
+          sudo tar --acls --xattrs --xattrs-include='*' --numeric-owner \
+            -I 'zstd -T0 -3' -C out \
+            -cf handoff/rootfs-nand-state.tar.zst rootfs-nand
+          sudo chown "$USER:$USER" handoff/rootfs-nand-state.tar.zst
+          echo "sha256=$(sha256sum handoff/rootfs-nand-state.tar.zst | awk '{print $1}')" >>"$GITHUB_OUTPUT"
+
+      - name: Pack release candidate
+        id: candidate
+        run: |
+          set -euo pipefail
+          sudo tar --numeric-owner -I 'zstd -T0 -3' \
+            -cf handoff/release-candidate.tar.zst artifacts/current
+          sudo chown "$USER:$USER" handoff/release-candidate.tar.zst
+          echo "sha256=$(sha256sum handoff/release-candidate.tar.zst | awk '{print $1}')" >>"$GITHUB_OUTPUT"
+
+      - name: Upload release candidate
+        # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: atlantian-release-candidate
+          path: handoff/release-candidate.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+          overwrite: true
+
+      - name: Upload NAND rebase state
+        # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: atlantian-nand-rebase-state
+          path: handoff/rootfs-nand-state.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+          overwrite: true
+
+  validate_artifacts:
+    name: Validate release artifacts
+    needs: [plan, assemble]
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.build_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    env:
+      ATLANTIAN_PATCH_OVERRIDE: ${{ needs.plan.outputs.patch }}
+      ATLANTIAN_PRERELEASE_OVERRIDE: ${{ needs.plan.outputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fdisk xz-utils zstd
+
+      - name: Download and verify release candidate
+        env:
+          CANDIDATE_SHA256: ${{ needs.assemble.outputs.candidate_sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p handoff
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name atlantian-release-candidate --dir handoff
+          [[ $CANDIDATE_SHA256 =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$CANDIDATE_SHA256" handoff/release-candidate.tar.zst | sha256sum -c -
+          candidate_root="$RUNNER_TEMP/atlantian-release-candidate"
+          rm -rf "$candidate_root"
+          mkdir -p "$candidate_root"
+          tar -I zstd -C "$candidate_root" -xf handoff/release-candidate.tar.zst
+          [[ -d "$candidate_root/artifacts/current" && ! -L "$candidate_root/artifacts/current" ]]
+          echo "ATLANTIAN_CANDIDATE_DIR=$candidate_root/artifacts/current" >>"$GITHUB_ENV"
+
+      - name: Validate release inventory and metadata
+        run: scripts/test-release-artifacts.sh "$ATLANTIAN_CANDIDATE_DIR"
+
+  validate_sd:
+    name: Validate SD image
+    needs: [plan, assemble]
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.build_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    env:
+      ATLANTIAN_PATCH_OVERRIDE: ${{ needs.plan.outputs.patch }}
+      ATLANTIAN_PRERELEASE_OVERRIDE: ${{ needs.plan.outputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install SD validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            fdisk util-linux u-boot-tools device-tree-compiler binutils zstd
+
+      - name: Download and verify release candidate
+        env:
+          CANDIDATE_SHA256: ${{ needs.assemble.outputs.candidate_sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p handoff
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name atlantian-release-candidate --dir handoff
+          [[ $CANDIDATE_SHA256 =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$CANDIDATE_SHA256" handoff/release-candidate.tar.zst | sha256sum -c -
+          candidate_root="$RUNNER_TEMP/atlantian-release-candidate"
+          rm -rf "$candidate_root"
+          mkdir -p "$candidate_root"
+          tar -I zstd -C "$candidate_root" -xf handoff/release-candidate.tar.zst
+          [[ -d "$candidate_root/artifacts/current" && ! -L "$candidate_root/artifacts/current" ]]
+          echo "ATLANTIAN_CANDIDATE_DIR=$candidate_root/artifacts/current" >>"$GITHUB_ENV"
+
+      - name: Validate SD image layout
+        run: |
+          set -euo pipefail
+          . config/release.env
+          sudo -E ./scripts/test-image-layout.sh "$ATLANTIAN_CANDIDATE_DIR/$ATLANTIAN_IMAGE_NAME.img"
+
+  validate_nand:
+    name: Validate NAND bundle
+    needs: [plan, assemble]
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.build_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      actions: read
+      contents: read
+    env:
+      ATLANTIAN_PATCH_OVERRIDE: ${{ needs.plan.outputs.patch }}
+      ATLANTIAN_PRERELEASE_OVERRIDE: ${{ needs.plan.outputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install NAND validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            fdisk util-linux u-boot-tools device-tree-compiler binutils zstd
+
+      - name: Download and verify NAND validation inputs
+        env:
+          CANDIDATE_SHA256: ${{ needs.assemble.outputs.candidate_sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p handoff
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name atlantian-release-candidate --dir handoff
+          [[ $CANDIDATE_SHA256 =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$CANDIDATE_SHA256" handoff/release-candidate.tar.zst | sha256sum -c -
+          candidate_root="$RUNNER_TEMP/atlantian-release-candidate"
+          bundle_root="$RUNNER_TEMP/atlantian-nand-bundle"
+          rm -rf "$candidate_root" "$bundle_root"
+          mkdir -p "$candidate_root" "$bundle_root"
+          tar -I zstd -C "$candidate_root" -xf handoff/release-candidate.tar.zst
+          candidate_dir="$candidate_root/artifacts/current"
+          [[ -d "$candidate_dir" && ! -L "$candidate_dir" ]]
+          . config/release.env
+          tar -I zstd -C "$bundle_root" -xf "$candidate_dir/atlantian-nand-$ATLANTIAN_VERSION.tar.zst"
+          raw_sizes="$RUNNER_TEMP/atlantian-raw-boot-sizes.env"
+          install -m 0644 "$candidate_dir/.ci/raw-boot-sizes.env" "$raw_sizes"
+          {
+            echo "ATLANTIAN_CANDIDATE_DIR=$candidate_dir"
+            echo "ATLANTIAN_NAND_BUNDLE_DIR=$bundle_root"
+            echo "ATLANTIAN_RAW_BOOT_SIZES=$raw_sizes"
+          } >>"$GITHUB_ENV"
+
+      - name: Validate NAND bundle and embedded payload
+        run: |
+          set -euo pipefail
+          . config/release.env
+          RAW_BOOT_SIZES="$ATLANTIAN_RAW_BOOT_SIZES" scripts/test-nand-artifacts.sh "$ATLANTIAN_NAND_BUNDLE_DIR" "$ATLANTIAN_CANDIDATE_DIR/$ATLANTIAN_IMAGE_NAME.img"
+
+  sd_upgrade:
+    name: Test SD upgrade
+    needs: [plan, assemble]
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.build_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+    env:
+      ATLANTIAN_PATCH_OVERRIDE: ${{ needs.plan.outputs.patch }}
+      ATLANTIAN_PRERELEASE_OVERRIDE: ${{ needs.plan.outputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install upgrade-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            jq parted e2fsprogs qemu-user-static binfmt-support zstd
+
+      - name: Download and verify upgrade candidate
+        env:
+          CANDIDATE_SHA256: ${{ needs.assemble.outputs.candidate_sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p handoff
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name atlantian-release-candidate --dir handoff
+          [[ $CANDIDATE_SHA256 =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$CANDIDATE_SHA256" handoff/release-candidate.tar.zst | sha256sum -c -
+          candidate_root="$RUNNER_TEMP/atlantian-release-candidate"
+          rm -rf "$candidate_root"
+          mkdir -p "$candidate_root"
+          tar -I zstd -C "$candidate_root" -xf handoff/release-candidate.tar.zst
+          [[ -d "$candidate_root/artifacts/current" && ! -L "$candidate_root/artifacts/current" ]]
+          echo "ATLANTIAN_CANDIDATE_DIR=$candidate_root/artifacts/current" >>"$GITHUB_ENV"
+
+      - name: Test cross-release SD upgrade
+        run: sudo -E ./scripts/test-release-upgrade.sh "$ATLANTIAN_CANDIDATE_DIR"
+
+  nand_rebase:
+    name: Test NAND rebase
+    needs: [plan, assemble]
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.build_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+    env:
+      ATLANTIAN_PATCH_OVERRIDE: ${{ needs.plan.outputs.patch }}
+      ATLANTIAN_PRERELEASE_OVERRIDE: ${{ needs.plan.outputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install NAND rebase dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-user-static binfmt-support rsync zstd
+          sudo update-binfmts --enable qemu-arm
+
+      - name: Download and verify NAND rebase state
+        env:
+          REBASE_SHA256: ${{ needs.assemble.outputs.rebase_sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p handoff
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name atlantian-nand-rebase-state --dir handoff
+          [[ $REBASE_SHA256 =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$REBASE_SHA256" handoff/rootfs-nand-state.tar.zst | sha256sum -c -
+          rebase_root="$RUNNER_TEMP/atlantian-nand-rebase-state"
+          rm -rf "$rebase_root"
+          mkdir -p "$rebase_root"
+          sudo tar --acls --xattrs --xattrs-include='*' --numeric-owner --same-owner \
+            -I zstd -C "$rebase_root" -xf handoff/rootfs-nand-state.tar.zst
+          [[ -d "$rebase_root/rootfs-nand" && ! -L "$rebase_root/rootfs-nand" ]]
+          echo "ATLANTIAN_NAND_REBASE_ROOT=$rebase_root/rootfs-nand" >>"$GITHUB_ENV"
+
+      - name: Test NAND persistent-state rebase
+        run: sudo -E ./scripts/test-nand-rebase.sh "$ATLANTIAN_NAND_REBASE_ROOT"
+
+  seal:
+    name: Seal verified build
+    needs: [plan, assemble, validate_artifacts, validate_sd, validate_nand, sd_upgrade, nand_rebase]
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.build_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      ATLANTIAN_PATCH_OVERRIDE: ${{ needs.plan.outputs.patch }}
+      ATLANTIAN_PRERELEASE_OVERRIDE: ${{ needs.plan.outputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare release identity
+        env:
+          EXPECTED_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse --short=12 "$GITHUB_SHA")
+          export ATLANTIAN_SOURCE_REVISION=$revision
+          . config/release.env
+          test "$ATLANTIAN_VERSION" = "$EXPECTED_VERSION"
+          {
+            echo "ATLANTIAN_SOURCE_REVISION=$revision"
+            echo "ATLANTIAN_VERSION=$ATLANTIAN_VERSION"
+          } >>"$GITHUB_ENV"
+
+      - name: Install seal dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zstd
+
+      - name: Download and verify release candidate
+        env:
+          CANDIDATE_SHA256: ${{ needs.assemble.outputs.candidate_sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p handoff
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name atlantian-release-candidate --dir handoff
+          [[ $CANDIDATE_SHA256 =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$CANDIDATE_SHA256" handoff/release-candidate.tar.zst | sha256sum -c -
+          candidate_root="$RUNNER_TEMP/atlantian-release-candidate"
+          rm -rf "$candidate_root"
+          mkdir -p "$candidate_root"
+          tar -I zstd -C "$candidate_root" -xf handoff/release-candidate.tar.zst
+          [[ -d "$candidate_root/artifacts/current" && ! -L "$candidate_root/artifacts/current" ]]
+          echo "ATLANTIAN_CANDIDATE_DIR=$candidate_root/artifacts/current" >>"$GITHUB_ENV"
+
+      - name: Seal verified artifact
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$GITHUB_SHA" >"$ATLANTIAN_CANDIDATE_DIR/VERIFIED-SOURCE-SHA"
+          printf '%s\n' "$ATLANTIAN_VERSION" >"$ATLANTIAN_CANDIDATE_DIR/VERIFIED-VERSION"
+          (cd "$ATLANTIAN_CANDIDATE_DIR" && sha256sum -c SHA256SUMS)
 
       - name: Attest verified build
-        id: attestation
         # v4.2.2
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
-          subject-checksums: artifacts/current/SHA256SUMS
+          subject-checksums: ${{ runner.temp }}/atlantian-release-candidate/artifacts/current/SHA256SUMS
 
       - name: Upload verified artifact
-        id: verified_artifact
         # v7.0.1
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -330,58 +772,50 @@ jobs:
           retention-days: 90
           overwrite: true
           path: |
-            artifacts/current/*.img
-            artifacts/current/*.img.xz
-            artifacts/current/*.tar.zst
-            artifacts/current/*.deb
-            artifacts/current/*.packages.tsv
-            artifacts/current/*.snapshot.txt
-            artifacts/current/RELEASE-METADATA.json
-            artifacts/current/SHA256SUMS
-            artifacts/current/VERIFIED-SOURCE-SHA
-            artifacts/current/VERIFIED-VERSION
+            ${{ runner.temp }}/atlantian-release-candidate/artifacts/current/*.img
+            ${{ runner.temp }}/atlantian-release-candidate/artifacts/current/*.img.xz
+            ${{ runner.temp }}/atlantian-release-candidate/artifacts/current/*.tar.zst
+            ${{ runner.temp }}/atlantian-release-candidate/artifacts/current/*.deb
+            ${{ runner.temp }}/atlantian-release-candidate/artifacts/current/*.packages.tsv
+            ${{ runner.temp }}/atlantian-release-candidate/artifacts/current/*.snapshot.txt
+            ${{ runner.temp }}/atlantian-release-candidate/artifacts/current/RELEASE-METADATA.json
+            ${{ runner.temp }}/atlantian-release-candidate/artifacts/current/SHA256SUMS
+            ${{ runner.temp }}/atlantian-release-candidate/artifacts/current/VERIFIED-SOURCE-SHA
+            ${{ runner.temp }}/atlantian-release-candidate/artifacts/current/VERIFIED-VERSION
 
-      - name: Write build summary
+      - name: Write verification summary
         if: always()
         run: |
           {
             echo '## AtlANTian verified build'
             echo
-            echo '| Stage | Outcome |'
+            echo '| Gate | Result |'
             echo '|---|---|'
-            echo '| Source contracts | ${{ steps.preflight.outcome }} |'
-            echo '| Release inputs | ${{ steps.inputs.outcome }} |'
-            echo '| Dependencies | ${{ steps.dependencies.outcome }} |'
-            echo '| Debian package cache | ${{ steps.debootstrap_cache.outputs.cache-hit }} |'
-            echo '| Linux source cache | ${{ steps.kernel_cache.outputs.cache-hit }} |'
-            echo '| U-Boot source cache | ${{ steps.uboot_cache.outputs.cache-hit }} |'
-            echo '| Parallel rootfs/kernel build | ${{ steps.core.outcome }} |'
-            echo '| Release artifacts | ${{ steps.artifacts.outcome }} |'
-            echo '| Artifact validation | ${{ steps.artifact_check.outcome }} |'
-            echo '| SD image layout | ${{ steps.image_check.outcome }} |'
-            echo '| NAND bundle | ${{ steps.nand_check.outcome }} |'
-            echo '| SD upgrade | ${{ steps.sd_upgrade.outcome }} |'
-            echo '| NAND rebase | ${{ steps.nand_rebase.outcome }} |'
-            echo '| Source tree integrity | ${{ steps.source_integrity.outcome }} |'
-            echo '| Provenance attestation | ${{ steps.attestation.outcome }} |'
-            echo '| Verified artifact upload | ${{ steps.verified_artifact.outcome }} |'
+            echo '| Release artifacts | ${{ needs.validate_artifacts.result }} |'
+            echo '| SD image | ${{ needs.validate_sd.result }} |'
+            echo '| NAND bundle | ${{ needs.validate_nand.result }} |'
+            echo '| SD upgrade | ${{ needs.sd_upgrade.result }} |'
+            echo '| NAND rebase | ${{ needs.nand_rebase.result }} |'
           } >>"$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Publish release
-    needs: [plan, build]
+    needs: [plan, seal]
     if: >-
       always() &&
+      github.ref == 'refs/heads/main' &&
       needs.plan.result == 'success' &&
       needs.plan.outputs.publish_requested == 'true' &&
-      (needs.build.result == 'success' || needs.build.result == 'skipped')
+      (
+        (needs.plan.outputs.build_required == 'true' && needs.seal.result == 'success') ||
+        (needs.plan.outputs.build_required != 'true' && needs.seal.result == 'skipped')
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       actions: read
       contents: write
     env:
-      ATLANTIAN_GITHUB_REPO: ${{ github.repository }}
       ATLANTIAN_PATCH_OVERRIDE: ${{ needs.plan.outputs.patch }}
       ATLANTIAN_PRERELEASE_OVERRIDE: ${{ needs.plan.outputs.prerelease }}
     steps:
@@ -550,7 +984,7 @@ jobs:
             echo '| Item | Value |'
             echo '|---|---|'
             echo '| Version | ${{ needs.plan.outputs.version }} |'
-            echo '| Build job | ${{ needs.build.result }} |'
+            echo '| Verification job | ${{ needs.seal.result }} |'
             echo '| Reused workflow run | ${{ needs.plan.outputs.reuse_run_id || 'none' }} |'
             echo '| Artifact source run | ${{ steps.artifact_source.outputs.run_id || 'none' }} |'
             echo '| Publication eligible | ${{ steps.publication.outputs.publish }} |'

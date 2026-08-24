@@ -4,9 +4,10 @@ This document owns repository build, CI, upstream refresh and publication behavi
 
 ## Build graph
 
-`scripts/build-incremental.sh` is the production orchestrator. Leaf builders validate prerequisites and do not recursively rebuild earlier stages.
+`scripts/build-incremental.sh` remains the production orchestrator for a complete local build. Leaf builders validate prerequisites and do not recursively rebuild earlier stages.
 
 ```text
+local build:
 rootfs                                      kernel
   ├─ build common Debian rootfs once          ├─ build pinned Linux + board DTB
   ├─ extract static BusyBox for NAND initramfs│
@@ -29,7 +30,34 @@ rootfs                                      kernel
   └─ generate release metadata/checksums
 ```
 
-The rootfs and kernel branches are intentionally independent. Production release CI starts them concurrently, waits for both return codes, then joins the kernel modules before artifact assembly. `build-incremental.sh all` uses the same parallel core build locally, and the artifact stage reasserts the module join before packaging.
+The rootfs and kernel branches are intentionally independent. `build-incremental.sh all` starts both concurrently on the local host and joins staged kernel modules before artifact assembly.
+
+Production GitHub Actions exposes the same boundary as a real job DAG instead of hiding both builders inside one runner:
+
+```text
+Plan release
+     ↓
+Validate source
+   ↙     ↘
+Build     Build Linux
+rootfs    kernel
+   ↘     ↙
+Assemble release
+  ├───────────────┬───────────────┬───────────────┬───────────────┐
+  ↓               ↓               ↓               ↓               ↓
+Validate       Validate         Validate        Test SD         Test NAND
+artifacts      SD image         NAND bundle     upgrade         rebase
+  └───────────────┴───────────────┴───────────────┴───────────────┘
+                                  ↓
+                         Seal verified build
+                                  ↓
+                         Publish release
+                          (when requested)
+```
+
+`Build rootfs` and `Build Linux kernel` run on separate `ubuntu-24.04` runners and therefore have independent CPU, memory and live stdout. Their filesystem state crosses the runner boundary only through short-lived compressed handoff artifacts. Rootfs handoffs are tarred as root with numeric owners, ACLs and xattrs so Unix metadata survives the GitHub artifact transport. Every handoff is SHA-256 hashed by its producing job; consumers receive that digest through job outputs and verify the downloaded archive before extraction. Downloaded archives are extracted only below the runner temporary directory, never on top of the checked-out source tree; trusted validation scripts receive the isolated data path explicitly. The release workflow deliberately does not use cross-run `actions/cache` state, so manually dispatched build code cannot become a cache-poisoning path into a later privileged release. Assembly restores both authenticated handoffs from isolated scratch roots, reasserts the module join, and emits the release candidate.
+
+Release validation is deliberately fanned out after assembly: package/inventory validation, SD image validation, NAND validation, cross-release SD upgrade and NAND rebase are independent jobs. Only when every gate succeeds does `Seal verified build` add the source/version seals, verify checksums, issue build provenance and upload the long-lived verified Actions artifact. Publication depends on that seal when a fresh build was required.
 
 The common Debian userspace is installed once. NAND does not run a second `debootstrap` or package transaction merely to build early userspace.
 
@@ -48,6 +76,7 @@ Linux and U-Boot source-preparation helpers verify the configured full SHA. A di
 `CI / Validate` is the required check for protected `main`. It validates:
 
 - workflow structure and immutable Action pins;
+- the explicit release DAG, authenticated handoff boundaries and no-cache release policy;
 - repository-local Markdown links;
 - shell syntax/shellcheck;
 - build/update/NAND safety contracts;
@@ -60,10 +89,10 @@ The fast contracts intentionally check externally meaningful boundaries rather t
 
 ## Build & Release
 
-`.github/workflows/build-release.yml` has one manual input: `publish`.
+`.github/workflows/build-release.yml` has one manual input: `publish`. The release DAG is explicitly restricted to protected `main`; manually selecting another ref does not enter the build/release trust domain. Feature branches and pull requests are validated by `CI / Validate`.
 
-- `publish=false`: build/verify only.
-- `publish=true`: build or reuse a matching verified artifact, then publish.
+- `publish=false` on `main`: build/verify only.
+- `publish=true` on `main`: build or reuse a matching verified artifact, then publish.
 - qualifying pushes to `main`: release planner applies the configured five-input batching policy.
 
 The workflow refuses to publish a build if `main` moved after the source revision was selected.
@@ -71,15 +100,16 @@ The workflow refuses to publish a build if `main` moved after the source revisio
 A full build validates:
 
 1. source contracts and frozen inputs;
-2. the parallel common SD/NAND userspace and Linux-kernel build, followed by the staged-module join;
-3. SD/recovery and NAND U-Boot payloads;
-4. release package inventory;
-5. SD image layout and A/B FIT structure;
-6. NAND bundle geometry and exact raw read lengths;
-7. upgrade from the newest eligible published SD release using its private verified Actions artifact;
-8. NAND persistent-state rebase;
-9. source-tree cleanliness;
-10. SHA-256 manifests and GitHub build provenance.
+2. common SD/NAND userspace and Linux kernel in parallel on separate runners;
+3. metadata-preserving handoff and staged-module join;
+4. SD/recovery and NAND U-Boot payloads;
+5. release package inventory;
+6. SD image layout and A/B FIT structure;
+7. NAND bundle geometry and exact raw read lengths;
+8. upgrade from the newest eligible published SD release using its private verified Actions artifact;
+9. NAND persistent-state rebase;
+10. source-tree cleanliness;
+11. SHA-256 manifests and GitHub build provenance.
 
 The sealed Actions artifact records `VERIFIED-SOURCE-SHA` and `VERIFIED-VERSION`. Publication may reuse only a non-expired artifact for the exact source SHA.
 

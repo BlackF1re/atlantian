@@ -36,10 +36,27 @@ grep -Fq 'KERNEL_ROOTFS=${KERNEL_ROOTFS:-$ROOT/out/kernel-rootfs}' scripts/build
 grep -Fq 'env ROOTFS="$KERNEL_ROOTFS" "$ROOT/scripts/build-kernel.sh"' scripts/build-incremental.sh || fail 'kernel build still targets runtime rootfs directly'
 grep -Fq 'join_kernel()' scripts/build-incremental.sh || fail 'kernel/rootfs join stage is missing'
 grep -Fq 'join_kernel' scripts/build-incremental.sh || fail 'artifact graph does not join staged kernel modules'
-grep -Fq 'rootfs & rootfs_pid=$!' scripts/build-incremental.sh || fail 'full build does not start rootfs asynchronously'
-grep -Fq 'kernel & kernel_pid=$!' scripts/build-incremental.sh || fail 'full build does not start kernel asynchronously'
-grep -Fq './scripts/build-incremental.sh rootfs >out/build-logs/rootfs.log 2>&1 &' .github/workflows/build-release.yml || fail 'release workflow does not run rootfs in parallel'
-grep -Fq './scripts/build-incremental.sh kernel >out/build-logs/kernel.log 2>&1 &' .github/workflows/build-release.yml || fail 'release workflow does not run kernel in parallel'
+grep -Fq 'rootfs & rootfs_pid=$!' scripts/build-incremental.sh || fail 'local full build does not start rootfs asynchronously'
+grep -Fq 'kernel & kernel_pid=$!' scripts/build-incremental.sh || fail 'local full build does not start kernel asynchronously'
+
+# Production CI must expose rootfs and kernel as independent jobs with live logs.
+grep -Eq '^  rootfs:$' .github/workflows/build-release.yml || fail 'release workflow has no dedicated rootfs job'
+grep -Eq '^  kernel:$' .github/workflows/build-release.yml || fail 'release workflow has no dedicated kernel job'
+grep -Eq '^  assemble:$' .github/workflows/build-release.yml || fail 'release workflow has no explicit assembly job'
+grep -Fq 'run: sudo -E ./scripts/build-incremental.sh rootfs' .github/workflows/build-release.yml || fail 'rootfs job does not stream the real build command'
+grep -Fq 'run: sudo -E ./scripts/build-incremental.sh kernel' .github/workflows/build-release.yml || fail 'kernel job does not stream the real build command'
+! grep -Fq 'out/build-logs/rootfs.log' .github/workflows/build-release.yml || fail 'release workflow still buffers rootfs stdout'
+! grep -Fq 'out/build-logs/kernel.log' .github/workflows/build-release.yml || fail 'release workflow still buffers kernel stdout'
+! grep -Fq 'actions/cache@' .github/workflows/build-release.yml || fail 'release workflow exposes shared cache state to manual release builds'
+[[ $(grep -Fc "github.ref == 'refs/heads/main'" .github/workflows/build-release.yml) -ge 12 ]] || fail 'release DAG is not explicitly confined to protected main'
+for digest in ROOTFS_SHA256 KERNEL_SHA256 CANDIDATE_SHA256 REBASE_SHA256; do grep -Fq "$digest" .github/workflows/build-release.yml || fail "release handoff is missing digest verification: $digest"; done
+! grep -Fq 'tar -I zstd -xf handoff/release-candidate.tar.zst' .github/workflows/build-release.yml || fail 'release candidate extraction can overwrite the checkout workspace'
+grep -Fq -- '-C "$candidate_root" -xf handoff/release-candidate.tar.zst' .github/workflows/build-release.yml || fail 'release candidate is not isolated under RUNNER_TEMP'
+grep -Fq 'ATLANTIAN_CANDIDATE_DIR=$candidate_root/artifacts/current' .github/workflows/build-release.yml || fail 'isolated candidate root is not exported to validation jobs'
+
+# The package builder must not expand a nounset local while declaring the
+# variables it depends on; with set -u this assignment must stay ordered.
+! grep -Eq 'local[[:space:]]+package=.*source=.*\$package' scripts/build-atlantian-debs.sh || fail 'maintainer-script path reintroduces nounset local expansion'
 
 # Leaf builders fail on missing prerequisites; they do not recursively invoke an
 # upstream stage. The orchestrator owns ordering.
@@ -63,8 +80,8 @@ grep -Fq 'pending bundle/release identity mismatch' scripts/atlantian-nand-insta
 grep -Fq 'prepared payload is' scripts/atlantian-nand-upgrade.sh || fail 'upgrade lost prepared bundle identity verification'
 
 # Integration gates remain independent production stages.
-grep -Fq 'scripts/test-release-upgrade.sh artifacts/current' .github/workflows/build-release.yml || fail 'SD cross-release gate is missing'
-grep -Fq 'scripts/test-nand-rebase.sh out/rootfs-nand' .github/workflows/build-release.yml || fail 'NAND rebase gate is missing'
+grep -Fq 'scripts/test-release-upgrade.sh "$ATLANTIAN_CANDIDATE_DIR"' .github/workflows/build-release.yml || fail 'SD cross-release gate is missing'
+grep -Fq 'scripts/test-nand-rebase.sh "$ATLANTIAN_NAND_REBASE_ROOT"' .github/workflows/build-release.yml || fail 'NAND rebase gate is missing'
 [[ ! -e scripts/test-build.sh ]] || fail 'legacy aggregate test survived'
 [[ ! -e scripts/test-repository-portability.sh ]] || fail 'repository migration test survived'
 
