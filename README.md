@@ -24,7 +24,7 @@ Default access policy, first login and network discovery are documented there. U
 
 ## Storage modes
 
-**SD** is the normal development and recovery mode. The image contains a FAT boot partition and an ext4 root filesystem. The root partition grows to the card on first boot. Online kernel updates write only the inactive FIT slot and then switch a small slot marker; early `BOOT.bin` and `u-boot.img` are not rewritten by package updates.
+**SD** is the normal development and recovery mode. The image contains a FAT boot partition and an ext4 root filesystem. The first-boot grow service expands the root partition to the card; when the partition table must be extended, the board reboots once automatically and completes the filesystem resize on the following boot. Online kernel updates write only the inactive FIT slot and then switch a small slot marker; early `BOOT.bin` and `u-boot.img` are not rewritten by package updates.
 
 **NAND** uses the board's 256 MiB raw NAND as a compact installed system. The first 16 MiB are reserved for raw boot payloads. The remaining NAND is UBI with a static Zstd SquashFS lower and an LZO UBIFS writable OverlayFS upper. Installation and upgrade use the SD image as recovery media. See [NAND architecture](docs/NAND.md) and [installation](docs/INSTALLATION.md).
 

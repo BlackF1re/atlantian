@@ -7,27 +7,29 @@ This document owns repository build, CI, upstream refresh and publication behavi
 `scripts/build-incremental.sh` is the production orchestrator. Leaf builders validate prerequisites and do not recursively rebuild earlier stages.
 
 ```text
-rootfs
-  ├─ build common Debian rootfs once
-  ├─ extract static BusyBox for early NAND initramfs
-  ├─ purge build-only BusyBox from runtime rootfs
-  ├─ clone common runtime rootfs for NAND
+rootfs                                      kernel
+  ├─ build common Debian rootfs once          ├─ build pinned Linux + board DTB
+  ├─ extract static BusyBox for NAND initramfs│
+  ├─ purge build-only BusyBox                 └─ stage stripped modules in
+  ├─ clone common runtime rootfs for NAND        out/kernel-rootfs
   └─ apply SD/NAND runtime storage policy
-       ↓
-kernel
-       ↓
-bootloader
-  ├─ shared pinned U-Boot source
-  ├─ SD/recovery U-Boot
-  └─ NAND SPL/U-Boot using exact payload lengths
-       ↓
-artifacts
-  ├─ three AtlANTian Debian packages
-  ├─ NAND bundle
-  ├─ unified SD/recovery image
-  ├─ compressed public image
-  └─ release metadata/checksums
+                 \                         /
+                  \── wait for both ──────/
+                            ↓
+                  join staged modules into
+                    SD and NAND rootfs
+                            ↓
+                        artifacts
+  ├─ stamp release identity and build NAND initramfs
+  ├─ build SD/recovery U-Boot and NAND SPL/U-Boot
+  ├─ build three AtlANTian Debian packages
+  ├─ build and embed the NAND bundle
+  ├─ create the unified SD/recovery image
+  ├─ create the compressed public image
+  └─ generate release metadata/checksums
 ```
+
+The rootfs and kernel branches are intentionally independent. Production release CI starts them concurrently, waits for both return codes, then joins the kernel modules before artifact assembly. `build-incremental.sh all` uses the same parallel core build locally, and the artifact stage reasserts the module join before packaging.
 
 The common Debian userspace is installed once. NAND does not run a second `debootstrap` or package transaction merely to build early userspace.
 
@@ -69,8 +71,8 @@ The workflow refuses to publish a build if `main` moved after the source revisio
 A full build validates:
 
 1. source contracts and frozen inputs;
-2. common SD/NAND userspace build;
-3. Linux kernel and both U-Boot flavors;
+2. the parallel common SD/NAND userspace and Linux-kernel build, followed by the staged-module join;
+3. SD/recovery and NAND U-Boot payloads;
 4. release package inventory;
 5. SD image layout and A/B FIT structure;
 6. NAND bundle geometry and exact raw read lengths;

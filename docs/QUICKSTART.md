@@ -21,9 +21,9 @@ UART console is `115200 8N1` on `ttyPS0`. Normal boot loads `boot.scr`, selects 
 
 ## 3. First boot
 
-The SD root filesystem grows to the available partition/card capacity through `atlantian-grow-rootfs.service`. Ethernet is configured by `systemd-networkd` for DHCP with IPv6 RA support.
+`atlantian-grow-rootfs.service` expands partition 2 and its ext4 filesystem to the available card capacity. If the partition table must be extended, AtlANTian automatically reboots once and completes `resize2fs` on the following boot; this reboot is part of normal first-boot provisioning.
 
-To discover the assigned address, check your DHCP server/router or use the UART console:
+Ethernet is configured by `systemd-networkd` for DHCP with IPv6 RA support. To discover the assigned address, check your DHCP server/router or use the UART console:
 
 ```sh
 ip address show
@@ -32,7 +32,19 @@ ip route
 
 ## 4. Login
 
-SSH is enabled. Use the credentials/access policy shipped by the current image. On interactive login, AtlANTian prints release, kernel, storage and update information.
+SSH is enabled. A fresh published image deliberately enables `root` with an empty password for first provisioning:
+
+```sh
+ssh root@<board-ip>
+```
+
+If the SSH client prompts for a password, submit an empty password by pressing Enter. Set a real root password or install an SSH public key before exposing the board to an untrusted network:
+
+```sh
+passwd
+```
+
+SSH host keys are generated uniquely on the installed system; the image does not ship a shared host private key.
 
 After login, verify the running identity:
 
@@ -44,16 +56,17 @@ uname -a
 
 ## 5. Check hardware
 
-A compact first check:
+A compact first check of interfaces enabled by the base system:
 
 ```sh
 ip link
-lsusb
+ls /sys/class/leds
 ls /sys/class/fpga_manager
+sensors
 systemctl --failed
 ```
 
-For the full board checklist, use [HARDWARE-VALIDATION.md](HARDWARE-VALIDATION.md).
+For the full board checklist, use [HARDWARE-VALIDATION.md](HARDWARE-VALIDATION.md). The base hardware boundaries, including interfaces that are intentionally unavailable or profile-only, are in [hardware-support-matrix.md](hardware-support-matrix.md).
 
 ## Next steps
 
