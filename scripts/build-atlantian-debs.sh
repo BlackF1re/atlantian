@@ -217,6 +217,14 @@ write_fit() {
   sync
 }
 
+boot_script_compatible() {
+  # U-Boot legacy image bytes 4..11 are header CRC + wall-clock timestamp.
+  # Ignore only those non-semantic fields; magic, remaining header fields and
+  # the complete script payload must stay byte-identical within one boot ABI.
+  cmp -s -n 4 "$source/boot.scr" "$target/boot.scr" &&
+    cmp -s -i 12 "$source/boot.scr" "$target/boot.scr"
+}
+
 [ -s "$target/atlantian-A.itb" ] && [ -s "$target/atlantian-B.itb" ] || {
   echo 'online SD kernel updates require a transactional A/B AtlANTian image; reflash with a current image' >&2
   exit 78
@@ -227,7 +235,7 @@ installed_abi=$(cat "$target/atlantian-boot-abi" 2>/dev/null || true)
   echo "online boot-loader ABI change is unsupported ($installed_abi -> $abi); reflash the SD image" >&2
   exit 78
 }
-cmp -s "$source/boot.scr" "$target/boot.scr" || {
+boot_script_compatible || {
   echo 'online boot.scr replacement is intentionally blocked; reflash is required for a boot-loader ABI change' >&2
   exit 78
 }
