@@ -30,6 +30,17 @@ debootstrap_count=$(grep -h '^debootstrap ' scripts/build-rootfs.sh scripts/buil
 grep -Fq 'extract-nand-busybox.sh' scripts/build-incremental.sh || fail 'build-only BusyBox extraction is not in the rootfs graph'
 grep -Fq 'rsync -aHAX --numeric-ids' scripts/build-nand-rootfs.sh || fail 'NAND rootfs is not derived from common rootfs'
 
+# Kernel compilation must be independent of Debian userspace. Modules are built
+# into a private staging root, then joined into both runtime rootfs editions.
+grep -Fq 'KERNEL_ROOTFS=${KERNEL_ROOTFS:-$ROOT/out/kernel-rootfs}' scripts/build-incremental.sh || fail 'kernel module staging root is missing'
+grep -Fq 'env ROOTFS="$KERNEL_ROOTFS" "$ROOT/scripts/build-kernel.sh"' scripts/build-incremental.sh || fail 'kernel build still targets runtime rootfs directly'
+grep -Fq 'join_kernel()' scripts/build-incremental.sh || fail 'kernel/rootfs join stage is missing'
+grep -Fq 'join_kernel' scripts/build-incremental.sh || fail 'artifact graph does not join staged kernel modules'
+grep -Fq 'rootfs & rootfs_pid=$!' scripts/build-incremental.sh || fail 'full build does not start rootfs asynchronously'
+grep -Fq 'kernel & kernel_pid=$!' scripts/build-incremental.sh || fail 'full build does not start kernel asynchronously'
+grep -Fq './scripts/build-incremental.sh rootfs >out/build-logs/rootfs.log 2>&1 &' .github/workflows/build-release.yml || fail 'release workflow does not run rootfs in parallel'
+grep -Fq './scripts/build-incremental.sh kernel >out/build-logs/kernel.log 2>&1 &' .github/workflows/build-release.yml || fail 'release workflow does not run kernel in parallel'
+
 # Leaf builders fail on missing prerequisites; they do not recursively invoke an
 # upstream stage. The orchestrator owns ordering.
 ! grep -Fq 'build-rootfs.sh' scripts/build-nand-rootfs.sh || fail 'NAND rootfs builder recursively invokes rootfs build'
