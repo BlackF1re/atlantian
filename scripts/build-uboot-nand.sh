@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Build the NAND first-stage/main U-Boot flavor from the same pinned upstream
-# source as the production SD bootloader.
+# Build the NAND first-stage/main U-Boot flavor from the shared pinned source.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -21,10 +20,6 @@ fail() { printf 'NAND U-Boot build: %s\n' "$*" >&2; exit 1; }
 command -v "${CROSS_COMPILE}gcc" >/dev/null || fail "missing ${CROSS_COMPILE}gcc"
 for f in "$ZIMAGE" "$DTB" "$INITRAMFS"; do [[ -s $f ]] || fail "missing NAND boot-size input: $f"; done
 
-# uImage/uInitrd each add one 64-byte image header. NAND reads are logical and
-# skip bad eraseblocks, so reading an entire reserved slot could continue into
-# the next physical slot. Compile the exact payload lengths into this release's
-# immutable bootcmd; slot sizes remain only physical/bad-block headroom.
 kernel_size=$(($(stat -c %s "$ZIMAGE") + 64))
 initrd_size=$(($(stat -c %s "$INITRAMFS") + 64))
 dtb_size=$(stat -c %s "$DTB")
@@ -37,30 +32,10 @@ printf -v dtb_hex '0x%X' "$dtb_size"
 printf -v nand_block_hex '0x%X' "$ATLANTIAN_NAND_ERASE_BYTES"
 NAND_BOOTCOMMAND="nand info; setenv bootargs console=ttyPS0,115200n8 mtdparts=pl35x-nand-controller:16m(atlantian-boot),-(atlantian-ubi); if nand read 0x02000000 0x00300000 $kernel_hex && nand read 0x08000000 0x00C00000 $initrd_hex && nand read 0x01F00000 0x00F00000 $dtb_hex; then bootm 0x02000000 0x08000000 0x01F00000; fi; echo AtlANTian NAND boot failed"
 
-mkdir -p "$ROOT/out"
-if [[ ! -d $SRC/.git ]]; then
-  rm -rf "$SRC"; git init -q "$SRC"; git -C "$SRC" remote add origin "$ATLANTIAN_UBOOT_REPOSITORY"
-else
-  git -C "$SRC" remote set-url origin "$ATLANTIAN_UBOOT_REPOSITORY"
-fi
-current=$(git -C "$SRC" rev-parse HEAD 2>/dev/null || true)
-if [[ $current == "$ATLANTIAN_UBOOT_COMMIT" ]]; then
-  git -C "$SRC" reset --quiet --hard "$ATLANTIAN_UBOOT_COMMIT"
-else
-  git -C "$SRC" fetch --quiet --depth 1 origin "$ATLANTIAN_UBOOT_COMMIT"
-  git -C "$SRC" checkout --quiet --detach --force FETCH_HEAD
-fi
-git -C "$SRC" clean -ffdqx
-test "$(git -C "$SRC" rev-parse HEAD)" = "$ATLANTIAN_UBOOT_COMMIT"
+UBOOT_SRC="$SRC" "$ROOT/scripts/prepare-uboot-source.sh"
+# xPL receives the dedicated fixed-geometry reader; runtime keeps normal DM NAND.
+"$ROOT/scripts/patch-uboot-nand.sh" "$SRC" --spl-loader
 
-# Runtime U-Boot keeps the normal DM NAND driver. xPL receives a dedicated,
-# fixed-geometry Zynq reader which does no nand_scan_ident/BBT writes and uses
-# bounded R/B polling instead of the timer-dependent generic wait helper.
-bash "$ROOT/scripts/patch-uboot-nand.sh" "$SRC" --spl-loader
-
-# Fixed raw offsets and the stock NAND geometry are compile-time SPL contracts.
-# Derive them from the same repository policy used by the installer rather than
-# duplicating page/block/slot sizes inside the C reader.
 total_bytes=$((ATLANTIAN_NAND_TOTAL_MIB * 1024 * 1024))
 python3 - "$SRC/include/configs/bitmain_antminer_s9.h" \
   "$ATLANTIAN_NAND_PAGE_BYTES" "$ATLANTIAN_NAND_OOB_BYTES" \
@@ -100,8 +75,6 @@ PY
 
 rm -rf "$BUILD"; mkdir -p "$BUILD"
 make -C "$SRC" O="$BUILD" ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" "$ATLANTIAN_UBOOT_DEFCONFIG"
-
-# SPL_NAND_SUPPORT exposes SYS_NAND_BLOCK_SIZE as a mandatory hex Kconfig value.
 "$SRC/scripts/config" --file "$BUILD/.config" \
   --enable SPL \
   --enable SPL_NAND_SUPPORT \
@@ -128,9 +101,7 @@ if ! timeout 60s make -C "$SRC" O="$BUILD" ARCH=arm CROSS_COMPILE="$CROSS_COMPIL
   tail -n 120 "$kconfig_log" >&2 || true
   fail 'olddefconfig did not complete non-interactively within 60 seconds'
 fi
-
-grep -Fqx "CONFIG_SYS_NAND_BLOCK_SIZE=$nand_block_hex" "$BUILD/.config" || \
-  fail "generated SYS_NAND_BLOCK_SIZE does not match NAND erase geometry ($nand_block_hex)"
+grep -Fqx "CONFIG_SYS_NAND_BLOCK_SIZE=$nand_block_hex" "$BUILD/.config" || fail "generated SYS_NAND_BLOCK_SIZE does not match NAND erase geometry ($nand_block_hex)"
 if grep -Eq '^CONFIG_[A-Z0-9_]+=$' "$BUILD/.config"; then
   grep -E '^CONFIG_[A-Z0-9_]+=$' "$BUILD/.config" >&2 || true
   fail 'generated U-Boot .config contains an empty Kconfig value'
@@ -142,10 +113,8 @@ if ! timeout 60s make -C "$SRC" O="$BUILD" ARCH=arm CROSS_COMPILE="$CROSS_COMPIL
   fail 'prepare did not complete non-interactively within 60 seconds'
 fi
 for xpl_contract in 'CONFIG_XPL_BUILD=y' 'CONFIG_SPL_BUILD=y'; do
-  grep -Fqx "$xpl_contract" "$BUILD/spl/include/autoconf.mk" || \
-    fail "missing generated SPL configuration contract: $xpl_contract"
+  grep -Fqx "$xpl_contract" "$BUILD/spl/include/autoconf.mk" || fail "missing generated SPL configuration contract: $xpl_contract"
 done
-
 for contract in \
   'CONFIG_ARCH_ZYNQ=y' 'CONFIG_SPL=y' 'CONFIG_SPL_NAND_SUPPORT=y' \
   'CONFIG_SPL_MTD=y' 'CONFIG_SPL_NAND_DRIVERS=y' 'CONFIG_SPL_NAND_BASE=y' \
@@ -160,26 +129,17 @@ done
 make -C "$SRC" O="$BUILD" ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" -j"$JOBS"
 test -s "$BUILD/spl/boot.bin" || fail 'NAND-capable SPL boot.bin was not produced'
 test -s "$BUILD/u-boot.img" || fail 'NAND u-boot.img was not produced'
-
-# Prove the generated SPL contains the dedicated reader and that the runtime
-# DM-probe diagnostic is not linked into xPL.
-spl_strings="$BUILD/spl/boot.bin.strings"
-strings -a "$BUILD/spl/boot.bin" >"$spl_strings"
+spl_strings="$BUILD/spl/boot.bin.strings"; strings -a "$BUILD/spl/boot.bin" >"$spl_strings"
 for spl_diag in \
   'AtlANTian SPL NAND: fixed-geometry init' \
   'AtlANTian SPL NAND: Micron 2c:da on-die ECC ready' \
   'AtlANTian SPL NAND: ready timeout' \
   'AtlANTian SPL NAND: factory-bad block' \
   'AtlANTian SPL NAND: U-Boot slot exhausted by bad blocks'; do
-  grep -Fq "$spl_diag" "$spl_strings" || \
-    fail "generated SPL is missing dedicated NAND reader contract: $spl_diag"
+  grep -Fq "$spl_diag" "$spl_strings" || fail "generated SPL is missing dedicated NAND reader contract: $spl_diag"
 done
-if grep -Fq 'AtlANTian SPL NAND: Zynq NAND probe failed' "$spl_strings"; then
-  fail 'generated SPL unexpectedly contains the DM NAND probe path'
-fi
-
-spl_size=$(stat -c %s "$BUILD/spl/boot.bin")
-((spl_size <= ATLANTIAN_NAND_ERASE_BYTES)) || fail "BOOT.bin is $spl_size bytes and no longer fits one NAND eraseblock"
+! grep -Fq 'AtlANTian SPL NAND: Zynq NAND probe failed' "$spl_strings" || fail 'generated SPL unexpectedly contains the DM NAND probe path'
+spl_size=$(stat -c %s "$BUILD/spl/boot.bin"); ((spl_size <= ATLANTIAN_NAND_ERASE_BYTES)) || fail "BOOT.bin is $spl_size bytes and no longer fits one NAND eraseblock"
 strings -a "$BUILD/u-boot.img" >"$BUILD/u-boot.strings"
 grep -Fqx "bootcmd=$NAND_BOOTCOMMAND" "$BUILD/u-boot.strings" || fail 'NAND bootcmd is absent from u-boot.img'
 

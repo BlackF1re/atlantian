@@ -8,21 +8,15 @@ on:
         required: true
         type: boolean
         default: false
-      origin:
-        description: Internal dispatch origin
-        required: false
-        type: string
-        default: manual
   push:
     branches: [main]
     paths:
-      # Only release-input changes enter the release planner. The planner batches
-      # them, so a qualifying push does not necessarily start a full image build.
       - 'board/**'
       - 'config/**'
       - 'debian-*.sha256'
       - 'fpga/**'
       - 'kernel-overlay/**'
+      - 'packaging/**'
       - 'scripts/**'
       - '!scripts/generate-release-notes.sh'
       - 'systemd/**'
@@ -30,9 +24,6 @@ on:
 permissions:
   contents: read
 
-# Build/test and publication are separate jobs. A successful build stores a
-# SHA-specific verified artifact before publication starts, so a publication
-# failure cannot discard expensive caches or force a rebuild on retry.
 concurrency:
   group: atlantian-release-${{ github.ref }}
   cancel-in-progress: true
@@ -69,17 +60,16 @@ jobs:
         shell: bash
         run: bash scripts/resolve-release-version.sh "$GITHUB_SHA"
 
-      - name: Find reusable verified build
+      - name: Plan verified build and publication
         id: plan
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           AUTOMATIC_PUSH: ${{ github.event_name == 'push' }}
-          MANUAL_PUBLICATION: ${{ github.event_name == 'workflow_dispatch' && (inputs.publish || inputs.origin == 'debian-watch') }}
+          MANUAL_PUBLICATION: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
         run: |
           set -euo pipefail
           . config/release.env
-
           artifact_name="atlantian-verified-${GITHUB_SHA}"
           build_required=true
           publish_requested=false
@@ -89,7 +79,7 @@ jobs:
           if [[ "$MANUAL_PUBLICATION" == true ]]; then
             publish_requested=true
           elif [[ "$AUTOMATIC_PUSH" == true ]]; then
-            release_input_commits=$(bash scripts/release-batch-state.sh "$GITHUB_SHA")
+            release_input_commits=$(scripts/release-batch-state.sh "$GITHUB_SHA")
             if (( release_input_commits >= 5 )); then
               publish_requested=true
             else
@@ -101,19 +91,13 @@ jobs:
           if [[ "$publish_requested" == true ]]; then
             release_tag="v$ATLANTIAN_VERSION"
             tag_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$release_tag" --jq .sha 2>/dev/null) || tag_commit=""
-
-            if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-              && [[ "$tag_commit" = "$GITHUB_SHA" ]]; then
+            if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [[ "$tag_commit" = "$GITHUB_SHA" ]]; then
               already_published=true
               build_required=false
-              echo "Release $release_tag already exists for this exact source; no build or upload is necessary."
+              echo "Release $release_tag already exists for this exact source."
             else
-              reuse_run_id=$(
-                gh api --method GET "repos/$GITHUB_REPOSITORY/actions/artifacts" \
-                  -f name="$artifact_name" \
-                  -f per_page=100 \
-                  --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_sha == env.GITHUB_SHA)] | sort_by(.created_at) | last | .workflow_run.id // empty'
-              )
+              reuse_run_id=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/artifacts" -f name="$artifact_name" -f per_page=100 \
+                --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_sha == env.GITHUB_SHA)] | sort_by(.created_at) | last | .workflow_run.id // empty')
               if [[ -n "$reuse_run_id" ]]; then
                 build_required=false
                 echo "Reusing verified artifact $artifact_name from workflow run $reuse_run_id."
@@ -129,8 +113,7 @@ jobs:
             echo "already_published=$already_published"
             echo "reuse_run_id=$reuse_run_id"
             echo "artifact_name=$artifact_name"
-          } >> "$GITHUB_OUTPUT"
-
+          } >>"$GITHUB_OUTPUT"
           {
             echo '## AtlANTian release plan'
             echo
@@ -142,7 +125,7 @@ jobs:
             echo "| Build required | $build_required |"
             echo "| Already published | $already_published |"
             echo "| Reusable workflow run | ${reuse_run_id:-none} |"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } >>"$GITHUB_STEP_SUMMARY"
 
   build:
     name: Build and verify
@@ -188,27 +171,27 @@ jobs:
             echo "ATLANTIAN_RELEASE_ID=$ATLANTIAN_RELEASE_ID"
             echo "ATLANTIAN_IMAGE_NAME=$ATLANTIAN_IMAGE_NAME"
             echo "RELEASE_TAG=v$ATLANTIAN_VERSION"
-          } >> "$GITHUB_ENV"
+          } >>"$GITHUB_ENV"
           {
             echo "debian_codename=$DEBIAN_CODENAME"
             echo "kernel_commit=$ATLANTIAN_KERNEL_COMMIT"
             echo "kernel_localversion=$ATLANTIAN_KERNEL_LOCALVERSION"
             echo "uboot_commit=$ATLANTIAN_UBOOT_COMMIT"
-          } >> "$GITHUB_OUTPUT"
+          } >>"$GITHUB_OUTPUT"
 
       - name: Validate source contracts
         id: preflight
         run: |
           set -euo pipefail
-          bash scripts/test-build-orchestration.sh
-          bash scripts/test-runtime-policy.sh
-          bash scripts/test-source-contracts.sh
-          bash scripts/test-update-leds.sh
-          bash scripts/test-release-metrics.sh
+          scripts/test-build-orchestration.sh
+          scripts/test-runtime-policy.sh
+          scripts/test-source-contracts.sh
+          scripts/test-update-leds.sh
+          scripts/test-release-metrics.sh
 
       - name: Validate release inputs
         id: inputs
-        run: bash scripts/validate-release-inputs.sh
+        run: scripts/validate-release-inputs.sh
 
       - name: Install build dependencies
         id: dependencies
@@ -228,11 +211,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          fingerprint=$({
-            arm-linux-gnueabihf-gcc --version
-            arm-linux-gnueabihf-ld --version
-          } | sha256sum | awk '{print $1}')
-          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          fingerprint=$({ arm-linux-gnueabihf-gcc --version; arm-linux-gnueabihf-ld --version; } | sha256sum | awk '{print $1}')
+          echo "fingerprint=$fingerprint" >>"$GITHUB_OUTPUT"
 
       - name: Cache Debian packages
         id: debootstrap_cache
@@ -261,7 +241,6 @@ jobs:
           key: uboot-source-${{ steps.identity.outputs.uboot_commit }}
 
       - name: Prepare Linux source
-        id: kernel_source
         run: |
           set -euo pipefail
           mkdir -p out
@@ -269,7 +248,6 @@ jobs:
           current=$(git -C out/linux-src rev-parse HEAD 2>/dev/null || true)
           if [[ "$current" = "$ATLANTIAN_KERNEL_COMMIT" ]]; then
             git -C out/linux-src reset --quiet --hard "$ATLANTIAN_KERNEL_COMMIT"
-            echo "Using cached pinned Linux build tree at $ATLANTIAN_KERNEL_COMMIT"
           else
             if [[ ! -d out/linux-src/.git ]]; then
               rm -rf out/linux-src
@@ -289,13 +267,13 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
           ATLANTIAN_DEBOOTSTRAP_CACHE: ${{ github.workspace }}/.cache/debootstrap
           ATLANTIAN_SKIP_PREFLIGHT: '1'
-        run: sudo -E bash ./scripts/build-incremental.sh rootfs
+        run: sudo -E ./scripts/build-incremental.sh rootfs
 
       - name: Build Linux kernel
         id: kernel
         env:
           ATLANTIAN_SKIP_PREFLIGHT: '1'
-        run: sudo -E bash ./scripts/build-incremental.sh kernel
+        run: sudo -E ./scripts/build-incremental.sh kernel
 
       - name: Build release artifacts
         id: artifacts
@@ -303,32 +281,30 @@ jobs:
           ATLANTIAN_SKIP_PREFLIGHT: '1'
         run: |
           set -euo pipefail
-          sudo -E bash ./scripts/build-incremental.sh artifacts
-          sudo chown -R "$USER:$USER" \
-            artifacts .cache/debootstrap out/linux-src out/boot out/bootloader \
-            out/u-boot-src out/u-boot-build out/u-boot-nand-build out/nand
+          sudo -E ./scripts/build-incremental.sh artifacts
+          sudo chown -R "$USER:$USER" artifacts .cache/debootstrap out/linux-src out/boot out/bootloader out/u-boot-src out/u-boot-build out/u-boot-nand-build out/nand
 
       - name: Validate release artifacts
         id: artifact_check
-        run: bash scripts/test-release-artifacts.sh artifacts/current
+        run: scripts/test-release-artifacts.sh artifacts/current
 
       - name: Validate SD image layout
         id: image_check
-        run: sudo -E bash scripts/test-image-layout.sh "artifacts/current/$ATLANTIAN_IMAGE_NAME.img"
+        run: sudo -E ./scripts/test-image-layout.sh "artifacts/current/$ATLANTIAN_IMAGE_NAME.img"
 
       - name: Validate NAND bundle
         id: nand_check
-        run: bash scripts/test-nand-artifacts.sh out/nand/bundle "artifacts/current/$ATLANTIAN_IMAGE_NAME.img"
+        run: scripts/test-nand-artifacts.sh out/nand/bundle "artifacts/current/$ATLANTIAN_IMAGE_NAME.img"
 
       - name: Test SD upgrade
         id: sd_upgrade
         env:
           GH_TOKEN: ${{ github.token }}
-        run: sudo -E bash scripts/test-release-upgrade.sh artifacts/current
+        run: sudo -E ./scripts/test-release-upgrade.sh artifacts/current
 
       - name: Test NAND rebase
         id: nand_rebase
-        run: sudo -E bash scripts/test-nand-rebase.sh out/rootfs-nand
+        run: sudo -E ./scripts/test-nand-rebase.sh out/rootfs-nand
 
       - name: Verify source tree integrity
         id: source_integrity
@@ -338,8 +314,8 @@ jobs:
         id: seal
         run: |
           set -euo pipefail
-          printf '%s\n' "$GITHUB_SHA" > artifacts/current/VERIFIED-SOURCE-SHA
-          printf '%s\n' "$ATLANTIAN_VERSION" > artifacts/current/VERIFIED-VERSION
+          printf '%s\n' "$GITHUB_SHA" >artifacts/current/VERIFIED-SOURCE-SHA
+          printf '%s\n' "$ATLANTIAN_VERSION" >artifacts/current/VERIFIED-VERSION
           (cd artifacts/current && sha256sum -c SHA256SUMS)
 
       - name: Attest verified build
@@ -356,8 +332,6 @@ jobs:
         with:
           name: ${{ needs.plan.outputs.artifact_name }}
           if-no-files-found: error
-          # Keep the complete sealed payload until publication succeeds so a
-          # failed publication can be retried without rebuilding the OS.
           retention-days: 90
           overwrite: true
           path: |
@@ -397,7 +371,7 @@ jobs:
             echo '| Source tree integrity | ${{ steps.source_integrity.outcome }} |'
             echo '| Provenance attestation | ${{ steps.attestation.outcome }} |'
             echo '| Verified artifact upload | ${{ steps.verified_artifact.outcome }} |'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } >>"$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Publish release
@@ -425,8 +399,6 @@ jobs:
           persist-credentials: false
 
       - name: Prepare release identity
-        id: identity
-        shell: bash
         env:
           EXPECTED_VERSION: ${{ needs.plan.outputs.version }}
         run: |
@@ -445,7 +417,7 @@ jobs:
             echo "ATLANTIAN_RELEASE_ID=$ATLANTIAN_RELEASE_ID"
             echo "ATLANTIAN_IMAGE_NAME=$ATLANTIAN_IMAGE_NAME"
             echo "RELEASE_TAG=v$ATLANTIAN_VERSION"
-          } >> "$GITHUB_ENV"
+          } >>"$GITHUB_ENV"
 
       - name: Check publication eligibility
         id: publication
@@ -454,44 +426,25 @@ jobs:
           ALREADY_PUBLISHED: ${{ needs.plan.outputs.already_published }}
         run: |
           set -euo pipefail
-
           tag_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha 2>/dev/null) || tag_commit=""
-
           if [[ "$ALREADY_PUBLISHED" = true ]]; then
-            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-              && [[ "$tag_commit" = "$GITHUB_SHA" ]]; then
-              echo 'publish=false' >> "$GITHUB_OUTPUT"
-              echo "Release $RELEASE_TAG is already complete for this exact source; idempotent no-op." >> "$GITHUB_STEP_SUMMARY"
-              exit 0
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [[ "$tag_commit" = "$GITHUB_SHA" ]]; then
+              echo 'publish=false' >>"$GITHUB_OUTPUT"; exit 0
             fi
-            echo "Previously detected release $RELEASE_TAG disappeared or moved; refusing to publish without a verified artifact." >&2
-            exit 1
+            echo "Previously detected release $RELEASE_TAG disappeared or moved." >&2; exit 1
           fi
-
           main_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
           if [[ "$main_sha" != "$GITHUB_SHA" ]]; then
-            echo 'publish=false' >> "$GITHUB_OUTPUT"
-            echo 'This build was superseded by a newer main commit; publication is skipped.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'publish=false' >>"$GITHUB_OUTPUT"
+            echo 'This build was superseded by a newer main commit.' >>"$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            if [[ "$tag_commit" = "$GITHUB_SHA" ]]; then
-              echo 'publish=false' >> "$GITHUB_OUTPUT"
-              echo "Release $RELEASE_TAG appeared concurrently for this exact source; idempotent no-op." >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-            echo "Release $RELEASE_TAG belongs to another source revision (${tag_commit:-unknown}); refusing to overwrite it." >&2
-            exit 1
+            [[ "$tag_commit" = "$GITHUB_SHA" ]] && { echo 'publish=false' >>"$GITHUB_OUTPUT"; exit 0; }
+            echo "Release $RELEASE_TAG belongs to another source revision." >&2; exit 1
           fi
-
-          if [[ -n "$tag_commit" && "$tag_commit" != "$GITHUB_SHA" ]]; then
-            echo "Tag $RELEASE_TAG already points to $tag_commit; automatic publication will never retarget an existing tag." >&2
-            exit 1
-          fi
-
-          echo 'publish=true' >> "$GITHUB_OUTPUT"
-          echo 'Current main revision is eligible for publication.' >> "$GITHUB_STEP_SUMMARY"
+          [[ -z "$tag_commit" || "$tag_commit" = "$GITHUB_SHA" ]] || { echo "Tag $RELEASE_TAG already points to $tag_commit." >&2; exit 1; }
+          echo 'publish=true' >>"$GITHUB_OUTPUT"
 
       - name: Download verified artifact
         id: artifact_source
@@ -503,13 +456,9 @@ jobs:
         run: |
           set -euo pipefail
           source_run=${REUSE_RUN_ID:-$GITHUB_RUN_ID}
-          rm -rf artifacts/current
-          mkdir -p artifacts/current
-          gh run download "$source_run" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name "$ARTIFACT_NAME" \
-            --dir artifacts/current
-          echo "run_id=$source_run" >> "$GITHUB_OUTPUT"
+          rm -rf artifacts/current; mkdir -p artifacts/current
+          gh run download "$source_run" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT_NAME" --dir artifacts/current
+          echo "run_id=$source_run" >>"$GITHUB_OUTPUT"
 
       - name: Verify publication payload
         if: steps.publication.outputs.publish == 'true'
@@ -521,52 +470,22 @@ jobs:
           test -s "artifacts/current/$ATLANTIAN_IMAGE_NAME.img"
           test -s "artifacts/current/$ATLANTIAN_IMAGE_NAME.img.xz"
           test -s "artifacts/current/atlantian-nand-$ATLANTIAN_VERSION.tar.zst"
-          test "$(find artifacts/current -maxdepth 1 -name '*.img' -type f | wc -l)" -eq 1
-          test "$(find artifacts/current -maxdepth 1 -name '*.img.xz' -type f | wc -l)" -eq 1
           test "$(find artifacts/current -maxdepth 1 -name '*.deb' -type f | wc -l)" -eq 3
           xz -t "artifacts/current/$ATLANTIAN_IMAGE_NAME.img.xz"
-          raw_sha=$(sha256sum "artifacts/current/$ATLANTIAN_IMAGE_NAME.img" | awk '{print $1}')
-          decoded_sha=$(xz -dc "artifacts/current/$ATLANTIAN_IMAGE_NAME.img.xz" | sha256sum | awk '{print $1}')
-          test "$decoded_sha" = "$raw_sha"
+          test "$(xz -dc "artifacts/current/$ATLANTIAN_IMAGE_NAME.img.xz" | sha256sum | awk '{print $1}')" = "$(sha256sum "artifacts/current/$ATLANTIAN_IMAGE_NAME.img" | awk '{print $1}')"
           (cd artifacts/current && sha256sum -c SHA256SUMS)
 
       - name: Preserve verified checksum manifest
         if: steps.publication.outputs.publish == 'true'
-        run: |
-          set -euo pipefail
-          cp artifacts/current/SHA256SUMS "$RUNNER_TEMP/atlantian-verified-SHA256SUMS"
+        run: cp artifacts/current/SHA256SUMS "$RUNNER_TEMP/atlantian-verified-SHA256SUMS"
+
+      - name: Prepare public release payload
+        if: steps.publication.outputs.publish == 'true'
+        run: scripts/prepare-public-release.sh artifacts/current
 
       - name: Generate release notes
         if: steps.publication.outputs.publish == 'true'
-        run: bash scripts/generate-release-notes.sh "$RELEASE_TAG" "$GITHUB_SHA"
-
-      - name: Prepare aggregate update marker
-        if: steps.publication.outputs.publish == 'true'
-        run: |
-          set -euo pipefail
-          python3 - "$ATLANTIAN_VERSION" > artifacts/current/atlantian-update.json <<'PY'
-          import json
-          import sys
-
-          json.dump({
-              "schema_version": 1,
-              "kind": "atlantian-system-update",
-              "release": sys.argv[1],
-          }, sys.stdout, separators=(",", ":"))
-          sys.stdout.write("\n")
-          PY
-          python3 - "$ATLANTIAN_VERSION" <<'PY'
-          import json
-          import sys
-
-          with open("artifacts/current/atlantian-update.json", encoding="utf-8") as stream:
-              marker = json.load(stream)
-          assert marker == {
-              "schema_version": 1,
-              "kind": "atlantian-system-update",
-              "release": sys.argv[1],
-          }
-          PY
+        run: scripts/generate-release-notes.sh "$RELEASE_TAG" "$GITHUB_SHA"
 
       - name: Publish GitHub release
         if: steps.publication.outputs.publish == 'true'
@@ -584,41 +503,17 @@ jobs:
             artifacts/current/RELEASE-METADATA.json
             artifacts/current/SHA256SUMS
           )
-
           tag_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha 2>/dev/null) || tag_commit=""
-
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            if [[ "$tag_commit" = "$GITHUB_SHA" ]]; then
-              echo "Release $RELEASE_TAG appeared concurrently for this source; nothing remains to publish."
-              exit 0
-            fi
-            echo "Release $RELEASE_TAG appeared for another source revision; refusing to overwrite it." >&2
-            exit 1
+            [[ "$tag_commit" = "$GITHUB_SHA" ]] && exit 0
+            echo "Release $RELEASE_TAG appeared for another source revision." >&2; exit 1
           fi
-
-          if [[ -n "$tag_commit" && "$tag_commit" != "$GITHUB_SHA" ]]; then
-            echo "Tag $RELEASE_TAG moved to $tag_commit; refusing to retarget it." >&2
-            exit 1
-          fi
-
-          prerelease=()
-          if [[ -n "$ATLANTIAN_PRERELEASE" ]]; then
-            prerelease+=(--prerelease)
-          fi
-
-          if ! gh release create "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "AtlANTian GNU/Linux $ATLANTIAN_VERSION" \
-            --notes-file release-notes.md \
-            "${prerelease[@]}" \
-            "${release_assets[@]}"; then
+          [[ -z "$tag_commit" || "$tag_commit" = "$GITHUB_SHA" ]] || { echo "Tag $RELEASE_TAG moved to $tag_commit." >&2; exit 1; }
+          prerelease=(); [[ -z "$ATLANTIAN_PRERELEASE" ]] || prerelease+=(--prerelease)
+          if ! gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "AtlANTian GNU/Linux $ATLANTIAN_VERSION" --notes-file release-notes.md "${prerelease[@]}" "${release_assets[@]}"; then
             if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               tag_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha 2>/dev/null) || tag_commit=""
-              if [[ "$tag_commit" = "$GITHUB_SHA" ]]; then
-                echo "Release $RELEASE_TAG appeared concurrently for this source; treating publication as successful."
-                exit 0
-              fi
+              [[ "$tag_commit" = "$GITHUB_SHA" ]] && exit 0
             fi
             exit 1
           fi
@@ -631,11 +526,9 @@ jobs:
           test "$(cat artifacts/current/VERIFIED-SOURCE-SHA)" = "$GITHUB_SHA"
           test "$(cat artifacts/current/VERIFIED-VERSION)" = "$ATLANTIAN_VERSION"
           image="artifacts/current/$ATLANTIAN_IMAGE_NAME.img"
-          test -s "$image"
           expected=$(awk -v name="$ATLANTIAN_IMAGE_NAME.img" '$2 == name || $2 == "*" name { print $1; exit }' artifacts/current/SHA256SUMS)
           [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
-          actual=$(sha256sum "$image" | awk '{print $1}')
-          test "$actual" = "$expected"
+          test "$(sha256sum "$image" | awk '{print $1}')" = "$expected"
 
       - name: Compact published verified artifact
         id: compact_artifact
@@ -668,4 +561,4 @@ jobs:
             echo '| Artifact source run | ${{ steps.artifact_source.outputs.run_id || 'none' }} |'
             echo '| Publication eligible | ${{ steps.publication.outputs.publish }} |'
             echo '| Compact upgrade artifact | ${{ steps.compact_artifact.outcome || 'skipped' }} |'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } >>"$GITHUB_STEP_SUMMARY"

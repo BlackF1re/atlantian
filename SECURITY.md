@@ -2,111 +2,59 @@
 
 ## Supported scope
 
-| Layer | Support policy |
-|---|---|
-| AtlANTian release tooling | newest published release |
-| Release upgrade path | each release is validated against the latest eligible published release |
-| Debian userspace | follows Debian support for the installed codename through live APT repositories |
-| Kernel/board support | selected Linux LTS series; accepted stable patch commit is pinned per release |
-| SD boot firmware | accepted stable upstream U-Boot commit; low-level changes require board validation |
+Security fixes target the newest published AtlANTian release. Debian userspace follows Debian support for the installed codename through live runtime repositories; board kernel/boot support follows the pinned AtlANTian release inputs.
 
-## Reporting a vulnerability
+## Reporting
 
-Do **not** publish an unpatched vulnerability in a public issue or discussion.
+Do not publish an unpatched vulnerability in a public issue. Prefer GitHub's private **Report a vulnerability** flow when available; otherwise contact the maintainer privately through the [BlackF1re GitHub profile](https://github.com/BlackF1re).
 
-If the repository Security page offers GitHub's private **Report a vulnerability**
-form, use it. Otherwise contact the maintainer privately through the contact link
-published on the [BlackF1re GitHub profile](https://github.com/BlackF1re).
-Include the affected release, reproduction, impact/required access and any known
-mitigation. Do not send credentials or unrelated private data.
+Include the affected release, reproduction, required access, impact and any known mitigation. Do not send credentials or unrelated private data.
 
 ## Release trust model
 
-| Control | Purpose |
-|---|---|
-| immutable Debian Snapshot metadata | reproducible factory package baseline |
-| selected Linux LTS series + exact commit | deterministic board-kernel source identity; no movable tag is resolved during a release build |
-| stable U-Boot tag discovery + exact commit | automation may discover a stable candidate, but production consumes an immutable source SHA |
-| candidate kernel/U-Boot gates | kernel config/board contract and both SD + NAND/SPL U-Boot builds must validate before automatic upstream input merge |
-| release `SHA256SUMS` | integrity of the public downloadable payload |
-| version-matched AtlANTian `.deb` set | prevents mixed platform/kernel/release installs |
-| transactional SD A/B FIT | kernel and matching DTB are one SHA-256 FIT; inactive slot is written/verified before the active marker changes |
-| GitHub build provenance | ties sealed build outputs to source/workflow/commit |
-| release-upgrade gate | blocks invalid package transitions between published releases |
+AtlANTian relies on layered verification:
 
-On-device platform updates download over HTTPS and verify the selected payload
-against the published `SHA256SUMS`. Build provenance is generated for the sealed
-outputs that enter the publication stage; the board does not currently verify
-provenance locally. Publication-only metadata such as `atlantian-update.json` and
-the public checksum manifest is generated after sealing and is validated by the
-publication contracts rather than treated as a separately attested build output.
+- immutable Debian Snapshot metadata for the factory package baseline;
+- exact Linux and U-Boot source commits;
+- version-matched `atlantian-platform`, `atlantian-kernel` and `atlantian-release` packages;
+- SHA-256 over public release assets;
+- transactional SD A/B FIT kernel+DT update;
+- recovery-SD staging and raw-boot read-back verification for NAND;
+- cross-release SD update and NAND rebase integration gates;
+- GitHub build provenance for sealed build outputs.
 
-Factory-input reproducibility and runtime security maintenance are intentionally
-separate. Factory images use an exact Debian Snapshot; installed systems use live
-repositories for their fixed Debian codename, so normal `apt upgrade` security
-maintenance does not wait for a new AtlANTian image. The custom AtlANTian kernel,
-DT and platform policy remain release-controlled because they are validated as a
-board-specific set.
+The board verifies release package/bundle checksums locally. Build provenance is currently a release/audit property and is not verified on-device.
 
-## SD boot update boundary
+`atlantian-update.json` exists only for anonymous aggregate update metrics. Failure to fetch or validate that optional accounting marker does not weaken or block the actual update transaction.
 
-The normal SD platform update does **not** rewrite the early `BOOT.bin` or
-`u-boot.img` on the live FAT partition. Those files execute before the kernel-slot
-transaction can provide redundancy; replacing them in place would create a real
-power-loss window. Fresh complete images carry the current accepted U-Boot.
+## Factory baseline and runtime maintenance
 
-Kernel and DTB updates use two FIT slots within the existing BOOT partition. The
-new FIT is staged into the inactive slot, byte-verified and synced before the tiny
-active-slot marker is changed. U-Boot tries the other complete slot if the selected
-FIT fails. A future incompatible boot-loader ABI change fails closed and requires
-a reflash rather than weakening this model.
+Factory images use an exact Debian Snapshot. Installed systems use live repositories for their fixed Debian codename, so ordinary Debian security maintenance does not wait for a new AtlANTian image.
 
-NAND boot firmware is updated differently: same-major NAND maintenance is staged
-and verified through the paired recovery SD before the target raw boot region is
-programmed/read-back-verified.
+The custom kernel, DT and boot/platform policy remain AtlANTian release-controlled because they are validated together as a board-specific product.
+
+APT indexes are disposable and bounded to a 96 MiB tmpfs. Package archives use storage-backed APT staging and are not retained after successful installation.
+
+## SD update boundary
+
+Online SD kernel updates do not rewrite early `BOOT.bin` or `u-boot.img`. They require two complete FIT slots and a matching boot ABI, write/verify/sync the inactive FIT, then commit the active-slot marker. U-Boot can fall back to the other complete slot.
+
+An incompatible early-boot ABI requires a fresh image rather than an unsafe in-place bootloader rewrite.
+
+## NAND update boundary
+
+NAND destructive operations require the supported board geometry and verified release identity. Installation creates or reuses a verified raw+OOB backup before erase/program operations.
+
+Raw boot is staged from the recovery SD, programmed and read-back verified by U-Boot before Linux replaces UBI. Same-major base upgrades capture persistent state before UBI replacement and restore it against the verified new immutable lower. Debian-major NAND transitions require a clean reinstall.
 
 ## Initial root access
 
-Passwordless root access on a fresh image is intentional first-provisioning
-policy. No shared SSH host private key is embedded. Each flash generates a
-machine ID and host keys; an interactive root shell warns until authentication
-is configured.
+A fresh image intentionally permits first provisioning as root without a pre-shared password. No shared SSH host private key is embedded; machine identity and host keys are generated per installation.
 
-Keep first provisioning on a trusted network, then set either:
+Before exposing a board to an untrusted network, set a root password or install an SSH public key.
 
-```sh
-passwd
-```
+## Hardware boundary
 
-or a root SSH public key.
+CI cannot prove BootROM/SPL electrical behavior, real NAND bad blocks, physical FPGA routing or connector voltage. Keep unverified/conflicting routes disabled or profile-only until the bench evidence in [docs/HARDWARE-VALIDATION.md](docs/HARDWARE-VALIDATION.md) exists.
 
-## Debian repositories and major changes
-
-Factory builds use immutable Snapshot metadata. Running systems use live HTTPS
-repositories pinned to the installed Debian codename; moving `stable` is never
-used on-device.
-
-APT repository indexes are disposable and bounded to a 96 MiB tmpfs. Downloaded
-package archives use storage-backed APT staging and are configured not to be kept
-after installation; large package transactions therefore do not depend on a
-tmpfs sized to a fixed fraction of system RAM.
-
-- **SD:** explicit `atlantian-sysupgrade` handles supported AtlANTian platform
-  releases and staged `N → N+1` Debian transitions.
-- **NAND:** same-major base upgrades use the recovery-SD rebase transaction;
-  Debian-major changes require a clean NAND reinstall and deliberate transfer of
-  selected application/user state.
-
-See [Upgrading](docs/UPGRADING.md).
-
-## Hardware validation boundary
-
-CI validates source pins, candidate kernel/U-Boot software contracts, artifacts
-and update transactions, but cannot prove physical BootROM/SPL execution, real
-NAND ECC/bad blocks, FPGA routing or electrical behavior. An automatically
-accepted U-Boot stable source still remains a low-level hardware change until it
-has been exercised on the board. Unverified/conflicting routes stay disabled or
-profile-only.
-
-See [Hardware support](docs/hardware-support-matrix.md) and
-[release pipeline](docs/PIPELINE.md).
+See [docs/UPGRADING.md](docs/UPGRADING.md), [docs/NAND.md](docs/NAND.md) and [docs/PIPELINE.md](docs/PIPELINE.md) for the owning technical contracts.

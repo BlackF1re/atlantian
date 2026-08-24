@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+target_version='@TARGET_VERSION@'
+target_major='@TARGET_MAJOR@'
+authorization=/run/atlantian-major-upgrade-authorized
+
+installed_version=$(cat /usr/lib/atlantian/version 2>/dev/null || true)
+installed_major=${installed_version%%.*}
+case "$installed_major" in
+  ''|*[!0-9]*) ;;
+  *)
+    if [ "$target_major" -lt "$installed_major" ]; then
+      echo "refusing AtlANTian Debian-major downgrade: $installed_major -> $target_major" >&2
+      exit 78
+    fi
+    if [ "$target_major" -gt "$installed_major" ]; then
+      [ "$target_major" -eq $((installed_major + 1)) ] || {
+        echo "refusing AtlANTian Debian-major skip: $installed_major -> $target_major" >&2
+        exit 78
+      }
+      [ -r "$authorization" ] && [ "$(cat "$authorization")" = "$target_version" ] || {
+        echo "Debian-major package transition to $target_version requires atlantian-sysupgrade" >&2
+        exit 78
+      }
+    fi
+    ;;
+esac
+
+edition=$(cat /run/atlantian/storage-edition 2>/dev/null || cat /usr/lib/atlantian/storage-edition 2>/dev/null || echo sd)
+if [ "$edition" = nand ]; then
+  echo 'atlantian-kernel cannot update a live NAND edition; run atlantian-sysupgrade to stage verified maintenance on the recovery microSD' >&2
+  exit 78
+fi

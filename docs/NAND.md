@@ -1,205 +1,76 @@
-# AtlANTian on Antminer S9 NAND
+# NAND architecture
 
-This document is the source of truth for NAND geometry, ECC, raw boot layout,
-SPL behavior, UBI and NAND recovery boundaries. Installation steps are summarized
-in [Installation](INSTALLATION.md); platform updates are documented in
-[Upgrading](UPGRADING.md).
+AtlANTian's NAND edition targets the stock 256 MiB raw NAND used on the supported Antminer S9 control board. Raw-flash code is intentionally board-specific and rejects unexpected geometry.
 
-AtlANTian installs from the unified microSD image into the on-board 256 MiB raw
-NAND and then boots without a card. The paired recovery SD may optionally provide
-a larger writable OverlayFS upper.
+## Geometry and ECC
 
-> [!IMPORTANT]
-> Fresh destructive installation, cold NAND boot and warm reboot are physically
-> validated on both 512 MiB and 1 GiB RAM board variants. Real factory-bad-block
-> placement, adopted-SD fallback, interrupted/power-loss recovery and controlled
-> factory restore remain hardware-validation items.
+Repository policy is defined by `config/nand-layout.env` and verified again against the live MTD device before destructive work.
 
-## Storage architecture
+Expected geometry:
 
-```text
-256 MiB raw NAND
-├─ 16 MiB raw boot
-│  ├─ SPL copies
-│  ├─ primary + redundant NAND U-Boot
-│  ├─ uImage
-│  ├─ gzip initramfs
-│  └─ DTB
-└─ 240 MiB UBI
-   ├─ rootfs   static UBI -> SquashFS/Zstd, read-only
-   └─ overlay  dynamic UBI -> UBIFS/LZO, writable
+- total: 256 MiB;
+- eraseblock: 128 KiB;
+- page: 2 KiB;
+- OOB: 64 bytes;
+- ECC contract: BCH strength at least 4 bits per 512-byte step for the Linux data path.
 
-visible /
-└─ OverlayFS
-   ├─ lower = SquashFS via ubiblock
-   └─ upper = internal UBIFS
-              OR token-authorized ext4 directory on paired recovery SD
-```
+The supported stock Micron part uses its on-die BCH engine. Factory bad-block markers must be preserved. Backup reads therefore bypass the running ECC interpretation and retain OOB bytes.
 
-The dynamic `overlay` volume is created with `ubimkvol -m`, so it receives the
-space left after the static root volume and UBI reserves. `/tmp` and persistent
-systemd journal storage are avoided on NAND; zram replaces persistent swap.
+## Physical layout
 
-## Raw boot layout
+The first 16 MiB are a raw boot region because BootROM/SPL/U-Boot need fixed-address payloads. The remaining 240 MiB form the Linux UBI region.
 
-| Region | Offset | Reserved size |
-|---|---:|---:|
-| SPL area | `0x00000000` | 1 MiB |
-| NAND U-Boot primary | `0x00100000` | 1 MiB |
-| NAND U-Boot redundant | `0x00200000` | 1 MiB |
-| Linux `uImage` | `0x00300000` | 9 MiB |
-| initramfs `uInitrd` | `0x00C00000` | 3 MiB |
-| device tree | `0x00F00000` | 1 MiB |
-| UBI data region | `0x01000000` | remaining 240 MiB |
+The raw region contains redundant SPL/U-Boot placement and fixed logical slots for kernel, initramfs and DTB. Slot sizes include bad-block headroom; U-Boot reads exact release-specific payload lengths rather than consuming an entire slot.
 
-Raw reads/writes are bad-block aware and use the exact logical payload lengths,
-not whole reserved slots.
+## UBI root
 
-## NAND geometry and ECC
+The Linux data region is formatted as UBI after raw boot has been programmed and read-back verified.
 
-Supported stock device:
+- `rootfs`: static UBI volume containing a Zstd SquashFS immutable base.
+- `overlay`: dynamic UBI volume formatted as LZO UBIFS.
 
-```text
-Micron MT29F2G08ABAEAWP
-ID         2c:da
-capacity   256 MiB
-eraseblock 128 KiB
-page       2048 B
-OOB        64 B
-ECC        Micron on-die BCH 4/512
-```
+Early `/init` attaches UBI, exposes the static root through `ubiblock`, mounts SquashFS read-only, mounts the UBIFS upper and assembles OverlayFS before `switch_root`.
 
-BootROM-facing boot objects, full U-Boot and Linux use the Micron on-die ECC
-contract. Linux selects the chip ECC engine through Device Tree and records
-BCH 4/512 geometry.
+The initramfs uses a build-only static BusyBox binary. `busybox-static` is not retained in either normal runtime rootfs solely for early NAND boot.
 
-Full U-Boot may display `1 bit / 2048 B` for this path. That value is driver
-bookkeeping for its on-die-ECC branch; it is **not** the physical correction
-strength of the Micron engine.
+## Recovery microSD
 
-The 16 MiB raw region is a boot/addressing boundary, not a separate ECC domain.
+The SD image is both the ordinary SD product and the NAND recovery/maintenance medium. It contains the release-matched NAND bundle under `/usr/lib/atlantian/nand`.
 
-## SPL NAND path
+A NAND install records a board/card identity. Later NAND base updates require that paired recovery SD. If it is inserted while NAND is running, it can also be explicitly adopted as the writable OverlayFS upper; token matching prevents a random ext4 card from silently becoming system state.
 
-NAND SPL intentionally does not run full runtime DM/MTD discovery. It uses a
-small fixed-geometry reader for the supported Micron `2c:da` device. The reader:
+## Install transaction
 
-- initializes PL353 NAND access;
-- requires the expected device ID;
-- enables and verifies Micron on-die ECC;
-- checks factory bad-block markers;
-- uses bounded, timer-independent ready polling.
+The destructive boundary is deliberately split:
 
-This avoids the unnecessary runtime `nand_scan_ident()` path in SPL. Primary and
-redundant U-Boot slots remain independent fallback targets.
+1. Linux verifies the target and creates a raw+OOB backup.
+2. Linux stages the raw boot payload on SD.
+3. SD U-Boot programs and read-back verifies raw boot.
+4. Only after the U-Boot verification marker exists does SD Linux replace UBI.
+5. The new static root is read back through `ubiblock` and its AtlANTian release identity is checked.
+6. A fresh writable upper is created.
+7. The board is handed back to NAND boot only after the complete transaction verifies.
 
-## Bad blocks
+This ordering keeps the old UBI untouched until raw boot is known-good and keeps the board on recovery SD until the new UBI is known-good.
 
-AtlANTian keeps factory OOB bad-block markers authoritative and avoids forced
-flash-BBT creation in the relevant Zynq NAND paths. Raw boot operations skip bad
-blocks while preserving the logical payload stream. UBI owns bad-PEB handling
-and wear-leveling in the 240 MiB data region.
+## Same-major upgrade
 
-The builder reserves a conservative bad-PEB budget and a minimum internal
-writable budget; the installer repeats the relevant capacity check against the
-actual NAND.
+NAND does not install the SD-oriented `atlantian-kernel` package into the live immutable base. `atlantian-sysupgrade` downloads the target NAND bundle to the paired recovery SD. After booting that SD, `atlantian-nand-upgrade`:
 
-## Factory backup
+- verifies the prepared bundle path and release identity;
+- mounts the current immutable lower and active upper;
+- captures selected persistent deltas and manual package intent;
+- requires the target to stay within the current Debian major;
+- stages the same verified raw-boot transaction used by installation;
+- rebuilds UBI with the target SquashFS;
+- restores selected state against the new lower rather than copying the previous upper wholesale.
 
-Before destructive installation AtlANTian creates and verifies a factory backup
-under `/root/atlantian-factory-nand-backup`.
+A Debian-major NAND transition requires a clean reinstall. It is intentionally not advertised as a compatible NAND `sysupgrade`.
 
-Required recovery set:
+## Backup
 
-```text
-NAND-INFO.txt
-nand-raw-oob.bin
-SHA256SUMS
-```
+`atlantian-nand-backup` is read-only and creates the recovery-critical raw+OOB dump by default. `--inspection-copy` adds a second padded main-area dump for analysis only.
 
-`nand-raw-oob.bin` is the primary forensic/recovery artifact. Backup reads use
-`nanddump --noecc --oob --bb=dumpbad`, preserving physical page order, OOB bytes
-and factory bad-block markers without interpreting them through the active ECC
-layout.
+Never restore raw NAND with `dd`. Raw NAND restore must respect OOB, bad blocks, ECC and the board's boot layout.
 
-The backup helper also attempts to create `nand-main-padded.bin`, an address-stable
-main-area copy useful for inspection. That file is **optional**: if the padded
-main-area dump fails, AtlANTian removes the incomplete file, records the failure
-in `NAND-INFO.txt` and still accepts the verified raw+OOB recovery set.
-
-> [!CAUTION]
-> Never restore raw+OOB NAND with generic block-device `dd`.
-
-Keep a verified copy outside the recovery SD before relying on factory recovery.
-The repository currently provides the verified backup path; a controlled factory
-restore remains a separate hardware-validation procedure rather than an automated
-one-command restore feature.
-
-## Installation transaction
-
-From the running unified SD image:
-
-```sh
-atlantian-nand-install
-```
-
-The destructive transaction is:
-
-1. validate payload, geometry, ECC and capacity;
-2. create/verify the factory backup and require literal `INSTALL`;
-3. reboot in SD mode;
-4. program and twice read-back-verify the raw boot region from SD U-Boot;
-5. automatically resume in SD Linux;
-6. create UBI, write/verify SquashFS and create the maximum-size UBIFS overlay;
-7. request **SD → NAND** jumper handoff;
-8. boot BootROM → SPL → NAND U-Boot → kernel/initramfs → OverlayFS/systemd.
-
-`--resume` is a recovery continuation, not the normal install entry point.
-
-## Writable storage
-
-Useful status:
-
-```sh
-atlantian-storage status
-cat /run/atlantian/storage-edition
-cat /run/atlantian/overlay-mode
-```
-
-The paired recovery SD can be adopted with:
-
-```sh
-atlantian-storage adopt
-```
-
-AtlANTian stores `/.atlantian-extroot/{token,upper,work}` inside that card's ext4
-ROOT partition, copies the current internal writable state, and records a matching
-token internally. A matching card selects the SD upper at boot; an absent or
-mismatched card falls back to internal UBIFS. The two uppers are independent
-after adoption.
-
-See [Persistence](PERSISTENCE.md) for persistence semantics.
-
-## Validation boundary
-
-Validated on real 512 MiB and 1 GiB hardware:
-
-- verified raw+OOB pre-install backup;
-- SD-U-Boot raw programming/read-back transaction;
-- BootROM NAND start;
-- dedicated SPL NAND reader and NAND U-Boot load;
-- kernel/initramfs/DTB load from NAND;
-- UBI + ubiblock + SquashFS + UBIFS + OverlayFS root;
-- systemd multi-user boot, Ethernet/SSH and FPGA userspace startup;
-- cold NAND boot and warm reboot;
-- recovery-SD handoff and same-major NAND rebase.
-
-Still requiring dedicated bench validation:
-
-- actual factory-bad-block placement;
-- adopted-SD upper and no-card fallback;
-- interrupted/power-loss recovery;
-- controlled factory raw+OOB restore.
-
-See [Hardware support](hardware-support-matrix.md) for the status matrix and
-[Hardware validation](HARDWARE-VALIDATION.md) for the bench checklist.
+User-facing installation steps are in [INSTALLATION.md](INSTALLATION.md); persistence rules are in [PERSISTENCE.md](PERSISTENCE.md).

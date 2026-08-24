@@ -1,120 +1,56 @@
 # Debian lifecycle
 
-This document owns AtlANTian's Debian-generation and Debian Snapshot policy.
-User-facing upgrades are documented in [Upgrading](UPGRADING.md); Linux/U-Boot
-tracking, GitHub CI, protected-main merge mechanics and release publication are
-documented in [Pipeline](PIPELINE.md).
+This document owns AtlANTian's Debian-generation, factory Snapshot and runtime APT policy. Operator update steps are in [UPGRADING.md](UPGRADING.md); automation is in [PIPELINE.md](PIPELINE.md).
 
-## Policy
+## Factory versus runtime
 
-| Rule | Behavior |
+AtlANTian deliberately separates reproducible image construction from maintenance of an installed Debian system.
+
+| Factory build | Installed board |
 |---|---|
-| Architecture | configured Debian generation must still publish `armhf` |
-| Factory input | exact Debian Snapshot metadata is frozen |
-| Runtime repositories | installed codename is fixed; moving `stable` is never used |
-| Routine Debian change | refresh and validate the frozen Snapshot; Debian-only factory changes join the normal release batch |
-| Linux/U-Boot change in same watcher run | coalesce the newest accepted Debian Snapshot into the same release transaction |
-| New Debian major | report availability only; transition remains explicit |
-| Failure | keep the last verified Snapshot and configured generation |
+| exact Debian Snapshot timestamp and Release-file checksums | live repositories for the installed codename |
+| reproducible package baseline | normal `apt update`, `apt upgrade`, `apt install` |
+| `armhf` availability is validated | moving `stable` aliases are not used |
+| snapshot recorded in release metadata | ordinary Debian updates do not change AtlANTian release identity |
 
-A Snapshot refresh changes the reproducible factory package baseline, but it does
-**not** delay security/package maintenance on installed boards: runtime APT uses
-live repositories for the installed codename. Consequently a Debian-only Snapshot
-refresh does not need to publish a full SD/NAND image every day. It contributes to
-the normal five-release-input batch. If the same daily upstream transaction also
-advances the selected Linux LTS patchlevel or stable U-Boot, the combined inputs
-become release-eligible immediately.
+A factory Snapshot refresh therefore does not need to publish an image every day. Installed boards continue receiving normal Debian updates from the configured codename while Snapshot changes accumulate under the release batching policy.
 
-The Snapshot timestamp is recorded separately from the AtlANTian semantic version.
+APT indexes live in a bounded 96 MiB tmpfs. Downloaded package archives use storage-backed APT staging and are configured not to be retained after installation.
 
-## Unified daily watcher
+## Supported generation
 
-The workflow file remains `.github/workflows/debian-watch.yml` for repository
-continuity, but the workflow is named **Upstream Base Watch** and runs daily at
-**06:17 Asia/Tomsk**. It also runs when its protected-maintenance/upstream-refresh
-plumbing changes so those changes are exercised immediately.
+`config/release.env` defines the Debian major and codename. Automation verifies that the configured main, updates and security suites still publish `armhf`.
 
-Its Debian half:
+If the runner's `debootstrap` package does not yet contain a script named after the configured codename, the build uses Debian's generic bootstrap script while still targeting the exact configured codename and pinned Snapshot.
 
-1. reads the configured Debian major/codename and verifies `armhf` availability
-   in Debian main, updates and security;
-2. compares live Debian Release metadata with the frozen checksums;
-3. when Debian changed, waits until Debian Snapshot contains those exact metadata
-   bytes and freezes the new Snapshot timestamp/checksums;
-4. validates the resulting immutable release inputs;
-5. combines those files with any accepted Linux/U-Boot candidate from the same
-   watcher execution in **one** protected maintenance commit;
-6. publishes immediately only when a boot input changed or the combined
-   release-input count reached the normal five-commit threshold;
-7. separately reports when the immediate next Debian major becomes available.
+If Debian stops publishing the required architecture, AtlANTian fails closed instead of silently selecting another architecture or generation.
 
-The watcher never pushes directly to protected `main` and never receives a branch
-protection bypass. Exact maintenance-PR, merge-candidate validation, status bridge
-and squash-merge mechanics are intentionally documented only in
-[Pipeline](PIPELINE.md).
+## Snapshot refresh
 
-If the runner's `debootstrap` package does not yet know the configured codename,
-AtlANTian uses Debian's generic bootstrap script while still targeting the pinned
-codename and Snapshot.
+The daily [Upstream Base Watch](PIPELINE.md#upstream-base-watch):
 
-> [!IMPORTANT]
-> If Debian drops `armhf`, AtlANTian fails closed on the configured generation
-> instead of silently moving to an incompatible base.
+1. reads the current live Debian Release metadata for the configured suites;
+2. compares it with the stored checksums;
+3. waits for Debian Snapshot to contain those exact metadata bytes;
+4. freezes the new Snapshot timestamp/checksums;
+5. validates the complete changed input set;
+6. merges the combined upstream transaction through protected `main`.
 
-## Factory baseline vs running system
-
-| Factory image | Installed board |
-|---|---|
-| immutable Snapshot baseline | live repositories for the installed codename |
-| pinned package baseline for build/release audit | normal security/package maintenance |
-| exact Snapshot recorded in metadata | `apt upgrade` does not change AtlANTian release identity |
-| may wait for release batching when Debian alone changes | never waits for image publication to receive ordinary Debian updates |
-
-`apt update`, `apt upgrade` and `apt install` update the running Debian userspace.
-They do not create an AtlANTian release, replace the custom AtlANTian kernel or
-change Debian major. AtlANTian kernel/platform changes come through a verified
-AtlANTian release; this keeps the board-specific kernel configuration, DT and boot
-contract tested as one product rather than allowing a generic Debian kernel to
-replace it accidentally.
-
-APT repository indexes are stored in a bounded volatile workspace. Downloaded
-`.deb` payloads use normal storage-backed APT staging and are configured not to be
-retained after installation, avoiding a large RAM commitment on 512 MiB boards.
+Debian-only changes join the normal five-release-input batch. If the same transaction also contains an accepted Linux or U-Boot update, the combined transaction becomes immediately release-eligible.
 
 ## Debian-major transition
 
-A Debian-major transition changes the **first component** of the AtlANTian release
-line and is always deliberate. Automation may report Debian `N+1`, but it never
-edits `DEBIAN_MAJOR`, `DEBIAN_CODENAME` or starts the transition.
+Availability of Debian `N+1` may be reported automatically, but automation never edits the configured Debian major/codename merely because a new stable release exists.
 
-**SD:** once a compatible next-major AtlANTian release exists,
-`atlantian-sysupgrade` supports only `N → N+1`, stages resumable state and manages
-AtlANTian-owned APT sources.
+A transition is explicit because it changes the AtlANTian release line and compatibility boundary.
 
-**NAND:** cross-major rebasing is intentionally unsupported. Boot the next-major
-unified SD image, perform a clean NAND installation, then restore only
-known-compatible application/user data and reinstall required packages.
+- **SD:** `atlantian-sysupgrade` supports only `N → N+1`, with source backup, resumable state and controlled replacement of AtlANTian-managed APT sources.
+- **NAND:** cross-major immutable-base rebase is not supported. Boot the target-generation SD image and perform a clean NAND installation.
 
-See [Upgrading](UPGRADING.md) for operator steps.
+The updater never skips Debian generations or performs a Debian-major downgrade.
 
-## Watcher recovery and release batching
+## Board-specific packages
 
-Snapshot lag and partially published Debian metadata are retried without changing
-the configured release generation.
+The custom AtlANTian kernel, DT, boot payload and platform policy are release-controlled rather than replaced by a generic Debian kernel package. This keeps the board-specific boot/update contract testable as one product.
 
-After a protected upstream-input commit, there is a narrow failure window before
-an eligible `Build & Release` dispatch. On a later no-change watcher run,
-AtlANTian compares the Debian Snapshot, Linux pin and U-Boot pin in current
-`main` with the latest published AtlANTian tag. An unreleased Linux/U-Boot delta
-is immediately release-eligible; a Debian-only delta is dispatched only when the
-normal release-input count has reached five. This preserves recovery without
-turning routine Debian Snapshot churn into one image release per day.
-
-The watcher currently uses the existing internal `origin=debian-watch` dispatch
-identifier understood by `build-release.yml`; despite that compatibility name,
-the dispatched transaction may contain Debian, Linux and U-Boot input changes.
-
-GitHub may disable scheduled workflows after prolonged inactivity in a public
-repository. If the source tree has had no commit for 45 days, the watcher may
-create one empty maintenance heartbeat through the same protected-main path. The
-heartbeat changes no release input and does not dispatch `Build & Release`.
+Ordinary Debian application/library packages remain ordinary Debian state. See [PERSISTENCE.md](PERSISTENCE.md) for how that state is represented on SD and NAND.
