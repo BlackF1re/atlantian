@@ -22,6 +22,15 @@ def load(name: str):
     return data
 
 
+def job_needs(job: dict) -> set[str]:
+    value = job.get("needs", [])
+    if isinstance(value, str):
+        return {value}
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return set(value)
+    fail(f"invalid job needs declaration: {value!r}")
+
+
 files = {p.name for p in WF.glob("*.yml")} | {p.name for p in WF.glob("*.yaml")}
 if "debian-watch.yml" in files:
     fail("legacy debian-watch.yml survived")
@@ -43,6 +52,72 @@ if set(inputs) != {"publish"}:
     fail("Build & Release must expose only the public publish input")
 if "push" not in build_on:
     fail("Build & Release must retain automatic main push planning")
+
+build_jobs = build["jobs"]
+required_build_jobs = {
+    "plan",
+    "preflight",
+    "rootfs",
+    "kernel",
+    "assemble",
+    "validate_artifacts",
+    "validate_sd",
+    "validate_nand",
+    "sd_upgrade",
+    "nand_rebase",
+    "seal",
+    "publish",
+}
+if set(build_jobs) != required_build_jobs:
+    fail(f"Build & Release job graph changed unexpectedly: {sorted(build_jobs)}")
+
+expected_needs = {
+    "preflight": {"plan"},
+    "rootfs": {"plan", "preflight"},
+    "kernel": {"plan", "preflight"},
+    "assemble": {"plan", "rootfs", "kernel"},
+    "validate_artifacts": {"plan", "assemble"},
+    "validate_sd": {"plan", "assemble"},
+    "validate_nand": {"plan", "assemble"},
+    "sd_upgrade": {"plan", "assemble"},
+    "nand_rebase": {"plan", "assemble"},
+    "seal": {"plan", "assemble", "validate_artifacts", "validate_sd", "validate_nand", "sd_upgrade", "nand_rebase"},
+    "publish": {"plan", "seal"},
+}
+for name, expected in expected_needs.items():
+    actual = job_needs(build_jobs[name])
+    if actual != expected:
+        fail(f"Build & Release job {name} needs {sorted(actual)}, expected {sorted(expected)}")
+
+for name in ("rootfs", "kernel"):
+    if build_jobs[name].get("runs-on") != "ubuntu-24.04":
+        fail(f"{name} must remain an independent ubuntu-24.04 runner job")
+
+for name, job in build_jobs.items():
+    condition = job.get("if", "")
+    if "github.ref == 'refs/heads/main'" not in condition:
+        fail(f"Build & Release job {name} is not explicitly restricted to main")
+
+build_text = (WF / "build-release.yml").read_text(encoding="utf-8")
+if "run: sudo -E ./scripts/build-incremental.sh rootfs" not in build_text:
+    fail("rootfs is not a direct streaming build job")
+if "run: sudo -E ./scripts/build-incremental.sh kernel" not in build_text:
+    fail("kernel is not a direct streaming build job")
+if "out/build-logs/rootfs.log" in build_text or "out/build-logs/kernel.log" in build_text:
+    fail("release workflow buffers core build stdout instead of streaming it")
+if "actions/download-artifact@" in build_text:
+    fail("release handoff unexpectedly added a second artifact Action dependency")
+if "actions/cache@" in build_text:
+    fail("release workflow must not expose shared Actions caches to manually dispatched build code")
+for token in ("ROOTFS_SHA256", "KERNEL_SHA256", "CANDIDATE_SHA256", "REBASE_SHA256"):
+    if token not in build_text:
+        fail(f"release handoff is missing trusted digest boundary: {token}")
+if 'tar -I zstd -xf handoff/release-candidate.tar.zst' in build_text:
+    fail("release candidate is extracted directly into the checkout workspace")
+if '-C "$candidate_root" -xf handoff/release-candidate.tar.zst' not in build_text:
+    fail("release candidate is not isolated under runner temporary storage")
+if 'ATLANTIAN_CANDIDATE_DIR=$candidate_root/artifacts/current' not in build_text:
+    fail("validation jobs do not expose the isolated candidate data root")
 
 upstream_on = upstream.get("on", {})
 if not {"schedule", "workflow_dispatch", "push"}.issubset(upstream_on):

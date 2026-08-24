@@ -24,7 +24,8 @@ EOF_CONTROL
 copy() { local path=$1 target=$2; mkdir -p "$target/$(dirname "$path")"; cp -a "$RFS/$path" "$target/$path"; }
 conffiles() { [ -d "$1/etc" ] && find "$1/etc" -type f -printf '/etc/%P\n' >"$1/DEBIAN/conffiles" || true; }
 install_maintainer() {
-  local package=$1 name=$2 target=$3 source="$ROOT/packaging/$package/$name"
+  local package=$1 name=$2 target=$3
+  local source="$ROOT/packaging/$package/$name"
   [[ -f $source ]] || { echo "missing maintainer script: $source" >&2; exit 2; }
   install -m 0755 "$source" "$target/DEBIAN/$name"
   sed -i -e "s/@TARGET_VERSION@/$RELEASE_VERSION/g" -e "s/@TARGET_MAJOR@/$DEBIAN_MAJOR/g" "$target/DEBIAN/$name"
