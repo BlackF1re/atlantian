@@ -1,0 +1,40 @@
+#!/bin/sh
+set -e
+
+if [ -s /usr/lib/atlantian/os-release ]; then
+  install -m 0644 /usr/lib/atlantian/os-release /etc/os-release
+fi
+
+systemctl daemon-reload || true
+systemctl enable --now run-apt.mount >/dev/null 2>&1 || true
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+  systemd-tmpfiles --create /usr/lib/tmpfiles.d/atlantian-apt.conf || true
+fi
+
+install -d -m 0755 /etc/systemd/system/ssh.service.wants
+ln -sfn /usr/lib/systemd/system/atlantian-ssh-hostkeys.service \
+  /etc/systemd/system/ssh.service.wants/atlantian-ssh-hostkeys.service
+systemctl enable --force atlantian-status-leds.service atlantian-fpga-status-leds.service \
+  atlantian-release-check.timer || true
+
+edition=$(cat /run/atlantian/storage-edition 2>/dev/null || cat /usr/lib/atlantian/storage-edition 2>/dev/null || echo sd)
+case "$edition" in
+  nand)
+    systemctl disable atlantian-grow-rootfs.service atlantian-nand-auto-resume.service >/dev/null 2>&1 || true
+    systemctl enable --force atlantian-nand-reconcile.service >/dev/null 2>&1 || true
+    ;;
+  sd)
+    systemctl disable atlantian-nand-reconcile.service >/dev/null 2>&1 || true
+    systemctl enable --force atlantian-grow-rootfs.service atlantian-nand-auto-resume.service >/dev/null 2>&1 || true
+    ;;
+  *)
+    echo "unknown AtlANTian storage edition: $edition" >&2
+    exit 65
+    ;;
+esac
+
+template=/usr/lib/atlantian/runtime-sources.list
+if [ -s "$template" ] && [ ! -s /etc/apt/sources.list ]; then
+  install -d -m 0755 /etc/apt
+  install -m 0644 "$template" /etc/apt/sources.list
+fi

@@ -1,6 +1,4 @@
-# Common AtlANTian userspace for both SD and NAND. Preserve the useful
-# engineering/diagnostic surface in both storage modes; the NAND capacity gate,
-# not guesswork, decides whether further trimming is actually necessary.
+# Common runtime userspace for SD and NAND.
 openssh-server
 systemd-sysv
 dbus
@@ -39,3 +37,6 @@ tzdata
 fdisk
 e2fsprogs
 rsync
+# Build-only source for the static early-NAND initramfs shell. The build graph
+# extracts the binary and purges this package before either runtime rootfs is cloned.
+busybox-static

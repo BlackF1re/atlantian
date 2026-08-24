@@ -1,87 +1,65 @@
 # Contributing
 
-Prefer narrow changes, explicit evidence and a regression test/contract for every
-bug fixed. Start with the topic index in [docs/README.md](docs/README.md).
+Prefer narrow changes, explicit evidence and tests for behavioral contracts. Start with the topic index in [docs/README.md](docs/README.md).
 
-## Change rules
+## Rules by area
 
 | Area | Requirement |
 |---|---|
-| Debian lifecycle | keep immutable factory Snapshot and live runtime APT separate; never skip majors |
-| DT/kernel | preserve boot-critical interfaces and verified pin safety |
+| Debian lifecycle | keep reproducible factory Snapshot inputs separate from live runtime APT; never skip Debian majors |
+| DT/kernel | preserve boot-critical interfaces, DDR policy and verified pin safety |
 | FPGA profile | document bitstream, DT overlay, pins, voltage and conflicts |
-| persistence/update | preserve documented user/application state; package state must follow the active base |
-| release tooling | fail closed on validation errors while treating same-source GitHub release state idempotently |
-| GitHub Actions | use allow-listed official Actions pinned to immutable 40-hex commits |
+| SD update | preserve A/B FIT and boot-ABI fail-closed behavior |
+| NAND | preserve raw+OOB backup, recovery-SD staging, read-back verification and rebase ordering |
+| release tooling | verify version-matched assets/checksums and keep same-source publication idempotent |
+| GitHub Actions | use allow-listed Actions pinned to immutable 40-hex commits |
 
-Passwordless root on a fresh image is deliberate first-provisioning policy; do not
-silently change it as a generic hardening cleanup.
+Passwordless root on a fresh image is deliberate first-provisioning policy. Do not silently alter that behavior as unrelated cleanup.
 
-## Checks
-
-Run the relevant fast checks before pushing. The normal CI baseline is:
+## Fast validation
 
 ```sh
 python3 .github/scripts/validate-automation.py
 python3 .github/scripts/actions-policy.py scan .github/workflows
 python3 .github/scripts/check-doc-links.py
-bash scripts/test-build-orchestration.sh
-bash scripts/test-runtime-policy.sh
-bash scripts/test-release-versioning.sh
-bash scripts/test-source-contracts.sh
-bash scripts/test-update-leds.sh
+scripts/test-build-orchestration.sh
+scripts/test-runtime-policy.sh
+scripts/test-release-versioning.sh
+scripts/test-source-contracts.sh
+scripts/test-update-leds.sh
+scripts/test-release-metrics.sh
 ```
 
-Release/download-metric changes should also run:
-
-```sh
-bash scripts/test-release-metrics.sh
-```
+CI additionally runs shellcheck and scope-specific release/kernel checks.
 
 Complete build:
 
 ```sh
-sudo bash scripts/bootstrap-host.sh
-sudo -E bash scripts/build-incremental.sh all
+sudo scripts/bootstrap-host.sh
+sudo -E scripts/build-incremental.sh all
 ```
 
-Repository scripts are invoked through explicit interpreters so source archives
-remain usable even if executable mode bits are lost while downloading and
-re-uploading files.
+Production `Build & Release` additionally validates the finished release inventory, SD image layout, NAND bundle, a real cross-release SD package update and NAND state rebase before sealing the artifact.
 
-Production CI additionally runs the release-upgrade gate and the clean NAND
-OverlayFS rebase integration test. Local opt-in is available through
-`ATLANTIAN_RELEASE_UPGRADE_TEST=true` and `ATLANTIAN_NAND_REBASE_TEST=true` when
-running `scripts/test-build.sh` against built artifacts.
+## Repository structure
+
+- Executable shell helpers are committed executable and can be invoked directly.
+- `scripts/` contains build/runtime/test commands, not abandoned bench utilities.
+- Debian maintainer scripts live under `packaging/`, not embedded as heredocs in the package builder.
+- One orchestrator owns build ordering; leaf builders fail on missing prerequisites rather than recursively starting earlier stages.
+- Put local build overrides in `config/local.env`; do not commit developer-specific paths or credentials.
+- Use Conventional Commits.
+
+## Documentation
+
+Each behavior has one primary document. Update that document and link to it elsewhere instead of copying operational instructions. Historical implementation notes should remain only when they are required to explain a current compatibility boundary.
 
 ## Hardware evidence
 
-A hardware claim should state what proves it: schematic/board evidence for routes,
-boot log + functional test for peripherals, bitstream/DTBO/pin map for FPGA
-profiles, and voltage/conflict analysis plus bench validation for electrical
-safety. Do not promote a route from **Profile**, **Candidate** or **Validation** to
-**Ready** merely because a Zynq driver exists.
+A hardware claim needs evidence appropriate to the layer: PCB/schematic route, voltage and ownership for pins; boot/functional logs for peripherals; exact bitstream/DT-overlay pair for FPGA profiles; destructive/fault-injection bench evidence for NAND/boot recovery claims.
 
-## Repository hygiene
-
-- Use Conventional Commits.
-- Do not commit secrets, personal hostnames/addresses or local machine paths.
-- Put installation-specific overrides in `config/local.env`.
-- Keep documentation in the file that owns the topic and cross-link instead of
-  duplicating behavior.
-- Treat `config/packages.base` as the userspace source of truth rather than
-  maintaining prose package inventories.
-- Update owning documentation and tests when behavior changes.
+Do not promote an item in [hardware-support-matrix.md](docs/hardware-support-matrix.md) to **Ready** solely because a driver compiles.
 
 ## Pull requests and publication
 
-External contributions use pull requests. PR CI is read-only and validates source,
-workflow, Markdown and build contracts. Dependabot Action-pin updates may follow
-the repository's restricted trusted automation only when the diff is limited to
-allow-listed immutable Action pin replacements; structural workflow changes remain
-manual.
-
-Production artifacts are published only from the current `main` tip after the
-full gates in [docs/PIPELINE.md](docs/PIPELINE.md) pass. Fresh repositories and
-interrupted same-source publication use the idempotent bootstrap/reconciliation
-rules documented there.
+`main` is protected by the required `Validate` check. Production releases are published only from the current `main` source revision after the gates described in [docs/PIPELINE.md](docs/PIPELINE.md).

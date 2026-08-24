@@ -1,0 +1,62 @@
+#!/bin/sh
+# Power-loss-safe SD kernel transaction. Early BOOT.bin/u-boot.img stay on the
+# known-good boot chain; only the checksummed kernel+DTB FIT slot is switched.
+set -eu
+source=/usr/lib/atlantian/boot
+target=/boot
+abi=$(cat "$source/atlantian-boot-abi")
+fit="$source/atlantian.itb"
+[ -d "$target" ] || { echo 'AtlANTian SD boot partition is not mounted at /boot' >&2; exit 1; }
+[ -s "$fit" ] && [ -s "$source/boot.scr" ] || { echo 'AtlANTian boot package is incomplete' >&2; exit 1; }
+case "$abi" in ''|*[!0-9]*) echo 'invalid AtlANTian boot ABI' >&2; exit 1;; esac
+
+write_fit() {
+  dest=$1
+  rm -f "$target/.$dest.new" "$target/$dest"
+  sync
+  install -m 0644 "$fit" "$target/.$dest.new"
+  cmp -s "$fit" "$target/.$dest.new" || { echo "FIT staging verification failed: $dest" >&2; exit 1; }
+  sync
+  mv -f "$target/.$dest.new" "$target/$dest"
+  sync
+}
+
+boot_script_compatible() {
+  # U-Boot legacy image bytes 4..11 are header CRC + wall-clock timestamp.
+  # Ignore only those non-semantic fields; magic, remaining header fields and
+  # the complete script payload must stay byte-identical within one boot ABI.
+  cmp -s -n 4 "$source/boot.scr" "$target/boot.scr" &&
+    cmp -s -i 12 "$source/boot.scr" "$target/boot.scr"
+}
+
+[ -s "$target/atlantian-A.itb" ] && [ -s "$target/atlantian-B.itb" ] || {
+  echo 'online SD kernel updates require a transactional A/B AtlANTian image; reflash with a current image' >&2
+  exit 78
+}
+installed_abi=$(cat "$target/atlantian-boot-abi" 2>/dev/null || true)
+[ "$installed_abi" = "$abi" ] || {
+  echo "online boot-loader ABI change is unsupported ($installed_abi -> $abi); reflash the SD image" >&2
+  exit 78
+}
+boot_script_compatible || {
+  echo 'online boot.scr replacement is intentionally blocked; reflash is required for a boot-loader ABI change' >&2
+  exit 78
+}
+
+if [ -e "$target/atlantian-slot-B" ]; then
+  inactive=atlantian-A.itb
+  next=A
+else
+  inactive=atlantian-B.itb
+  next=B
+fi
+write_fit "$inactive"
+
+if [ "$next" = B ]; then
+  printf 'B\n' >"$target/.atlantian-slot-B.new"
+  sync
+  mv -f "$target/.atlantian-slot-B.new" "$target/atlantian-slot-B"
+else
+  rm -f "$target/atlantian-slot-B"
+fi
+sync

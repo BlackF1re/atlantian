@@ -1,87 +1,22 @@
-# Upgrading AtlANTian
+# Updating AtlANTian
 
-This document owns user-facing update behavior. Release publication mechanics and
-upstream-input tracking are in [Pipeline](PIPELINE.md); Debian
-Snapshot/major-generation policy is in [Debian lifecycle](DEBIAN-LIFECYCLE.md).
+`atlantian-sysupgrade` is the stable user command in both storage modes. It reads the installed storage identity and dispatches to the SD or NAND backend.
 
-| Goal | SD boot | NAND boot |
-|---|---|---|
-| Debian packages | normal live APT | normal live APT into active upper |
-| Install package | `apt install <package>` | same |
-| AtlANTian platform/kernel | `atlantian-sysupgrade`; kernel+DTB use transactional A/B FIT slots | stage verified target on paired recovery SD, then continue from SD |
-| Early U-Boot | retained during online update; newer bootloader arrives with a freshly flashed image | release-matched raw boot is updated through recovery-SD maintenance |
-| Next Debian major | staged explicit `N → N+1` transition | clean NAND reinstall |
-
-Runtime APT follows the installed Debian codename, never moving `stable` and never
-waiting for a new AtlANTian image release to receive ordinary Debian updates.
-
-## Release selection
-
-Check a running system with:
+## Check for an update
 
 ```sh
 atlantian-sysupgrade --check
+```
+
+To read release notes:
+
+```sh
 atlantian-sysupgrade --notes
 ```
 
-The updater selects complete published releases from the repository recorded in
-the installation. Same-major candidates are preferred before the immediate next
-Debian major.
+Interactive SSH login also shows a cached notice when a compatible newer release has already been discovered by `atlantian-release-check.timer`.
 
-Stable installations do not opt into prereleases. An installation already on an
-alpha/beta/rc line may receive newer prereleases until the stable release is
-reached.
-
-The daily upstream watcher may update the factory Debian Snapshot, Linux LTS
-patchlevel and stable U-Boot input in one protected transaction. Debian-only
-factory changes may wait for release batching; this has no effect on normal live
-APT maintenance. A kernel/U-Boot input change makes the combined factory
-transaction release-eligible immediately so userspace and board boot inputs are
-not published as separate artificial releases.
-
-### Release version vs Debian package version
-
-AtlANTian release identity and Debian package identity are related but use
-different strings. For a prerelease:
-
-```text
-AtlANTian release:       X.Y.Z-alpha.N
-Debian package Version:  X.Y.Z~alpha.N-1
-public .deb filename:    atlantian-kernel_X.Y.Z.alpha.N-1_armhf.deb
-```
-
-The `~` stays inside Debian package metadata because Debian sorts it before the
-corresponding stable version. Public GitHub filenames replace that `~` with `.`.
-`atlantian-sysupgrade` verifies Package, Version, Architecture and published
-SHA-256 rather than trusting the filename. Legacy prerelease naming used by older
-AtlANTian releases remains accepted for compatibility.
-
-## Ordinary Debian package maintenance
-
-On either storage edition:
-
-```sh
-apt update
-apt upgrade
-apt install <package>
-```
-
-On SD, writes go directly to ext4 ROOT. On NAND, writes go to the active OverlayFS
-upper: internal UBIFS or adopted recovery-SD upper. Ordinary APT does not replace
-the custom AtlANTian kernel, SD boot firmware, immutable NAND base or raw NAND
-boot region.
-
-Factory builds use an immutable Debian Snapshot for reproducibility; installed
-systems use the live repositories for their fixed codename. These are deliberately
-separate policies.
-
-APT repository indexes live in `/run/apt/lists` on a **bounded 96 MiB tmpfs**.
-Downloaded `.deb` files use APT's normal storage-backed archive staging and are
-configured not to be retained after installation. This avoids the previous risk
-where a large transaction could use a tmpfs sized to half of installed RAM,
-particularly on a 512 MiB board.
-
-## SD platform update
+## SD updates
 
 Run:
 
@@ -89,222 +24,75 @@ Run:
 atlantian-sysupgrade
 ```
 
-For a same-major release, the updater:
+The SD backend:
 
-1. discovers a complete compatible Release;
-2. after confirmation, records the best-effort update marker and downloads the
-   exact three advertised AtlANTian `.deb` assets plus `SHA256SUMS`;
-3. verifies package identity and checksum independently of the filename;
-4. installs the version-locked platform/kernel/release package set;
-5. refreshes Debian packages from the installed release's managed repositories;
-6. reboots.
+1. queries published GitHub Releases;
+2. selects the newest complete release reachable from the installed Debian generation;
+3. downloads exactly `atlantian-platform`, `atlantian-kernel`, `atlantian-release` and `SHA256SUMS`;
+4. verifies public filenames, Debian package metadata, common package revision and SHA-256;
+5. installs the package set through APT;
+6. runs a normal Debian `full-upgrade` for the configured codename;
+7. audits dpkg state and reboots.
 
-The kernel/platform/release package set is not intentionally mixed across
-AtlANTian releases.
+The kernel package is an A/B FIT transaction. It requires both FIT slots and a matching boot ABI, writes only the inactive slot, verifies it, syncs it, and then changes the active-slot marker. `BOOT.bin` and `u-boot.img` are not replaced online.
 
-### Transactional SD kernel/DT update
+If the package's `boot.scr` is semantically incompatible, or the boot ABI changes, the online update fails with a reflash requirement. U-Boot legacy header CRC/timestamp bytes are ignored when comparing otherwise identical scripts because they are build-time metadata, not boot semantics.
 
-Current factory images use the existing 48 MiB FAT BOOT partition with two FIT
-slots:
+### Debian-major transition on SD
 
-```text
-atlantian-A.itb
-atlantian-B.itb
-atlantian-slot-B   # present only when B is active
-```
+The SD updater supports the immediate next Debian major only. It requires additional free space, backs up and disables third-party APT sources, fully upgrades the current Debian generation, records a resumable marker, installs the authorized AtlANTian target package set, switches to the packaged target-codename repositories, completes the target `full-upgrade`, audits dpkg and reboots.
 
-Each `.itb` contains the matching Linux kernel and device tree in one FIT object
-with SHA-256 hashes. No second rootfs, extra partition or permanent update reserve
-is created.
-
-During a normal platform update the kernel package:
-
-1. chooses the **inactive** FIT slot;
-2. removes only that inactive rollback copy, immediately freeing its FAT clusters
-   while the selected active slot remains untouched and bootable;
-3. writes the complete new FIT to a hidden temporary name in the freed space;
-4. byte-compares the staged file with the package payload and `sync`s it;
-5. renames it to the inactive A/B slot and syncs again;
-6. commits the transaction by changing only the tiny active-slot marker;
-7. leaves the previous active FIT untouched as rollback.
-
-The BOOT partition therefore needs space for only the normal A and B FIT slots,
-not a third FIT-sized staging reserve. If power is lost while the inactive slot is
-being replaced, the marker still selects the untouched active slot. The marker is
-changed only after the replacement FIT has been fully written, verified and synced.
-
-At boot, `boot.scr` tries the selected FIT first and the other FIT second. A power
-loss before the marker commit leaves the previous slot selected. A power loss
-after the commit still leaves the previous complete slot available as fallback.
-Kernel and DTB are never updated as independent boot files, so the normal update
-cannot create a mixed kernel/device-tree generation.
-
-The active-A representation is the **absence** of `atlantian-slot-B`; switching
-back to A therefore removes that marker only after A is fully staged. The FAT
-filesystem is not treated as a general multi-file transaction—the design reduces
-the commit point to one tiny directory-entry change after all large writes are
-complete.
-
-### SD update compatibility boundary
-
-In-place platform updates are supported only from images that already use the
-transactional A/B FIT layout above. Releases that still boot separate `uImage`
-and `devicetree.dtb` payloads are not migration sources; flash a current image
-instead.
-
-The kernel package checks for both FIT slots, the expected boot ABI and the
-matching FIT-aware `boot.scr` before it writes the inactive slot. If that contract
-is absent or changed, the update fails closed and requests a reflash. The current
-boot script contains no legacy payload fallback.
-
-### Why online updates do not rewrite `BOOT.bin`/`u-boot.img`
-
-The BootROM/SPL/U-Boot chain is earlier than the A/B FIT commit point. Rewriting
-those files in-place on the same FAT partition would reintroduce a power-loss
-window before the transactional kernel loader exists. AtlANTian therefore keeps
-the installed SD `BOOT.bin`, `u-boot.img` and compatible `boot.scr` during normal
-A/B platform updates.
-
-Freshly flashed images contain the current validated stable U-Boot. If a future
-change requires a different online boot ABI/loader, the kernel package fails
-closed and requests a reflash rather than silently weakening the transaction
-model. This costs no extra rootfs and avoids pretending that early boot firmware
-has redundancy it does not have.
-
-## Same-major NAND platform update
-
-While booted from NAND, insert the **paired recovery SD** and run:
+If interrupted after the major-upgrade marker is written, run:
 
 ```sh
 atlantian-sysupgrade
 ```
 
-The NAND updater:
+AtlANTian resumes the recorded target instead of selecting a different release.
 
-1. selects the newest compatible same-major release;
-2. requires the paired install/recovery card;
-3. after confirmation, records the best-effort update marker and downloads the
-   matching `atlantian-nand-<release>.tar.zst` to that card;
-4. verifies public `SHA256SUMS`, bundle checksums and release identity;
-5. records the prepared target on the recovery SD;
-6. asks for physical **NAND → SD** handoff;
-7. reboots into the recovery card.
+## NAND updates
 
-At the next root login from SD, the prepared maintenance transaction starts
-`atlantian-nand-upgrade`. A separately flashed target SD image is not required.
-The release-matched NAND raw boot region—including the target NAND U-Boot—is
-updated through this recovery transaction, not through live writes from the NAND
-root filesystem.
+The same command is used while booted from NAND:
 
-### Rebase policy
-
-Before destructive writes the SD-side updater validates current/target release,
-NAND geometry, target bundle and writable-layer state.
-
-Persistent user/admin deltas are captured from:
-
-```text
-/etc        /root       /home       /usr/local
-/opt        /srv        /var/local  /var/lib
-/var/spool  /var/www
+```sh
+atlantian-sysupgrade
 ```
 
-Package-management state under `/var/lib` is excluded where copying it would bind
-the new base to old dpkg/APT/systemd/ucf/initramfs state. Package payload
-namespaces such as `/usr`, `/bin` and `/lib` are not copied from the old upper.
-Manual package intent and package holds are recorded separately.
+The NAND backend advertises **same-Debian-major releases only**. It requires the paired recovery microSD, downloads the exact `atlantian-nand-<version>.tar.zst` bundle and public checksum manifest onto that card, verifies the archive and its internal checksums/manifest, then records a prepared target.
 
-After literal `UPGRADE`:
+After staging:
 
-1. SD U-Boot programs and twice read-back-verifies the target raw boot payload;
-2. SD Linux validates saved deltas before formatting UBI;
-3. the target SquashFS base is written and verified;
-4. fresh writable upper/work state is created;
-5. persistent deltas are replayed against the target lower;
-6. an adopted external upper, when present, is recreated/rebased separately;
-7. after **SD → NAND** handoff, first boot reconciles package holds/manual package
-   intent and runs `dpkg --audit`.
+1. move the physical boot-source jumper from NAND to SD when prompted;
+2. reboot from the paired recovery card;
+3. root login starts the prepared `atlantian-nand-upgrade` transaction;
+4. current persistent state/package intent is captured;
+5. SD U-Boot programs and verifies raw boot;
+6. SD Linux rebuilds/verifies UBI and rebases persistent state;
+7. move the jumper back to NAND only after verified handoff is offered.
 
-A complete old upper, old dpkg database and old package whiteouts are never copied
-wholesale onto the new base.
+The prepared bundle path and release identity are checked again by the NAND maintenance script before destructive work.
 
-If package reconciliation cannot finish, its marker remains and systemd retries on
-a later boot; the immutable target base remains intact.
+### Debian-major transition on NAND
 
-### Adopted external-upper requirement
+A NAND immutable-base transition to another Debian major is a **clean reinstall**, not an in-place sysupgrade. Write/boot the target SD release and follow [INSTALLATION.md](INSTALLATION.md).
 
-If NAND records an adopted recovery-SD token, that exact card must be present for
-a platform rebase. AtlANTian refuses to replace the lower beneath an unavailable
-external upper. Normal NAND boot without the card may still use the independent
-internal upper.
+## Ordinary Debian updates
 
-## Download metrics
+AtlANTian runtime APT sources track the configured Debian codename. Normal package maintenance remains ordinary Debian administration:
 
-Current releases publish the versioned image:
-
-```text
-atlantian-<release>.img.xz
+```sh
+apt update
+apt upgrade
 ```
 
-**Image Downloads** is the cumulative GitHub `download_count` for all published
-AtlANTian SD image asset naming generations: current versioned `.img.xz`,
-historical versioned `.img`, and the one legacy unversioned `atlantian.img`.
-Package, checksum and metadata downloads are excluded from this aggregate.
+On NAND these writes go to the active OverlayFS upper. AtlANTian immutable base/raw boot is changed only through `atlantian-sysupgrade`.
 
-Every release also publishes the tiny stable `atlantian-update.json` marker.
-`atlantian-sysupgrade --check` and `--notes` do **not** download it. After the user
-confirms an update, or uses `--yes`, the SD/NAND updater attempts to fetch it once
-and caches a valid marker for that target release. Failure to fetch or validate the
-marker never blocks the update.
+## Release discovery and metrics
 
-**System Updates** sums `download_count` only for those update-marker assets. It is
-therefore an approximate count of update transactions that reached this stage,
-not a count of unique boards and not proof that every update completed. Deleting
-the staging cache and starting the same target again can add another download.
+The release checker requires a complete version-matched package set and `SHA256SUMS`. Prerelease `.deb` assets use GitHub-safe dotted public filenames while the package's internal Debian version retains `~` ordering.
 
-AtlANTian adds no installation ID, serial number or device token to the marker
-request. The public badges consume only GitHub's aggregate Release-asset
-`download_count`; they make no claim about what network/service logs GitHub itself
-may retain.
+When a real update transaction begins, the updater best-effort downloads the release's small `atlantian-update.json` marker for anonymous aggregate update/download metrics. Failure of that marker never blocks the actual verified update.
 
-The Pages-backed totals and per-file Release counters refresh after publication
-and hourly. A completed `Build & Release` triggers the refresh only when a Release
-exists for that exact source SHA, so plan-only runs do not perform a Pages deploy.
-GitHub and Shields caching can delay the displayed value.
+## Recovery rule
 
-CI release-upgrade validation uses retained, SHA-sealed Actions artifacts rather
-than public Release assets, so production validation does not increase the image
-or update-marker counters.
-
-## Debian-major transition
-
-A Debian-major transition changes the first component of the AtlANTian version and
-is always explicit.
-
-### SD: `N → N+1`
-
-A published next-major AtlANTian release may be installed only one Debian major at
-a time. `atlantian-sysupgrade` manages the staged/resumable transition and managed
-APT-source changes.
-
-### NAND: clean reinstall
-
-Cross-major NAND rebase is intentionally unsupported:
-
-1. back up required application/user data;
-2. boot the next-major unified AtlANTian image from SD;
-3. run a clean `atlantian-nand-install`;
-4. restore only known-compatible data and reinstall required packages.
-
-## Recovery
-
-For an SD system, use normal Debian recovery tools plus
-`atlantian-sysupgrade --check`. If the selected FIT cannot boot, the boot script
-tries the other complete slot automatically. A deliberately selected previous
-slot can also be restored from U-Boot/FAT if manual recovery is needed.
-
-For NAND boot/base trouble, select physical SD boot and use the paired AtlANTian
-recovery card. Never write raw `/dev/mtd*` with generic `dd`.
-
-Storage internals: [NAND](NAND.md). Writable-state model:
-[Persistence](PERSISTENCE.md).
+Do not bypass failed verification by deleting markers or manually copying boot files. SD and NAND update markers are transaction state. Diagnose the reported failing invariant, then resume or reflash/reinstall as instructed.
