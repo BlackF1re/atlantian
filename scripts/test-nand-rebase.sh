@@ -10,7 +10,8 @@ LOWER=${1:-$ROOT/out/rootfs-nand}
 command -v mountpoint >/dev/null
 command -v rsync >/dev/null
 
-workroot=$(mktemp -d "$ROOT/out/rebase-test.XXXXXX")
+tmp_base=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
+workroot=$(mktemp -d "$tmp_base/atlantian-nand-rebase.XXXXXX")
 old_upper=$workroot/old-upper
 old_work=$workroot/old-work
 old_merged=$workroot/old-merged
