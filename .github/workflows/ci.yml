@@ -16,6 +16,7 @@ on:
       - 'README.md'
       - 'SECURITY.md'
       - 'CONTRIBUTING.md'
+      - 'LICENSE'
       - 'docs/**'
   workflow_dispatch:
     inputs:
