@@ -16,30 +16,30 @@ on:
       - 'scripts/refresh-uboot-base.sh'
 
 permissions:
-  actions: write
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: atlantian-upstream-watch
   cancel-in-progress: false
 
 jobs:
-  refresh:
-    name: Refresh reproducible base
+  candidate:
+    name: Validate upstream candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
-      actions: write
-      contents: write
-      pull-requests: write
-      statuses: write
+      contents: read
+    outputs:
+      changed: ${{ steps.upstream.outputs.changed }}
+      boot_changed: ${{ steps.upstream.outputs.boot_changed }}
+      candidate_digest: ${{ steps.digest.outputs.sha256 }}
     steps:
       - name: Checkout
         # v7.0.1
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Refresh Debian snapshot
         id: debian
@@ -115,14 +115,103 @@ jobs:
         if: steps.debian.outputs.major_available == 'true'
         run: echo "Debian ${{ steps.debian.outputs.candidate_major }} (${{ steps.debian.outputs.candidate_codename }}) is available; AtlANTian remains on its configured generation until an explicit transition." >>"$GITHUB_STEP_SUMMARY"
 
-      - name: Merge changed inputs through protected main
-        id: merge
-        if: steps.upstream.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BOOT_CHANGED: ${{ steps.upstream.outputs.boot_changed }}
+      - name: Seal candidate input diff
+        id: digest
         run: |
           set -euo pipefail
+          allowed=(
+            config/debian-snapshot.env
+            debian-release.sha256
+            debian-updates-release.sha256
+            debian-security-release.sha256
+            config/release.env
+            config/u-boot.env
+          )
+          mapfile -t changed_paths < <(git diff --name-only --)
+          for path in "${changed_paths[@]}"; do
+            permitted=false
+            for allowed_path in "${allowed[@]}"; do
+              [[ "$path" == "$allowed_path" ]] && permitted=true && break
+            done
+            [[ "$permitted" == true ]] || { echo "upstream refresh modified unexpected tracked path: $path" >&2; exit 1; }
+          done
+          digest=$(git diff --binary --no-ext-diff HEAD -- "${allowed[@]}" | sha256sum | awk '{print $1}')
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+          echo "sha256=$digest" >>"$GITHUB_OUTPUT"
+          echo "Candidate input diff SHA-256: \`$digest\`" >>"$GITHUB_STEP_SUMMARY"
+
+  apply:
+    name: Apply validated upstream input
+    needs: candidate
+    if: always() && needs.candidate.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - name: Checkout
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Reproduce validated input diff
+        id: reproduce
+        if: needs.candidate.outputs.changed == 'true'
+        env:
+          EXPECTED_DIGEST: ${{ needs.candidate.outputs.candidate_digest }}
+          EXPECTED_BOOT_CHANGED: ${{ needs.candidate.outputs.boot_changed }}
+        run: |
+          set -euo pipefail
+          scripts/refresh-debian-base.sh >/tmp/atlantian-debian-refresh.log
+          scripts/refresh-linux-base.sh >/tmp/atlantian-kernel-refresh.log
+          scripts/refresh-uboot-base.sh >/tmp/atlantian-uboot-refresh.log
+          cat /tmp/atlantian-debian-refresh.log /tmp/atlantian-kernel-refresh.log /tmp/atlantian-uboot-refresh.log
+
+          allowed=(
+            config/debian-snapshot.env
+            debian-release.sha256
+            debian-updates-release.sha256
+            debian-security-release.sha256
+            config/release.env
+            config/u-boot.env
+          )
+          mapfile -t changed_paths < <(git diff --name-only --)
+          [[ ${#changed_paths[@]} -gt 0 ]] || { echo 'validated upstream candidate disappeared before privileged apply' >&2; exit 1; }
+          boot_changed=false
+          for path in "${changed_paths[@]}"; do
+            permitted=false
+            for allowed_path in "${allowed[@]}"; do
+              [[ "$path" == "$allowed_path" ]] && permitted=true && break
+            done
+            [[ "$permitted" == true ]] || { echo "privileged refresh modified unexpected tracked path: $path" >&2; exit 1; }
+            case "$path" in config/release.env|config/u-boot.env) boot_changed=true ;; esac
+          done
+          [[ "$boot_changed" == "$EXPECTED_BOOT_CHANGED" ]] || {
+            echo "boot-change classification drifted: expected=$EXPECTED_BOOT_CHANGED reproduced=$boot_changed" >&2
+            exit 1
+          }
+          scripts/validate-release-inputs.sh
+          digest=$(git diff --binary --no-ext-diff HEAD -- "${allowed[@]}" | sha256sum | awk '{print $1}')
+          [[ "$digest" == "$EXPECTED_DIGEST" ]] || {
+            echo "upstream candidate changed between validation and apply: expected=$EXPECTED_DIGEST reproduced=$digest" >&2
+            exit 1
+          }
+          echo "boot_changed=$boot_changed" >>"$GITHUB_OUTPUT"
+
+      - name: Merge changed inputs through protected main
+        id: merge
+        if: needs.candidate.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOT_CHANGED: ${{ steps.reproduce.outputs.boot_changed }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
           git config user.name github-actions
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add debian-release.sha256 debian-updates-release.sha256 debian-security-release.sha256 config/debian-snapshot.env config/release.env config/u-boot.env
@@ -146,7 +235,7 @@ jobs:
           echo "release_input_commits=$count" >>"$GITHUB_OUTPUT"
 
       - name: Dispatch verified release
-        if: steps.upstream.outputs.changed == 'true' && steps.merge.outputs.release_due == 'true'
+        if: needs.candidate.outputs.changed == 'true' && steps.merge.outputs.release_due == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_MAIN: ${{ steps.merge.outputs.merge_sha }}
@@ -156,12 +245,12 @@ jobs:
           gh workflow run build-release.yml --ref main -f publish=true
 
       - name: Report deferred Debian-only release
-        if: steps.upstream.outputs.changed == 'true' && steps.merge.outputs.release_due != 'true'
+        if: needs.candidate.outputs.changed == 'true' && steps.merge.outputs.release_due != 'true'
         run: echo "Debian-only refresh accumulated ${{ steps.merge.outputs.release_input_commits }}/5 release-input commits; publication is deferred." >>"$GITHUB_STEP_SUMMARY"
 
       - name: Recover missed release dispatch
         id: recovery
-        if: steps.upstream.outputs.changed != 'true'
+        if: needs.candidate.outputs.changed != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -179,13 +268,14 @@ jobs:
           echo 'dispatched=true' >>"$GITHUB_OUTPUT"
 
       - name: Keep schedule active
-        if: steps.upstream.outputs.changed != 'true' && steps.recovery.outputs.dispatched != 'true'
+        if: needs.candidate.outputs.changed != 'true' && steps.recovery.outputs.dispatched != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           now=$(date -u +%s); last=$(git log -1 --format=%ct)
           (( now - last >= 45 * 86400 )) || exit 0
+          gh auth setup-git
           git config user.name github-actions
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           title='chore: keep upstream watcher active'
