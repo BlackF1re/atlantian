@@ -52,7 +52,8 @@ require 'blackf1re.github.io%2Fatlantian%2Fimage-downloads.json' "$readme"
 require 'query=%24.imageDownloads&label=image%20downloads' "$readme"
 require 'query=%24.systemUpdates&label=system%20updates' "$readme"
 
-# Per-asset counters are maintained by the dedicated Pages workflow and embedded in release notes.
+# Initial per-asset badges read GitHub directly so release publication cannot cache a
+# missing Pages key. The metrics workflow still owns aggregate data and post-deploy backfill.
 require 'contents: write' "$metrics"
 require 'workflow_run:' "$metrics"
 require 'workflows: [Build & Release]' "$metrics"
@@ -62,7 +63,9 @@ require '"assetIndex"' "$metrics"
 require 'Backfill artifact download columns' "$metrics"
 require 'gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id"' "$metrics"
 require '| Artifact | Size | Downloads |' "$notes"
-require '$.assetDownloads.' "$notes"
+require 'img.shields.io/github/downloads/' "$notes"
+require 'displayAssetName' "$notes"
+reject '$.assetDownloads.' "$notes"
 require 'per-asset' "$pipeline"
 require 'Downloads' "$pipeline"
 
