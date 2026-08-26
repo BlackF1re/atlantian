@@ -11,13 +11,6 @@ ARTIFACT_DIR=$(dirname "$METADATA")
 COMMIT=$(git rev-parse "$REF")
 SHORT_COMMIT=$(git rev-parse --short=12 "$REF")
 
-METRICS_URL=${ATLANTIAN_DOWNLOAD_METRICS_URL:-}
-if [[ -z "$METRICS_URL" && -n ${GITHUB_REPOSITORY:-} ]]; then
-  metrics_owner=${GITHUB_REPOSITORY%%/*}; metrics_repo=${GITHUB_REPOSITORY#*/}
-  METRICS_URL="https://${metrics_owner,,}.github.io/${metrics_repo}/image-downloads.json"
-fi
-[[ -n "$METRICS_URL" ]] || METRICS_URL='https://example.invalid/image-downloads.json'
-
 mapfile -t values < <(python3 - "$METADATA" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding='utf-8') as stream: m = json.load(stream)
@@ -31,13 +24,14 @@ RELEASE=${values[0]}; PACKAGE_VERSION=${values[1]}; SOURCE_REVISION=${values[2]}
 case "$RELEASE" in *-*) RELEASE_TYPE="prerelease (${RELEASE#*-})" ;; *) RELEASE_TYPE=stable ;; esac
 fmt_bytes() { numfmt --to=iec-i --suffix=B --format='%.2f' "$1"; }
 download_badge() {
-  local name=$1
-  python3 - "$METRICS_URL" "$TAG" "$name" <<'PY'
-import hashlib, sys, urllib.parse
-metrics_url, tag, name = sys.argv[1:]
-key = "a" + hashlib.sha256(f"{tag}\n{name}".encode()).hexdigest()
-params = urllib.parse.urlencode({"url":metrics_url,"query":f"$.assetDownloads.{key}","label":"","prefix":"↓ ","cacheSeconds":"3600"})
-print(f"![downloads](https://img.shields.io/badge/dynamic/json?{params})")
+  local name=$1 repository=${GITHUB_REPOSITORY:-BlackF1re/atlantian}
+  python3 - "$repository" "$TAG" "$name" <<'PY'
+import sys, urllib.parse
+repository, tag, name = sys.argv[1:]
+owner, repo = repository.split('/', 1)
+segments = [urllib.parse.quote(value, safe='') for value in (owner, repo, tag, name)]
+params = urllib.parse.urlencode({"displayAssetName":"false","label":"↓"})
+print(f"![downloads](https://img.shields.io/github/downloads/{'/'.join(segments)}?{params})")
 PY
 }
 artifact_row() { local path=$1 name; [[ -s $path ]] || { echo "release artifact is missing: $path" >&2; exit 2; }; name=$(basename "$path"); printf '| `%s` | %s | %s |\n' "$name" "$(fmt_bytes "$(stat -c %s "$path")")" "$(download_badge "$name")"; }
