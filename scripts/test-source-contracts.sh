@@ -32,7 +32,11 @@ done
 grep -Fq 'if (maf != 0x2c || dev != 0xda)' scripts/uboot-zynq-spl-reader.inc || fail 'NAND SPL identity contract drifted from configured stock NAND'
 grep -Fq 'EXPECTED_MANUFACTURER=@ATLANTIAN_NAND_MANUFACTURER_ID@' scripts/atlantian-nand-install-guard.sh || fail 'NAND installer guard lost manufacturer identity injection'
 grep -Fq 'EXPECTED_DEVICE=@ATLANTIAN_NAND_DEVICE_ID@' scripts/atlantian-nand-install-guard.sh || fail 'NAND installer guard lost device identity injection'
+grep -Fq 'EXPECTED_MANUFACTURER=@ATLANTIAN_NAND_MANUFACTURER_ID@' scripts/atlantian-nand-install.sh || fail 'destructive NAND installer lost manufacturer identity injection'
+grep -Fq 'EXPECTED_DEVICE=@ATLANTIAN_NAND_DEVICE_ID@' scripts/atlantian-nand-install.sh || fail 'destructive NAND installer lost device identity injection'
+grep -Fq 'verify_nand_identity' scripts/atlantian-nand-install.sh || fail 'destructive NAND installer no longer rechecks chip identity'
 grep -Fq 'atlantian-nand-install.real' scripts/install-nand-tools.sh || fail 'destructive NAND installer is no longer behind the identity guard'
+scripts/test-nand-identity.sh
 for dts in board/zynq-bitmain-antminer-s9.dts board/uboot_bitmain-antminer-s9.dts; do
   grep -Fq 'reg = <0x0 0x40000000>;' "$dts" || fail "1 GiB DDR aperture missing from $dts"
 done
