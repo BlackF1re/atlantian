@@ -55,7 +55,14 @@ jobs:
             exit 0
           fi
 
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$pr/files?per_page=100" > "$files"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$pr/files?per_page=100" \
+            | jq '[.[][]]' > "$files"
+          expected_files=$(jq -r '.changed_files' "$meta")
+          actual_files=$(jq 'length' "$files")
+          [[ "$expected_files" =~ ^[0-9]+$ && "$actual_files" -eq "$expected_files" ]] || {
+            echo "Incomplete Dependabot file inventory: expected=$expected_files fetched=$actual_files" >&2
+            exit 1
+          }
           gh api "repos/$GITHUB_REPOSITORY/contents/.github/scripts/actions-policy.py?ref=main" \
             --jq '.content' | tr -d '\n' | base64 -d > "$policy"
           python3 "$policy" dependabot-files "$files"
