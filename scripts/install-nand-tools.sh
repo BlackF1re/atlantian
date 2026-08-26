@@ -5,10 +5,22 @@ ROOT=${1:?usage: install-nand-tools.sh ROOTFS EDITION}
 EDITION=${2:?usage: install-nand-tools.sh ROOTFS EDITION}
 [[ -d $ROOT ]] || { echo "missing rootfs: $ROOT" >&2; exit 2; }
 case "$EDITION" in sd|nand) ;; *) echo "invalid storage edition: $EDITION" >&2; exit 64 ;; esac
+. "$PROJECT/config/nand-layout.env"
 
-for tool in atlantian-nand-backup atlantian-nand-install atlantian-nand-upgrade atlantian-nand-rebase atlantian-storage atlantian-nand-firstboot atlantian-nand-reconcile; do
+for tool in atlantian-nand-backup atlantian-nand-upgrade atlantian-nand-rebase atlantian-storage atlantian-nand-firstboot atlantian-nand-reconcile; do
   install -D -m 0755 "$PROJECT/scripts/$tool.sh" "$ROOT/usr/local/sbin/$tool"
 done
+# Keep the destructive implementation private behind an exact NAND-ID guard.
+install -D -m 0755 "$PROJECT/scripts/atlantian-nand-install.sh" "$ROOT/usr/local/sbin/atlantian-nand-install.real"
+install -D -m 0755 "$PROJECT/scripts/atlantian-nand-install-guard.sh" "$ROOT/usr/local/sbin/atlantian-nand-install"
+sed -i \
+  -e "s/@ATLANTIAN_NAND_MANUFACTURER_ID@/$ATLANTIAN_NAND_MANUFACTURER_ID/g" \
+  -e "s/@ATLANTIAN_NAND_DEVICE_ID@/$ATLANTIAN_NAND_DEVICE_ID/g" \
+  "$ROOT/usr/local/sbin/atlantian-nand-install"
+! grep -Eq '@ATLANTIAN_NAND_(MANUFACTURER|DEVICE)_ID@' "$ROOT/usr/local/sbin/atlantian-nand-install" || {
+  echo 'NAND installer hardware identity placeholders were not resolved' >&2
+  exit 2
+}
 install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade.sh" "$ROOT/usr/local/sbin/atlantian-sysupgrade"
 install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade-sd.sh" "$ROOT/usr/lib/atlantian/atlantian-sysupgrade-sd"
 install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade-nand.sh" "$ROOT/usr/lib/atlantian/atlantian-sysupgrade-nand"
