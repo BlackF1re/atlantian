@@ -40,7 +40,7 @@ jobs:
   validate:
     name: Validate
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout
         # v7.0.1
@@ -66,17 +66,19 @@ jobs:
           fi
           mapfile -t changed < <(git diff --name-only "$BASE_SHA...$HEAD_SHA")
           printf 'Changed files:\n'; printf '  %s\n' "${changed[@]}"
-          actions=false; contracts=false; release_inputs=false; kernel_inputs=false
+          actions=false; contracts=false; release_inputs=false; kernel_inputs=false; uboot_inputs=false
           for path in "${changed[@]}"; do
             case "$path" in .github/workflows/*|.github/dependabot.yml|.github/scripts/actions-policy.py|.github/scripts/validate-automation.py|.github/scripts/merge-protected-main.sh) actions=true ;; esac
             case "$path" in README.md|SECURITY.md|CONTRIBUTING.md|docs/*) ;; *) contracts=true ;; esac
             case "$path" in config/*|debian-*.sha256|scripts/validate-release-inputs.sh) release_inputs=true ;; esac
             case "$path" in config/release.env|config/kernel.fragment|config/kernel-prune.fragment|board/zynq-bitmain-antminer-s9.dts|kernel-overlay/*|scripts/build-kernel.sh|scripts/prepare-kernel-source.sh|scripts/refresh-linux-base.sh) kernel_inputs=true ;; esac
+            case "$path" in .github/workflows/ci.yml|config/u-boot.env|config/nand-layout.env|board/uboot_bitmain-antminer-s9.dts|scripts/build-uboot.sh|scripts/build-uboot-nand.sh|scripts/prepare-uboot-source.sh|scripts/patch-uboot-nand.sh|scripts/uboot-zynq-spl-*.inc|scripts/refresh-uboot-base.sh) uboot_inputs=true ;; esac
           done
           echo "actions=$actions" >>"$GITHUB_OUTPUT"
           echo "contracts=$contracts" >>"$GITHUB_OUTPUT"
           echo "release_inputs=$release_inputs" >>"$GITHUB_OUTPUT"
           echo "kernel_inputs=$kernel_inputs" >>"$GITHUB_OUTPUT"
+          echo "uboot_inputs=$uboot_inputs" >>"$GITHUB_OUTPUT"
 
       - name: Install validation dependencies
         if: steps.scope.outputs.contracts == 'true'
@@ -122,6 +124,28 @@ jobs:
           set -euo pipefail
           scripts/build-kernel.sh config
           make -C "$SRC" -j"$(nproc)" ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- zImage modules xilinx/zynq-bitmain-antminer-s9.dtb
+
+      - name: Install U-Boot smoke dependencies
+        if: steps.scope.outputs.uboot_inputs == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-linux-gnueabihf bc bison flex libssl-dev libncurses-dev \
+            device-tree-compiler u-boot-tools git make python3 python3-dev \
+            python3-setuptools python3-pyelftools swig
+
+      - name: Compile SD and NAND U-Boot smoke targets
+        if: steps.scope.outputs.uboot_inputs == 'true'
+        run: |
+          set -euo pipefail
+          work="$GITHUB_WORKSPACE/out/ci-uboot"
+          rm -rf "$work"; mkdir -p "$work"
+          truncate -s 4194304 "$work/zImage"
+          truncate -s 65536 "$work/devicetree.dtb"
+          truncate -s 1048576 "$work/initramfs.cpio.gz"
+          UBOOT_SRC="$work/source" UBOOT_BUILD="$work/sd-build" UBOOT_OUT="$work/sd-out" scripts/build-uboot.sh
+          UBOOT_SRC="$work/source" UBOOT_NAND_BUILD="$work/nand-build" UBOOT_NAND_OUT="$work/nand-out" \
+            ZIMAGE="$work/zImage" DTB="$work/devicetree.dtb" INITRAMFS="$work/initramfs.cpio.gz" scripts/build-uboot-nand.sh
 
       - name: Prepare Actions smoke payload
         if: steps.scope.outputs.actions == 'true'
