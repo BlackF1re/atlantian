@@ -27,6 +27,11 @@ done
 [[ $ATLANTIAN_NAND_BOOT_MIB -eq 16 ]] || fail 'unexpected raw NAND boot reservation'
 [[ $ATLANTIAN_NAND_UBI_OFFSET_BYTES -eq 16777216 ]] || fail 'unexpected UBI offset'
 [[ $ATLANTIAN_NAND_ROOTFS_FORMAT == squashfs && $ATLANTIAN_NAND_OVERLAY_COMPRESSOR == lzo ]] || fail 'NAND storage model changed'
+[[ $ATLANTIAN_NAND_MANUFACTURER_ID == 0x2c && $ATLANTIAN_NAND_DEVICE_ID == 0xda ]] || fail 'stock NAND identity contract changed'
+grep -Fq 'if (maf != 0x2c || dev != 0xda)' scripts/uboot-zynq-spl-reader.inc || fail 'NAND SPL identity contract drifted from configured stock NAND'
+grep -Fq 'EXPECTED_MANUFACTURER=@ATLANTIAN_NAND_MANUFACTURER_ID@' scripts/atlantian-nand-install-guard.sh || fail 'NAND installer guard lost manufacturer identity injection'
+grep -Fq 'EXPECTED_DEVICE=@ATLANTIAN_NAND_DEVICE_ID@' scripts/atlantian-nand-install-guard.sh || fail 'NAND installer guard lost device identity injection'
+grep -Fq 'atlantian-nand-install.real' scripts/install-nand-tools.sh || fail 'destructive NAND installer is no longer behind the identity guard'
 for dts in board/zynq-bitmain-antminer-s9.dts board/uboot_bitmain-antminer-s9.dts; do
   grep -Fq 'reg = <0x0 0x40000000>;' "$dts" || fail "1 GiB DDR aperture missing from $dts"
 done
