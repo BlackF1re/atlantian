@@ -124,15 +124,23 @@ stage_release() {
 
     sums_url=$(get sums_url)
     sums_name=$(get sums_name)
+    signature_url=$(get signature_url)
+    signature_name=$(get signature_name)
+    signature_size=$(get signature_size)
     [ -n "$sums_url" ] && [ "$sums_name" = SHA256SUMS ] || { echo 'release checksum asset metadata is incomplete' >&2; exit 1; }
+    [ -n "$signature_url" ] && [ "$signature_name" = SHA256SUMS.sigstore.json ] || { echo 'release signature asset metadata is incomplete' >&2; exit 1; }
+    case "$signature_size" in ''|*[!0-9]*) signature_size=0 ;; esac
 
     find_recovery_root
     stage="$CARD_ROOT/$STAGE_REL/$target"
     bundle_dir="$stage/bundle"
-    mkdir -p "$stage" "$bundle_dir" "$CARD_ROOT/var/lib/atlantian"
+    trust_cache="$CARD_ROOT/var/cache/atlantian/release-trust"
+    mkdir -p "$stage" "$bundle_dir" "$CARD_ROOT/var/lib/atlantian" "$trust_cache"
     record_update_download "$stage" "$target"
+    verifier_extra=$(ATLANTIAN_COSIGN_CACHE_DIR="$trust_cache" /usr/local/sbin/atlantian-verify-release --cache-bytes-needed)
+    case "$verifier_extra" in ''|*[!0-9]*) echo 'cannot determine release verifier storage requirement' >&2; exit 1 ;; esac
     available=$(df -Pk "$CARD_ROOT" | awk 'NR==2 {print $4*1024}')
-    required=$((bundle_size + 64*1024*1024))
+    required=$((bundle_size + signature_size + verifier_extra + 64*1024*1024))
     [ "$available" -ge "$required" ] || {
         echo "recovery SD lacks staging space: need $(human_size "$required"), have $(human_size "$available")" >&2
         exit 75
@@ -143,8 +151,12 @@ stage_release() {
     mv -f "$stage/$bundle_name.new" "$stage/$bundle_name"
     curl -fL --retry 3 --progress-bar -o "$stage/SHA256SUMS.new" "$sums_url"
     mv -f "$stage/SHA256SUMS.new" "$stage/SHA256SUMS"
+    curl -fL --retry 3 --progress-bar -o "$stage/SHA256SUMS.sigstore.json.new" "$signature_url"
+    mv -f "$stage/SHA256SUMS.sigstore.json.new" "$stage/SHA256SUMS.sigstore.json"
+    ATLANTIAN_COSIGN_CACHE_DIR="$trust_cache" /usr/local/sbin/atlantian-verify-release \
+        "$stage/SHA256SUMS" "$stage/SHA256SUMS.sigstore.json"
     expected=$(awk -v n="$bundle_name" '$2==n {print $1; exit}' "$stage/SHA256SUMS")
-    [ -n "$expected" ] || { echo "$bundle_name is absent from release SHA256SUMS" >&2; exit 1; }
+    [ -n "$expected" ] || { echo "$bundle_name is absent from authenticated release SHA256SUMS" >&2; exit 1; }
     actual=$(sha256sum "$stage/$bundle_name" | awk '{print $1}')
     [ "$actual" = "$expected" ] || { echo 'downloaded NAND bundle checksum mismatch' >&2; exit 1; }
 
@@ -160,7 +172,7 @@ stage_release() {
     printf 'target=%s\nbundle=/%s/%s/bundle\n' "$target" "$STAGE_REL" "$target" >"$tmp"
     mv -f "$tmp" "$marker"
     sync
-    echo "Verified NAND update $target is staged on the recovery microSD."
+    echo "Cryptographically authenticated NAND update $target is staged on the recovery microSD."
 }
 
 [ "$(id -u)" -eq 0 ] || { echo 'run as root' >&2; exit 77; }

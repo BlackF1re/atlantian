@@ -47,6 +47,7 @@ if "debian-watch.yml" in files:
 ci = load("ci.yml")
 build = load("build-release.yml")
 upstream = load("upstream-watch.yml")
+release_sign = load("release-sign.yml")
 load("image-download-metrics.yml")
 load("dependabot-actions-automerge.yml")
 
@@ -163,10 +164,41 @@ for token in ("EXPECTED_DIGEST", "git diff --binary --no-ext-diff", "sha256sum")
 if "gh auth setup-git" not in apply_text:
     fail("upstream apply must authenticate git only inside the trusted privileged zone")
 
+# Public-release signing is deliberately split: one job can mint a Sigstore
+# identity but cannot mutate Releases; the other can upload the sealed bundle
+# but cannot obtain an OIDC signing token.
+sign_on = release_sign.get("on", {})
+workflow_run = sign_on.get("workflow_run", {}) if isinstance(sign_on, dict) else {}
+if not isinstance(workflow_run, dict) or workflow_run.get("workflows") != ["Build & Release"] or workflow_run.get("types") != ["completed"]:
+    fail("Release Signature must run only after completed Build & Release workflows")
+sign_jobs = release_sign["jobs"]
+if set(sign_jobs) != {"sign", "publish_signature"}:
+    fail(f"Release Signature trust zones changed unexpectedly: {sorted(sign_jobs)}")
+signer = sign_jobs["sign"]
+publisher = sign_jobs["publish_signature"]
+if signer.get("permissions") != {"contents": "read", "id-token": "write"}:
+    fail("release signer must have contents:read + id-token:write and no release write permission")
+if publisher.get("permissions") != {"actions": "read", "contents": "write"}:
+    fail("signature publisher must have actions:read + contents:write and no OIDC permission")
+if job_needs(publisher) != {"sign"}:
+    fail("signature publisher must consume only the signer handoff")
+if not checkout_is_credentialless(signer):
+    fail("release signer checkout must not persist repository credentials")
+signer_text = "\n".join(str(step.get("run", "")) for step in signer.get("steps", []) if isinstance(step, dict))
+publisher_text = "\n".join(str(step.get("run", "")) for step in publisher.get("steps", []) if isinstance(step, dict))
+for token in ("cosign", "sign-blob", "verify-blob", "SHA256SUMS.sigstore.json", "ATLANTIAN_COSIGN_AMD64_SHA256"):
+    if token not in signer_text:
+        fail(f"release signer lost trust contract: {token}")
+if "sign-blob" in publisher_text or "id-token" in publisher_text:
+    fail("release-writing job gained signing capability")
+for token in ("EXPECTED_SUMS_SHA256", "gh release upload", "SHA256SUMS.sigstore.json"):
+    if token not in publisher_text:
+        fail(f"signature publisher lost sealed handoff check: {token}")
+
 all_text = "\n".join(p.read_text(encoding="utf-8") for p in WF.glob("*.y*ml"))
 if "origin=debian-watch" in all_text or "inputs.origin" in all_text or "debian-watch.yml" in all_text:
     fail("legacy watcher dispatch contract survived")
 if "gh workflow run build-release.yml --ref main -f publish=true" not in (WF / "upstream-watch.yml").read_text(encoding="utf-8"):
     fail("upstream watcher does not request the ordinary verified publication path")
 
-print(f"validated {len(files)} workflow files and current CI/release/upstream contracts")
+print(f"validated {len(files)} workflow files and current CI/release/upstream/signing contracts")
