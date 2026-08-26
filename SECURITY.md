@@ -24,15 +24,27 @@ AtlANTian relies on layered verification:
 - cross-release SD update and NAND rebase integration gates;
 - GitHub build provenance for sealed build outputs.
 
-Public checksum authentication is a separate trust boundary from GitHub Release mutation. After `Build & Release` completes, `.github/workflows/release-sign.yml` signs the exact published `SHA256SUMS` in a job with `id-token: write` but no release-write permission. A second job can upload the sealed `SHA256SUMS.sigstore.json` bundle but has no OIDC permission. The updater does not consider a release complete until that bundle exists.
+Public checksum authentication is a separate trust boundary from GitHub Release mutation. After a successful `Build & Release`, `.github/workflows/release-sign.yml` locates the exact published release for that source SHA and signs its public `SHA256SUMS` in a job with `id-token: write` but no release-write permission. A second job can upload the sealed `SHA256SUMS.sigstore.json` bundle but has no OIDC permission. Before upload it rechecks the release source, re-downloads the current checksum manifest, verifies its digest did not change and refuses to overwrite a concurrently appearing signature.
 
-On-device update installation then downloads the manifest and Sigstore bundle and verifies them against the exact expected GitHub Actions workflow identity and GitHub OIDC issuer before using any checksum from the manifest. The verifier itself is a pinned Cosign release whose executable size and SHA-256 are stored in the installed OS, outside the mutable GitHub Release being verified. SD systems cache the verifier locally; NAND base updates cache it on the paired recovery microSD so the small NAND overlay is not consumed.
+Release discovery does not advertise a candidate until `SHA256SUMS.sigstore.json` exists. The SD/NAND installation transaction then downloads the manifest and Sigstore bundle and verifies them against the exact expected AtlANTian GitHub Actions workflow identity and GitHub OIDC issuer before using any checksum from the manifest. Thus mere presence of a bundle is enough for discovery, but not enough for installation.
+
+The verifier itself is a pinned Cosign release whose version, executable byte size and SHA-256 are stored in the installed OS, outside the mutable GitHub Release being verified. SD systems cache the verifier locally; NAND base updates cache it on the paired recovery microSD so the small NAND overlay is not consumed.
 
 GitHub build provenance remains an additional release/audit property; the public checksum signature is the authentication property enforced directly by `atlantian-sysupgrade`.
 
-Images from before the signed-update client existed cannot retroactively authenticate the first upgrade that installs this trust policy. Fresh images and systems already running a release containing this policy reject subsequent unsigned or incorrectly signed AtlANTian system releases.
+Images from before the signed-update client existed cannot retroactively authenticate the first upgrade that installs this trust policy. Fresh images and systems already running a release containing this policy refuse to install subsequent unsigned or incorrectly signed AtlANTian system releases.
 
-`atlantian-update.json` exists only for anonymous aggregate update metrics. Failure to fetch or validate that optional accounting marker does not weaken or block the actual update transaction.
+`atlantian-update.json` exists only for anonymous aggregate update metrics. It is covered by the signed public checksum manifest as an ordinary release asset, but fetching/validating the marker is best-effort and does not decide whether the actual update is trusted or succeeds.
+
+## Upstream automation trust boundary
+
+The scheduled upstream watcher is split so the job that compiles newly discovered upstream Linux/U-Boot code is not the job that can write repository state.
+
+- `candidate` has repository read permission only, checks out without persisted credentials, refreshes candidate metadata, validates inputs and compiles changed Linux/U-Boot sources. It allows only the known release-input files to differ and seals the exact binary diff with SHA-256.
+- `apply` has protected-main write capability but **does not compile the candidate upstream source**. It reruns only trusted repository refresh scripts and accepts the change only if the allowed paths, boot-change classification and diff digest reproduce exactly.
+- Git credentials are configured only after reproduction/validation, immediately before the protected-main merge helper is used.
+
+This does not make upstream source intrinsically trusted; it prevents newly fetched build inputs/code from executing inside the same job that holds repository write privileges. The resulting protected merge still has to satisfy required `CI / Validate`.
 
 ## Factory baseline and runtime maintenance
 
@@ -48,17 +60,21 @@ Online SD kernel updates do not rewrite early `BOOT.bin` or `u-boot.img`. They r
 
 An incompatible early-boot ABI requires a fresh image rather than an unsafe in-place bootloader rewrite.
 
-## NAND update boundary
+## NAND safety boundary
 
-NAND destructive operations require the supported board geometry and verified release identity. Installation creates or reuses a verified raw+OOB backup before erase/program operations.
+The supported NAND installation path targets the stock Micron `MT29F2G08ABAEAWP`: Manufacturer ID `0x2c`, Device ID `0xda`, 256 MiB, 128 KiB eraseblocks, 2048-byte pages, 64-byte OOB and Micron on-die BCH 4/512.
 
-Raw boot is staged from the recovery SD, programmed and read-back verified by U-Boot before Linux replaces UBI. Same-major base upgrades capture persistent state before UBI replacement and restore it against the verified new immutable lower. Debian-major NAND transitions require a clean reinstall.
+The supported `atlantian-nand-install` command checks the kernel probe log for the exact `2c:da` identity before handing control to the destructive implementation. The underlying implementation independently verifies the supported board, running/payload release identity, geometry and ECC. The NAND SPL enforces the same chip ID pair. A geometry-compatible but differently identified part is therefore not part of the supported installer/boot contract.
+
+This exact-ID wrapper is **operator safety, not a root security boundary**. `/usr/local/sbin/atlantian-nand-install.real` remains executable by root and does not repeat the wrapper's dmesg identity test; root can also invoke MTD tools directly. The threat model therefore does not claim to protect raw NAND from a deliberately malicious/unsafe root user. Use only the public `atlantian-nand-install` entry point for supported installation.
+
+The supported installation path creates or reuses a verified raw+OOB backup before erase/program operations. Raw boot is staged from the paired recovery SD, programmed and read-back verified by U-Boot before Linux replaces UBI. Same-major base upgrades capture only the documented persistent/rebase set before UBI replacement and restore it against the verified new immutable lower. Debian-major NAND transitions require a clean reinstall.
 
 ## Initial root access
 
-A fresh image intentionally permits first provisioning as root without a pre-shared password. No shared SSH host private key is embedded; machine identity and host keys are generated per installation.
+A fresh image intentionally permits first provisioning as root without a pre-shared password. No shared SSH host private key is embedded; SSH host keys are generated per installation.
 
-Before exposing a board to an untrusted network, set a root password or install an SSH public key.
+Before exposing a board to an untrusted network, set a root password or install an SSH public key. This is an explicit appliance-provisioning policy, not a claim that an unconfigured fresh image is safe on an untrusted LAN.
 
 ## Hardware boundary
 
