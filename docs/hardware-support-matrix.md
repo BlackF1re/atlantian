@@ -1,6 +1,6 @@
 # Hardware support matrix
 
-Target: Bitmain Antminer S9 control board with Xilinx Zynq-7010. A SoC peripheral is not considered supported until its PCB route, voltage, ownership and physical behavior are known.
+Target: Bitmain Antminer S9 control board with Xilinx Zynq-7010. A SoC/PL peripheral is not considered supported merely because a driver or IP block exists: the PCB route, voltage, ownership, safe idle state and physical behavior must also be known.
 
 Status meanings: **Ready** = implemented and exercised; **Validation** = implemented but specific physical fault/edge testing remains; **Profile** = shipped FPGA bitstream/DT-overlay pair; **Candidate** = practical future extension; **Investigate** = PCB/electrical route not proved; **External** = outside normal Linux control; **Unavailable** = blocked by known routing/design constraints.
 
@@ -9,14 +9,14 @@ Status meanings: **Ready** = implemented and exercised; **Validation** = impleme
 | Capability | Status | Interface / boundary |
 |---|---|---|
 | Zynq-7010 dual Cortex-A9 | Ready | Debian `armhf`, SMP, NEON/VFP |
-| 512 MiB / 1 GiB DDR3 | Ready | runtime U-Boot sizing, Linux HIGHMEM, no fixed `mem=` cap |
-| microSD boot/root | Ready | FAT BOOT + ext4 ROOT, first-boot root expansion |
+| 512 MiB / 1 GiB DDR3 variants | Ready | 1 GiB is the DT/U-Boot probe ceiling, not a fixed installed size; U-Boot fixes `/memory` to the detected bank before Linux; HIGHMEM enabled; no `mem=` cap |
+| microSD boot/root | Ready | 48 MiB FAT BOOT + ext4 ROOT; ROOT expands to the card remainder on first boot |
 | SD A/B kernel+DT FIT | Validation | two SHA-256 FIT slots; inactive write/verify/sync then marker switch; remaining fault tests in [HARDWARE-VALIDATION.md](HARDWARE-VALIDATION.md) |
-| 256 MiB raw NAND | Ready | PL35X MTD, verified raw+OOB backup |
-| NAND installation/boot | Ready | raw boot + UBI static SquashFS + UBIFS OverlayFS |
-| NAND bad-block edge cases | Validation | bad-block-aware software; real bad-block placement still needs broader bench coverage |
-| interrupted NAND recovery | Validation | marker/resume/refusal paths implemented; controlled fault testing remains |
-| recovery-SD external upper | Validation | token-authorized adoption/fallback implemented |
+| stock 256 MiB raw NAND | Ready | Micron `MT29F2G08ABAEAWP`, exact ID `2c:da`, PL35X MTD, on-die BCH 4/512, verified raw+OOB backup |
+| NAND installation/boot | Ready | exact-ID guard + geometry/ECC checks; 16 MiB raw boot + 240 MiB UBI static SquashFS/UBIFS OverlayFS |
+| NAND bad-block edge cases | Validation | bad-block-aware layout/software; broader real bad-block placement coverage remains |
+| interrupted NAND recovery | Validation | marker/resume/refusal paths implemented; controlled power-loss/fault testing remains |
+| recovery-SD external upper | Validation | only the paired install/recovery card can be adopted; token-authorized fallback implemented |
 | SD/NAND boot jumper | External | physical BootROM source selection |
 | persistent U-Boot environment | Unavailable | deliberately `ENV_IS_NOWHERE` |
 
@@ -24,14 +24,14 @@ Status meanings: **Ready** = implemented and exercised; **Validation** = impleme
 
 | Capability | Status | Linux / electrical boundary |
 |---|---|---|
-| Gigabit Ethernet | Ready | GEM0/MACB, DHCP-capable |
+| Gigabit Ethernet | Ready | GEM0/MACB, DHCP/IPv6-RA capable |
 | UART1 / J12 | Ready | `ttyPS0`, `115200 8N1`, 3.3 V logic |
-| D2 / D3 LEDs | Ready | Linux LED class |
-| S1 / S2 buttons | Ready | Linux input; no destructive default action |
+| D2 / D3 LEDs | Ready | PS MIO, Linux LED class |
+| S1 / S2 buttons | Ready | Linux input (`KEY_PROG1/2`); no destructive default action |
 | buzzer line | Ready | named GPIO, unclaimed by default |
 | J1-J9 hashboard-enable lines | Ready | named GPIO; input/high-Z unless deliberately claimed |
-| XADC die sensors | Ready | IIO/hwmon |
-| Zynq watchdog | Ready | `/dev/watchdog0`; U-Boot does not auto-arm it |
+| XADC die sensors | Ready | IIO plus hwmon/sensors exposure |
+| Zynq watchdog | Ready | `/dev/watchdog0`; reset-on-timeout; U-Boot does not auto-arm it |
 | RTC | Unavailable | no battery-backed RTC fitted |
 | JTAG | External | development/recovery interface; respect I/O voltage |
 | 12 V input/power stages | External | Linux `poweroff` cannot remove board input power |
@@ -41,15 +41,15 @@ Status meanings: **Ready** = implemented and exercised; **Validation** = impleme
 | Capability | Status | Boundary |
 |---|---|---|
 | PCAP / FPGA Manager | Ready | full bitstream programming through Linux FPGA framework |
-| configfs FPGA overlays | Ready | overlay and bitstream must represent the same design |
-| D5-D8 status LEDs | Profile | shipped `status-leds` profile |
-| profile management | Ready | `atlantian-fpga status/apply/remove` |
+| configfs FPGA overlays | Ready | overlay and bitstream must represent the same full PL design |
+| D5-D8 status LEDs | Profile | shipped `status-leds` `.bin` + DT overlay; boot loader is best-effort and will not replace another active overlay |
+| profile management | Ready | `atlantian-fpga status/apply/remove`; safe relative firmware paths only |
 | fan PWM/tach capture | Candidate | requires a versioned PL profile and fail-safe policy |
 | header I2C/SPI/UART/GPIO | Candidate | requires verified pins, voltage, idle state and ownership |
 | AXI registers/DMA/interrupt blocks | Candidate | define ABI, reset/error handling and DT binding |
 | partial reconfiguration | Investigate | requires isolation, compatibility and rollback design |
 
-A full FPGA bitstream replaces the active PL design; unrelated full designs cannot be stacked as if they were independent kernel modules.
+A Zynq full bitstream replaces the active PL design. Unrelated full designs cannot be stacked as if they were independent kernel modules. The packaged D5-D8 profile is optional convenience, not a prerequisite for base Linux boot or administration.
 
 ## Pin reference
 
@@ -79,6 +79,6 @@ A full FPGA bitstream replaces the active PL design; unrelated full designs cann
 
 ## NAND evidence boundary
 
-Expected stock geometry is 256 MiB, 2048-byte pages, 64-byte OOB and 128 KiB eraseblocks. Exact ECC, raw offsets, SPL behavior and UBI policy are owned by [NAND.md](NAND.md).
+The production NAND contract is the exact stock Micron part/ID above, not “any 256 MiB NAND”. Its required geometry is 2048-byte pages, 64-byte OOB and 128 KiB eraseblocks, with Micron on-die BCH 4/512. Exact raw offsets, SPL behavior, UBI reserve and transaction ordering are owned by [NAND.md](NAND.md).
 
 Physical validation requirements are owned by [HARDWARE-VALIDATION.md](HARDWARE-VALIDATION.md). Generic Debian applications are not listed here unless they require AtlANTian-specific hardware integration.
