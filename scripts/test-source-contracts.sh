@@ -16,6 +16,7 @@ done
 . config/debian-snapshot.env
 . config/u-boot.env
 . config/nand-layout.env
+. config/release-trust.env
 [[ $DEBIAN_MAJOR =~ ^[0-9]+$ ]] || fail 'Debian major is not numeric'
 [[ $DEBIAN_SNAPSHOT_TIMESTAMP =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || fail 'invalid Debian snapshot timestamp'
 [[ $ATLANTIAN_KERNEL_COMMIT =~ ^[0-9a-f]{40}$ ]] || fail 'kernel source is not pinned by full SHA'
@@ -37,6 +38,29 @@ for dts in board/zynq-bitmain-antminer-s9.dts board/uboot_bitmain-antminer-s9.dt
 done
 grep -Fqx 'CONFIG_HIGHMEM=y' config/kernel.fragment || fail 'HIGHMEM is disabled'
 ! grep -REq '(^|[[:space:]])mem=(496M|512M|1008M|1024M)([[:space:]]|$)' scripts board || fail 'fixed Linux RAM cap returned'
+
+# Public release checksums are accepted only after exact keyless signer verification.
+[[ $ATLANTIAN_RELEASE_SIGNATURE_ASSET == SHA256SUMS.sigstore.json ]] || fail 'release signature asset contract changed'
+[[ $ATLANTIAN_RELEASE_SIGNING_IDENTITY == 'https://github.com/BlackF1re/atlantian/.github/workflows/release-sign.yml@refs/heads/main' ]] || fail 'release signer identity changed'
+[[ $ATLANTIAN_RELEASE_SIGNING_ISSUER == 'https://token.actions.githubusercontent.com' ]] || fail 'release signer issuer changed'
+[[ $ATLANTIAN_COSIGN_ARM_SHA256 =~ ^[0-9a-f]{64}$ && $ATLANTIAN_COSIGN_AMD64_SHA256 =~ ^[0-9a-f]{64}$ ]] || fail 'Cosign verifier pins are malformed'
+grep -Fq 'SHA256SUMS.sigstore.json' scripts/atlantian-release-check.sh || fail 'release discovery no longer requires a signature asset'
+grep -Fq 'atlantian-verify-release.sh' scripts/install-nand-tools.sh || fail 'release verifier is not installed into runtime images'
+grep -Fq 'release-trust.env' scripts/install-nand-tools.sh || fail 'release trust root is not installed into runtime images'
+grep -Fq 'release-trust.env' scripts/build-atlantian-debs.sh || fail 'platform package does not carry the release trust root'
+python3 - <<'PY_AUTH_ORDER'
+from pathlib import Path
+
+def body(path, start, end):
+    text = Path(path).read_text(encoding="utf-8")
+    return text[text.index(start):text.index(end, text.index(start))]
+
+sd = body("scripts/atlantian-sysupgrade-sd.sh", "download_and_verify() {", "ensure_pending_packages() {")
+assert sd.index("atlantian-verify-release") < sd.index("verify_staged_version"), "SD checksum use precedes signature verification"
+nand = body("scripts/atlantian-sysupgrade-nand.sh", "stage_release() {", "[ \"$(id -u)\" -eq 0 ]")
+assert nand.index("atlantian-verify-release") < nand.index("expected=$(awk"), "NAND checksum use precedes signature verification"
+PY_AUTH_ORDER
+scripts/test-release-auth.sh
 
 # SD online update is strictly A/B FIT. The finished-package test owns the
 # stronger assertion that factory-only BOOT.bin/u-boot.img are absent from the kernel package.
@@ -71,5 +95,6 @@ for dead in \
   [[ ! -e $dead ]] || fail "legacy path survived: $dead"
 done
 [[ -e .github/workflows/upstream-watch.yml ]] || fail 'upstream watcher is missing'
+[[ -e .github/workflows/release-sign.yml ]] || fail 'release signer workflow is missing'
 
-echo 'release pins, board policy, SD/NAND safety, packaging and repository hygiene contracts passed'
+echo 'release pins, signed update trust, board policy, SD/NAND safety, packaging and repository hygiene contracts passed'

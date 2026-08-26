@@ -48,7 +48,7 @@ mkdir -p "$p/usr/lib/systemd/system"; cp -a "$RFS/usr/lib/systemd/system/atlanti
 copy usr/lib/systemd/system/run-apt.mount "$p"; copy usr/lib/tmpfiles.d/atlantian-apt.conf "$p"
 mkdir -p "$p/lib/firmware/atlantian" "$p/etc/atlantian" "$p/usr/share/atlantian" "$p/usr/lib/atlantian"
 cp -a "$RFS/lib/firmware/atlantian/." "$p/lib/firmware/atlantian/"; cp -a "$RFS/etc/atlantian/." "$p/etc/atlantian/"; cp -a "$RFS/usr/share/atlantian/." "$p/usr/share/atlantian/"
-for f in version package-version source-revision debian-codename debian-major debian-snapshot release-repo os-release runtime-sources.list atlantian-sysupgrade-sd atlantian-sysupgrade-nand; do
+for f in version package-version source-revision debian-codename debian-major debian-snapshot release-repo os-release runtime-sources.list release-trust.env atlantian-sysupgrade-sd atlantian-sysupgrade-nand; do
   [[ -e $RFS/usr/lib/atlantian/$f ]] && copy "usr/lib/atlantian/$f" "$p"
 done
 conffiles "$p"; install_maintainer platform preinst "$p"; install_maintainer platform postinst "$p"

@@ -16,6 +16,10 @@ atlantian-sysupgrade --notes
 
 Interactive SSH login also shows a cached notice when a compatible newer release has already been discovered by `atlantian-release-check.timer`.
 
+A release is eligible for AtlANTian system update only after the release-signing workflow has attached `SHA256SUMS.sigstore.json`. The update transaction verifies that bundle against the pinned AtlANTian GitHub Actions signer identity before trusting any checksum in `SHA256SUMS`.
+
+The verifier is pinned by version, exact byte size and SHA-256 in the installed OS. The first authenticated update may download the ARM Cosign verifier; later SD updates reuse the cached verifier. NAND updates keep that cache on the paired recovery microSD rather than consuming NAND overlay space.
+
 ## SD updates
 
 Run:
@@ -27,12 +31,13 @@ atlantian-sysupgrade
 The SD backend:
 
 1. queries published GitHub Releases;
-2. selects the newest complete release reachable from the installed Debian generation;
-3. downloads exactly `atlantian-platform`, `atlantian-kernel`, `atlantian-release` and `SHA256SUMS`;
-4. verifies public filenames, Debian package metadata, common package revision and SHA-256;
-5. installs the package set through APT;
-6. runs a normal Debian `full-upgrade` for the configured codename;
-7. audits dpkg state and reboots.
+2. selects the newest complete, signed release reachable from the installed Debian generation;
+3. downloads exactly `atlantian-platform`, `atlantian-kernel`, `atlantian-release`, `SHA256SUMS` and `SHA256SUMS.sigstore.json`;
+4. authenticates the checksum manifest with the pinned Sigstore signer identity;
+5. verifies public filenames, Debian package metadata, common package revision and SHA-256;
+6. installs the package set through APT;
+7. runs a normal Debian `full-upgrade` for the configured codename;
+8. audits dpkg state and reboots.
 
 The kernel package is an A/B FIT transaction. It requires both FIT slots and a matching boot ABI, writes only the inactive slot, verifies it, syncs it, and then changes the active-slot marker. `BOOT.bin` and `u-boot.img` are not replaced online.
 
@@ -58,7 +63,7 @@ The same command is used while booted from NAND:
 atlantian-sysupgrade
 ```
 
-The NAND backend advertises **same-Debian-major releases only**. It requires the paired recovery microSD, downloads the exact `atlantian-nand-<version>.tar.zst` bundle and public checksum manifest onto that card, verifies the archive and its internal checksums/manifest, then records a prepared target.
+The NAND backend advertises **same-Debian-major signed releases only**. It requires the paired recovery microSD, downloads the exact `atlantian-nand-<version>.tar.zst` bundle, public checksum manifest and Sigstore bundle onto that card, authenticates `SHA256SUMS`, verifies the archive and its internal checksums/manifest, then records a prepared target.
 
 After staging:
 
@@ -89,9 +94,9 @@ On NAND these writes go to the active OverlayFS upper. AtlANTian immutable base/
 
 ## Release discovery and metrics
 
-The release checker requires a complete version-matched package set and `SHA256SUMS`. Prerelease `.deb` assets use GitHub-safe dotted public filenames while the package's internal Debian version retains `~` ordering.
+The release checker requires a complete version-matched package set, `SHA256SUMS` and `SHA256SUMS.sigstore.json`. Prerelease `.deb` assets use GitHub-safe dotted public filenames while the package's internal Debian version retains `~` ordering.
 
-When a real update transaction begins, the updater best-effort downloads the release's small `atlantian-update.json` marker for anonymous aggregate update/download metrics. Failure of that marker never blocks the actual verified update.
+When a real update transaction begins, the updater best-effort downloads the release's small `atlantian-update.json` marker for anonymous aggregate update/download metrics. Failure of that marker never blocks the actual authenticated update.
 
 ## Recovery rule
 

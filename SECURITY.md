@@ -18,12 +18,19 @@ AtlANTian relies on layered verification:
 - exact Linux and U-Boot source commits;
 - version-matched `atlantian-platform`, `atlantian-kernel` and `atlantian-release` packages;
 - SHA-256 over public release assets;
+- a Sigstore keyless signature over the public `SHA256SUMS` manifest;
 - transactional SD A/B FIT kernel+DT update;
 - recovery-SD staging and raw-boot read-back verification for NAND;
 - cross-release SD update and NAND rebase integration gates;
 - GitHub build provenance for sealed build outputs.
 
-The board verifies release package/bundle checksums locally. Build provenance is currently a release/audit property and is not verified on-device.
+Public checksum authentication is a separate trust boundary from GitHub Release mutation. After `Build & Release` completes, `.github/workflows/release-sign.yml` signs the exact published `SHA256SUMS` in a job with `id-token: write` but no release-write permission. A second job can upload the sealed `SHA256SUMS.sigstore.json` bundle but has no OIDC permission. The updater does not consider a release complete until that bundle exists.
+
+On-device update installation then downloads the manifest and Sigstore bundle and verifies them against the exact expected GitHub Actions workflow identity and GitHub OIDC issuer before using any checksum from the manifest. The verifier itself is a pinned Cosign release whose executable size and SHA-256 are stored in the installed OS, outside the mutable GitHub Release being verified. SD systems cache the verifier locally; NAND base updates cache it on the paired recovery microSD so the small NAND overlay is not consumed.
+
+GitHub build provenance remains an additional release/audit property; the public checksum signature is the authentication property enforced directly by `atlantian-sysupgrade`.
+
+Images from before the signed-update client existed cannot retroactively authenticate the first upgrade that installs this trust policy. Fresh images and systems already running a release containing this policy reject subsequent unsigned or incorrectly signed AtlANTian system releases.
 
 `atlantian-update.json` exists only for anonymous aggregate update metrics. Failure to fetch or validate that optional accounting marker does not weaken or block the actual update transaction.
 

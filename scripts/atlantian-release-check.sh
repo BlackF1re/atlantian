@@ -70,7 +70,8 @@ complete_release() {
   [ -n "$(package_asset "$release_json" "$release_version" atlantian-platform all 2>/dev/null || true)" ] &&
   [ -n "$(package_asset "$release_json" "$release_version" atlantian-kernel armhf 2>/dev/null || true)" ] &&
   [ -n "$(package_asset "$release_json" "$release_version" atlantian-release all 2>/dev/null || true)" ] &&
-  [ -n "$(asset "$release_json" SHA256SUMS)" ]
+  [ -n "$(asset "$release_json" SHA256SUMS)" ] &&
+  [ -n "$(asset "$release_json" SHA256SUMS.sigstore.json)" ]
 }
 notice() {
   [ -r "$STATE_FILE" ] || exit 0
@@ -115,7 +116,7 @@ done
 
 if [ -n "$best_same" ]; then json=$best_same
 elif [ -n "$best_next" ]; then json=$best_next
-else clear_state; echo "No newer compatible AtlANTian release found for installed version $installed."; exit 0; fi
+else clear_state; echo "No newer compatible authenticated AtlANTian release found for installed version $installed."; exit 0; fi
 
 tag=$(printf '%s' "$json" | jq -r '.tag_name // empty'); published=$(printf '%s' "$json" | jq -r '.published_at // empty')
 notes=$(printf '%s' "$json" | jq -r '.body // "No release notes were published."')
@@ -123,8 +124,8 @@ case "$tag" in v*) version=${tag#v} ;; *) echo "invalid AtlANTian release tag: $
 platform=$(package_asset "$json" "$version" atlantian-platform all)
 kernel=$(package_asset "$json" "$version" atlantian-kernel armhf)
 releasepkg=$(package_asset "$json" "$version" atlantian-release all)
-sums=$(asset "$json" SHA256SUMS); update_marker=$(asset "$json" atlantian-update.json)
-[ -n "$platform" ] && [ -n "$kernel" ] && [ -n "$releasepkg" ] && [ -n "$sums" ] || { echo 'selected release has no complete package set' >&2; exit 1; }
+sums=$(asset "$json" SHA256SUMS); signature=$(asset "$json" SHA256SUMS.sigstore.json); update_marker=$(asset "$json" atlantian-update.json)
+[ -n "$platform" ] && [ -n "$kernel" ] && [ -n "$releasepkg" ] && [ -n "$sums" ] && [ -n "$signature" ] || { echo 'selected release has no complete authenticated package set' >&2; exit 1; }
 
 tab=$(printf '\t')
 IFS="$tab" read -r platform_name platform_url platform_size <<EOF_PLATFORM
@@ -139,6 +140,9 @@ EOF_RELEASE
 IFS="$tab" read -r sums_name sums_url sums_size <<EOF_SUMS
 $sums
 EOF_SUMS
+IFS="$tab" read -r signature_name signature_url signature_size <<EOF_SIGNATURE
+$signature
+EOF_SIGNATURE
 package_version=$(package_version_from_asset_name "$platform_name" "$version" atlantian-platform all)
 [ "$package_version" = "$(package_version_from_asset_name "$kernel_name" "$version" atlantian-kernel armhf)" ] &&
 [ "$package_version" = "$(package_version_from_asset_name "$release_name" "$version" atlantian-release all)" ] || { echo 'selected release mixes Debian package revisions' >&2; exit 1; }
@@ -151,10 +155,10 @@ fi
 mkdir -p "$STATE_DIR"
 tmp=$(mktemp "$STATE_DIR/.available.XXXXXX"); notes_tmp=$(mktemp "$STATE_DIR/.notes.XXXXXX"); trap 'rm -f "$tmp" "$notes_tmp"' EXIT
 printf '%s\n' "$notes" >"$notes_tmp"
-printf 'version=%s\npackage_version=%s\nrelease_id=%s\ntag=%s\npublished_at=%s\nplatform_name=%s\nplatform_url=%s\nplatform_size=%s\nkernel_name=%s\nkernel_url=%s\nkernel_size=%s\nrelease_name=%s\nrelease_url=%s\nrelease_size=%s\nsums_name=%s\nsums_url=%s\nsums_size=%s\nupdate_name=%s\nupdate_url=%s\nupdate_size=%s\n' \
+printf 'version=%s\npackage_version=%s\nrelease_id=%s\ntag=%s\npublished_at=%s\nplatform_name=%s\nplatform_url=%s\nplatform_size=%s\nkernel_name=%s\nkernel_url=%s\nkernel_size=%s\nrelease_name=%s\nrelease_url=%s\nrelease_size=%s\nsums_name=%s\nsums_url=%s\nsums_size=%s\nsignature_name=%s\nsignature_url=%s\nsignature_size=%s\nupdate_name=%s\nupdate_url=%s\nupdate_size=%s\n' \
   "$version" "$package_version" "$version" "$tag" "$published" \
   "$platform_name" "$platform_url" "$platform_size" "$kernel_name" "$kernel_url" "$kernel_size" \
   "$release_name" "$release_url" "$release_size" "$sums_name" "$sums_url" "$sums_size" \
-  "$update_name" "$update_url" "$update_size" >"$tmp"
+  "$signature_name" "$signature_url" "$signature_size" "$update_name" "$update_url" "$update_size" >"$tmp"
 mv "$tmp" "$STATE_FILE"; mv "$notes_tmp" "$NOTES_FILE"
-echo "AtlANTian update available: $installed -> $tag"
+echo "AtlANTian authenticated update available: $installed -> $tag"

@@ -1,0 +1,168 @@
+name: Release Signature
+
+on:
+  workflow_run:
+    workflows: ['Build & Release']
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlantian-release-sign-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    name: Sign public checksum manifest
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      upload_required: ${{ steps.release.outputs.upload_required }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      sums_sha256: ${{ steps.release.outputs.sums_sha256 }}
+    steps:
+      - name: Checkout trusted signing policy
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Locate exact published release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          mapfile -t tags < <(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft == false and .target_commitish == env.RELEASE_SOURCE_SHA) | .tag_name')
+          if ((${#tags[@]} == 0)); then
+            echo 'No release was published by this successful build; nothing to sign.'
+            echo 'upload_required=false' >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ((${#tags[@]} == 1)) || { echo "multiple releases target $RELEASE_SOURCE_SHA" >&2; exit 1; }
+          tag=${tags[0]}
+          rm -rf public-release; mkdir -p public-release
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir public-release
+          test -s public-release/SHA256SUMS
+          existing=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | select(.name == "SHA256SUMS.sigstore.json") | .name' | head -n1)
+          if [[ -n "$existing" ]]; then
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.sigstore.json --dir public-release
+            echo 'upload_required=false' >>"$GITHUB_OUTPUT"
+          else
+            echo 'upload_required=true' >>"$GITHUB_OUTPUT"
+          fi
+          echo "release_tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "sums_sha256=$(sha256sum public-release/SHA256SUMS | awk '{print $1}')" >>"$GITHUB_OUTPUT"
+
+      - name: Install pinned Cosign
+        if: steps.release.outputs.release_tag != ''
+        run: |
+          set -euo pipefail
+          . config/release-trust.env
+          curl -fL --retry 3 --connect-timeout 20 -o "$RUNNER_TEMP/cosign" "$ATLANTIAN_COSIGN_AMD64_URL"
+          test "$(sha256sum "$RUNNER_TEMP/cosign" | awk '{print $1}')" = "$ATLANTIAN_COSIGN_AMD64_SHA256"
+          chmod 0755 "$RUNNER_TEMP/cosign"
+          echo "COSIGN=$RUNNER_TEMP/cosign" >>"$GITHUB_ENV"
+
+      - name: Sign checksum manifest
+        if: steps.release.outputs.upload_required == 'true'
+        run: |
+          set -euo pipefail
+          . config/release-trust.env
+          "$COSIGN" sign-blob public-release/SHA256SUMS \
+            --bundle public-release/SHA256SUMS.sigstore.json --yes
+          "$COSIGN" verify-blob public-release/SHA256SUMS \
+            --bundle public-release/SHA256SUMS.sigstore.json \
+            --certificate-identity "$ATLANTIAN_RELEASE_SIGNING_IDENTITY" \
+            --certificate-oidc-issuer "$ATLANTIAN_RELEASE_SIGNING_ISSUER"
+
+      - name: Verify existing signature
+        if: steps.release.outputs.release_tag != '' && steps.release.outputs.upload_required != 'true'
+        run: |
+          set -euo pipefail
+          . config/release-trust.env
+          "$COSIGN" verify-blob public-release/SHA256SUMS \
+            --bundle public-release/SHA256SUMS.sigstore.json \
+            --certificate-identity "$ATLANTIAN_RELEASE_SIGNING_IDENTITY" \
+            --certificate-oidc-issuer "$ATLANTIAN_RELEASE_SIGNING_ISSUER"
+
+      - name: Seal signature handoff
+        if: steps.release.outputs.upload_required == 'true'
+        run: |
+          set -euo pipefail
+          printf '%s\n' '${{ steps.release.outputs.release_tag }}' >public-release/RELEASE-TAG
+          printf '%s\n' '${{ github.event.workflow_run.head_sha }}' >public-release/RELEASE-SOURCE-SHA
+          printf '%s\n' '${{ steps.release.outputs.sums_sha256 }}' >public-release/SHA256SUMS.sha256
+
+      - name: Upload signature handoff
+        if: steps.release.outputs.upload_required == 'true'
+        # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: atlantian-release-signature-${{ github.run_id }}
+          path: |
+            public-release/SHA256SUMS
+            public-release/SHA256SUMS.sigstore.json
+            public-release/SHA256SUMS.sha256
+            public-release/RELEASE-TAG
+            public-release/RELEASE-SOURCE-SHA
+          if-no-files-found: error
+          retention-days: 1
+
+  publish_signature:
+    name: Publish release signature
+    needs: sign
+    if: needs.sign.outputs.upload_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download sealed signature handoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p signature-handoff
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "atlantian-release-signature-$GITHUB_RUN_ID" --dir signature-handoff
+
+      - name: Verify release has not changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_TAG: ${{ needs.sign.outputs.release_tag }}
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          EXPECTED_SUMS_SHA256: ${{ needs.sign.outputs.sums_sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(cat signature-handoff/RELEASE-TAG)" = "$EXPECTED_TAG"
+          test "$(cat signature-handoff/RELEASE-SOURCE-SHA)" = "$EXPECTED_SHA"
+          test "$(cat signature-handoff/SHA256SUMS.sha256)" = "$EXPECTED_SUMS_SHA256"
+          test "$(sha256sum signature-handoff/SHA256SUMS | awk '{print $1}')" = "$EXPECTED_SUMS_SHA256"
+          release_source=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$EXPECTED_TAG" --jq .target_commitish)
+          test "$release_source" = "$EXPECTED_SHA"
+          rm -f current-SHA256SUMS
+          gh release download "$EXPECTED_TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir .
+          mv SHA256SUMS current-SHA256SUMS
+          test "$(sha256sum current-SHA256SUMS | awk '{print $1}')" = "$EXPECTED_SUMS_SHA256"
+          existing=$(gh release view "$EXPECTED_TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | select(.name == "SHA256SUMS.sigstore.json") | .name' | head -n1)
+          [[ -z "$existing" ]] || { echo 'release signature appeared concurrently; refusing to overwrite it' >&2; exit 1; }
+
+      - name: Publish signature asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.sign.outputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" signature-handoff/SHA256SUMS.sigstore.json

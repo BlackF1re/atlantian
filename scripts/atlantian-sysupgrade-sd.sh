@@ -115,10 +115,13 @@ verify_staged_version() {
   fi
 }
 download_and_verify() {
-  mkdir -p "$STAGE"; rm -f "$STAGE"/*.deb "$STAGE/SHA256SUMS"
+  mkdir -p "$STAGE"; rm -f "$STAGE"/*.deb "$STAGE/SHA256SUMS" "$STAGE/SHA256SUMS.sigstore.json"
   record_update_download
-  total=$(( $(get platform_size) + $(get kernel_size) + $(get release_size) ))
-  available=$(df -Pk "$STAGE" | awk 'NR == 2 { print $4 * 1024 }'); required=$((total + 32 * 1024 * 1024))
+  [ "$(get signature_name)" = SHA256SUMS.sigstore.json ] || { echo 'release signature metadata is incomplete' >&2; exit 1; }
+  verifier_extra=$(/usr/local/sbin/atlantian-verify-release --cache-bytes-needed)
+  case "$verifier_extra" in ''|*[!0-9]*) echo 'cannot determine release verifier storage requirement' >&2; exit 1 ;; esac
+  total=$(( $(get platform_size) + $(get kernel_size) + $(get release_size) + $(get sums_size) + $(get signature_size) ))
+  available=$(df -Pk "$STAGE" | awk 'NR == 2 { print $4 * 1024 }'); required=$((total + verifier_extra + 32 * 1024 * 1024))
   [ "$available" -ge "$required" ] || { echo "not enough free space in $STAGE: need $(human_size "$required"), have $(human_size "$available")" >&2; exit 75; }
   for prefix in platform kernel release; do
     url=$(get "${prefix}_url"); name=$(get "${prefix}_name")
@@ -126,8 +129,10 @@ download_and_verify() {
     echo "Downloading $name"; curl -fL --retry 3 --progress-bar -o "$STAGE/$name" "$url"
   done
   echo "Downloading $(get sums_name)"; curl -fL --retry 3 --progress-bar -o "$STAGE/SHA256SUMS" "$(get sums_url)"
+  echo "Downloading $(get signature_name)"; curl -fL --retry 3 --progress-bar -o "$STAGE/SHA256SUMS.sigstore.json" "$(get signature_url)"
+  /usr/local/sbin/atlantian-verify-release "$STAGE/SHA256SUMS" "$STAGE/SHA256SUMS.sigstore.json"
   verify_staged_version "$(get version)" || { echo 'package checksum/version verification failed' >&2; exit 1; }
-  echo 'All packages are verified.'
+  echo 'All packages are cryptographically authenticated and verified.'
 }
 ensure_pending_packages() {
   target=$1

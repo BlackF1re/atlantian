@@ -24,6 +24,8 @@ sed -i \
 install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade.sh" "$ROOT/usr/local/sbin/atlantian-sysupgrade"
 install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade-sd.sh" "$ROOT/usr/lib/atlantian/atlantian-sysupgrade-sd"
 install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade-nand.sh" "$ROOT/usr/lib/atlantian/atlantian-sysupgrade-nand"
+install -D -m 0755 "$PROJECT/scripts/atlantian-verify-release.sh" "$ROOT/usr/local/sbin/atlantian-verify-release"
+install -D -m 0644 "$PROJECT/config/release-trust.env" "$ROOT/usr/lib/atlantian/release-trust.env"
 install -D -m 0644 "$PROJECT/systemd/atlantian-nand-auto-resume.service" "$ROOT/usr/lib/systemd/system/atlantian-nand-auto-resume.service"
 install -D -m 0644 "$PROJECT/systemd/atlantian-nand-reconcile.service" "$ROOT/usr/lib/systemd/system/atlantian-nand-reconcile.service"
 
