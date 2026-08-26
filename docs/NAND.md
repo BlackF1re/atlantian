@@ -4,7 +4,7 @@ AtlANTian's NAND edition targets the stock Micron `MT29F2G08ABAEAWP` 256 MiB raw
 
 ## Device identity, geometry and ECC
 
-Repository policy is defined by `config/nand-layout.env`. The supported operator entry point checks the probed chip identity first, and the destructive implementation verifies the live MTD geometry/ECC again before erase/program work.
+Repository policy is defined by `config/nand-layout.env`. The public operator entry point checks the probed chip identity first, and the destructive implementation repeats that identity check before verifying the live MTD geometry/ECC and proceeding toward erase/program work.
 
 Supported device contract:
 
@@ -21,9 +21,9 @@ Supported device contract:
 | ECC algorithm | BCH |
 | ECC strength / step | 4 bits / 512 bytes |
 
-`atlantian-nand-install` is the supported guard around the destructive implementation. It refuses to proceed unless the kernel NAND probe log contains the exact `2c:da` identity. The NAND SPL accepts the same ID pair; source-contract tests keep the supported installer/SPL policy aligned. Geometry-compatible replacement parts therefore require an explicit boot-chain/policy change and fresh hardware validation.
+`atlantian-nand-install` refuses to proceed unless the kernel NAND probe log contains the exact `2c:da` identity. `/usr/local/sbin/atlantian-nand-install.real` independently repeats the same check, so direct invocation of the destructive implementation no longer skips chip identity validation. The NAND SPL accepts the same ID pair; source-contract tests keep the wrapper, implementation and SPL policy aligned. Geometry-compatible replacement parts therefore require an explicit boot-chain/policy change and fresh hardware validation.
 
-The guard is not a privilege boundary against `root`: `/usr/local/sbin/atlantian-nand-install.real` remains executable as the underlying implementation, and root can access MTD tooling directly. The `.real` implementation rechecks board, release payload, geometry and ECC, but does not repeat the wrapper's dmesg-based exact-ID test. Invoking it directly is outside the supported installation path and can bypass that early identity safety check.
+The repeated checks are not a privilege boundary against a malicious `root`: an administrator can control process inputs and access lower-level MTD tooling directly. They are fail-closed operator safety for both normal and accidental direct installer entry paths.
 
 The Zynq controller's 1-bit ECC is not the active data path for this stock part. Linux, U-Boot and the NAND boot policy use the NAND's Micron on-die BCH capability. Factory bad-block markers must be preserved. Recovery-grade backup reads therefore retain OOB bytes instead of treating the NAND like a block device.
 
@@ -67,7 +67,7 @@ A NAND install records an installer/card identity. Later NAND base updates requi
 The supported destructive path is deliberately split:
 
 1. The public guard verifies exact NAND identity before handing off to the destructive implementation.
-2. Linux verifies board, release payload, geometry and ECC, then creates/reuses a verified raw+OOB backup.
+2. The destructive implementation repeats exact NAND identity validation, then verifies board, release payload, geometry and ECC and creates/reuses a verified raw+OOB backup.
 3. Linux stages the raw boot payload on the recovery SD.
 4. SD U-Boot programs and read-back verifies raw boot.
 5. Only after the U-Boot verification marker exists does SD Linux replace the UBI region.

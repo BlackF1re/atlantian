@@ -14,9 +14,9 @@ The NAND installer is intentionally **not** a generic geometry-compatible flashe
 - OOB: 64 bytes;
 - data ECC: Micron on-die BCH, at least 4 bits per 512-byte step.
 
-The supported operator command, `atlantian-nand-install`, checks the kernel NAND probe log for the exact `2c:da` identity **before** it hands control to the destructive implementation. That implementation then independently verifies board model, running/payload release identity, geometry and ECC. A replacement chip that merely has the same capacity/page/OOB geometry is not supported unless the boot chain and policy are explicitly updated and revalidated.
+The supported operator command, `atlantian-nand-install`, checks the kernel NAND probe log for the exact `2c:da` identity **before** it hands control to the destructive implementation. `/usr/local/sbin/atlantian-nand-install.real` repeats that exact-ID check and then independently verifies board model, running/payload release identity, geometry and ECC. A replacement chip that merely has the same capacity/page/OOB geometry is not supported unless the boot chain and policy are explicitly updated and revalidated.
 
-The wrapper is an operator-safety boundary, not privilege containment. Its underlying helper, `/usr/local/sbin/atlantian-nand-install.real`, is installed for internal transaction plumbing and remains executable by `root`; invoking it directly bypasses the wrapper's exact-ID check. A root user can also access MTD tools directly. Supported installations must therefore use `atlantian-nand-install`, not the `.real` helper.
+The repeated check prevents accidental/direct use of `.real` from skipping chip identity validation. It is still operator safety rather than privilege containment: a root user can control process inputs and invoke MTD tools directly. Normal and supported installations should use `atlantian-nand-install`.
 
 ## Before starting
 
@@ -54,7 +54,7 @@ atlantian-nand-install --backup /path/to/backup
 
 The normal transaction is:
 
-1. Verify exact NAND identity at the supported entry point, then independently verify board, release payload, NAND geometry and ECC in the destructive implementation.
+1. Verify exact NAND identity at the public entry point and repeat that identity check inside the destructive implementation; then verify board, release payload, NAND geometry and ECC.
 2. Reuse or create a verified raw+OOB NAND backup.
 3. Ask for the literal `INSTALL` confirmation.
 4. Stage SPL, U-Boot, kernel, initramfs, DTB and the one-shot NAND U-Boot script on the recovery SD.

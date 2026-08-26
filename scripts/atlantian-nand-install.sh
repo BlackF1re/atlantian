@@ -11,6 +11,8 @@ UPGRADE_SAVE=/var/cache/atlantian/nand-overlay-preserve
 BACKUP_DEFAULT=/root/atlantian-factory-nand-backup
 BOOT=/boot
 MASTER_NAME=pl35x-nand-controller
+EXPECTED_MANUFACTURER=@ATLANTIAN_NAND_MANUFACTURER_ID@
+EXPECTED_DEVICE=@ATLANTIAN_NAND_DEVICE_ID@
 MASTER= UBI_MTD= ROOT_UBI_VOL=
 
 usage() {
@@ -30,6 +32,22 @@ verify_host() {
   [ "$(id -u)" -eq 0 ] || fatal 'run as root'
   model=$(tr -d '\000' </proc/device-tree/model 2>/dev/null || true); case "$model" in *Antminer*S9*) ;; *) fatal "unsupported board model: $model" ;; esac
   case "$(findmnt -n -o SOURCE / 2>/dev/null || true)" in /dev/mmcblk0p2) ;; *) fatal 'NAND maintenance must run from the AtlANTian recovery microSD' ;; esac
+}
+verify_nand_identity() {
+  manufacturer=$(printf '%02x' "$((EXPECTED_MANUFACTURER))")
+  device=$(printf '%02x' "$((EXPECTED_DEVICE))")
+  dmesg_file=${ATLANTIAN_NAND_DMESG_FILE:-}
+  if [ -n "$dmesg_file" ]; then
+    [ -r "$dmesg_file" ] || fatal "unreadable NAND probe log: $dmesg_file"
+    probe_log=$(cat "$dmesg_file")
+  else
+    need dmesg
+    probe_log=$(dmesg 2>/dev/null) || fatal 'cannot read kernel NAND probe log'
+  fi
+  printf '%s\n' "$probe_log" | grep -Eqi \
+    "Manufacturer ID:[[:space:]]*0x${manufacturer},[[:space:]]*Chip ID:[[:space:]]*0x${device}" || {
+      fatal "unsupported or unverified NAND identity; expected ${manufacturer}:${device} before any destructive operation"
+    }
 }
 find_master() {
   line=$(awk -F: -v n="\"$MASTER_NAME\"" '$2 ~ n {gsub(/[[:space:]]/,"",$1); print $1; found++} END {if(found!=1) exit 1}' /proc/mtd) || fatal "expected exactly one whole $MASTER_NAME MTD device"
@@ -57,6 +75,7 @@ verify_fresh_bundle_identity() {
 }
 verify_platform() {
   verify_host
+  verify_nand_identity
   for c in jq sha256sum mtdpart ubiformat ubiattach ubidetach ubimkvol ubiupdatevol ubiblock nanddump mount umount findmnt rsync atlantian-nand-rebase; do need "$c"; done
   [ -s "$BUNDLE/NAND-MANIFEST.json" ] && [ -s "$BUNDLE/SHA256SUMS" ] || fatal "NAND payload is missing under $BUNDLE"
   (cd "$BUNDLE" && sha256sum -c SHA256SUMS >/dev/null) || fatal 'NAND payload checksum verification failed'
@@ -182,6 +201,8 @@ EOF_HANDOFF
   if ! IFS= read -r _; then echo 'Handoff postponed. Run atlantian-nand-install --handoff when ready.'; return 0; fi
   rm -f "$READY"; sync; if ! systemctl reboot; then : >"$READY"; sync; fatal 'reboot request failed; handoff state restored'; fi
 }
+
+if [ "${ATLANTIAN_NAND_INSTALL_LIBRARY_ONLY:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
 
 mode=install backup=$BACKUP_DEFAULT
 while [ $# -gt 0 ]; do
