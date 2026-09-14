@@ -193,7 +193,9 @@ The write-capable apply job **does not build the candidate Linux/U-Boot source**
 
 Changed inputs are combined into one maintenance transaction. The watcher never pushes directly through protected `main`; `.github/scripts/merge-protected-main.sh` validates the exact merge candidate through the required CI path before squash merge.
 
-Debian-only refreshes participate in the normal release batch. An accepted Linux/U-Boot change makes the combined upstream transaction release-eligible immediately. Eligible watcher transactions invoke the ordinary `Build & Release` interface with `publish=true`; there is no private alternate publication origin.
+Every accepted upstream transaction, including a Debian-only Snapshot refresh, is release-eligible immediately. The watcher invokes the ordinary `Build & Release` interface with `publish=true`; there is no private alternate publication origin.
+
+Set the Actions secret `UPSTREAM_MAINTENANCE_TOKEN` to a trusted GitHub App installation token or fine-grained user token that can push the temporary branch, create and merge its pull request, write commit statuses, and dispatch Actions. GitHub then emits the maintenance PR's ordinary `pull_request` validation run. Without the secret, the watcher safely falls back to `GITHUB_TOKEN`; GitHub may hold that bot-created PR run for manual approval, while the explicitly dispatched merge-candidate validation remains authoritative.
 
 A later no-change run can recover a missed release dispatch. A 45-day empty maintenance heartbeat is retained because GitHub may disable scheduled workflows after prolonged public-repository inactivity; the heartbeat changes no release input and does not itself publish an image.
 

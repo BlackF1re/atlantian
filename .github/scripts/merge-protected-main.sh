@@ -111,10 +111,10 @@ current_merge=$(jq -r '.merge_commit_sha // empty' <<<"$meta")
 [[ $current_head == "$HEAD_SHA" ]] || fail "maintenance PR head moved after validation: expected $HEAD_SHA, got $current_head"
 [[ $current_merge == "$MERGE_SHA" ]] || fail "merge candidate changed after validation: expected $MERGE_SHA, got $current_merge"
 
-# Pull requests created with GITHUB_TOKEN do not recursively emit a normal
-# pull_request workflow check. Publish a commit-status bridge only after the
-# real merge-candidate CI has succeeded. Required-status protection accepts
-# commit statuses as well as checks; the status therefore records, rather than
+# Pull requests created with GITHUB_TOKEN are held for human workflow approval.
+# Publish a commit-status bridge only after the explicitly dispatched,
+# merge-candidate CI has succeeded. Required-status protection accepts commit
+# statuses as well as checks; the status therefore records, rather than
 # bypasses, the exact validation result above.
 validation_url="https://github.com/$REPO/actions/runs/$run_id"
 for sha in "$HEAD_SHA" "$MERGE_SHA"; do
@@ -157,8 +157,17 @@ fi
 merge_sha=$(jq -r '.sha' "$merge_json")
 [[ $merge_sha =~ ^[0-9a-f]{40}$ ]] || fail 'merge response has no valid commit SHA'
 
-current_main=$(gh api "repos/$REPO/commits/main" --jq .sha)
-[[ $current_main == "$merge_sha" ]] || fail "protected main tip does not match merge result: $current_main != $merge_sha"
+# The merge endpoint can become visible before the commits/main endpoint drops
+# its cached pre-merge response. Allow that known stale base for a short bounded
+# window, while still failing immediately if main moves to an unrelated commit.
+current_main=
+for _ in $(seq 1 30); do
+  current_main=$(gh api "repos/$REPO/commits/main" --jq .sha)
+  [[ $current_main == "$merge_sha" ]] && break
+  [[ $current_main == "$BASE_SHA" ]] || fail "main moved to unexpected commit after protected merge: $current_main"
+  sleep 2
+done
+[[ $current_main == "$merge_sha" ]] || fail "protected main tip did not converge to merge result: $current_main != $merge_sha"
 
 merged=true
 gh api --method DELETE "repos/$REPO/git/refs/heads/$VALIDATION_BRANCH" >/dev/null 2>&1 || true
