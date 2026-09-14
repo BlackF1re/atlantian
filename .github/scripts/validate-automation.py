@@ -50,6 +50,7 @@ upstream = load("upstream-watch.yml")
 release_sign = load("release-sign.yml")
 load("image-download-metrics.yml")
 load("dependabot-actions-automerge.yml")
+retention = load("actions-retention.yml")
 
 ci_on = ci.get("on", {})
 if not {"pull_request", "workflow_dispatch"}.issubset(ci_on):
@@ -132,6 +133,19 @@ if 'ATLANTIAN_CANDIDATE_DIR=$candidate_root/artifacts/current' not in build_text
 upstream_on = upstream.get("on", {})
 if not {"schedule", "workflow_dispatch", "push"}.issubset(upstream_on):
     fail("Upstream Base Watch triggers are incomplete")
+
+retention_on = retention.get("on", {})
+if not {"schedule", "workflow_dispatch", "workflow_run"}.issubset(retention_on):
+    fail("Actions run retention triggers are incomplete")
+if retention.get("permissions") != {"actions": "write", "contents": "read"}:
+    fail("Actions run retention must have only actions:write and contents:read")
+retention_jobs = retention.get("jobs", {})
+if set(retention_jobs) != {"prune"}:
+    fail("Actions run retention must contain only its prune job")
+retention_text = (WF / "actions-retention.yml").read_text(encoding="utf-8")
+for token in ("KEEP_RUNS: '10'", ".[$keep:][]", 'select(.status == "completed")', "actions/runs/$run_id"):
+    if token not in retention_text:
+        fail(f"Actions run retention lost its global ten-run guard: {token}")
 
 upstream_jobs = upstream["jobs"]
 if set(upstream_jobs) != {"candidate", "apply"}:

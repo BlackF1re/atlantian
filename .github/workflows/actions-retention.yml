@@ -1,0 +1,79 @@
+name: Actions Run Retention
+
+on:
+  workflow_run:
+    workflows:
+      - Build & Release
+      - CI
+      - CodeQL
+      - Dependabot Auto-merge
+      - Dependabot Updates
+      - Download Metrics
+      - Release Signature
+      - Upstream Base Watch
+    types: [completed]
+  schedule:
+    - cron: '37 * * * *'
+      timezone: 'Asia/Tomsk'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: atlantian-actions-retention
+  cancel-in-progress: true
+
+jobs:
+  prune:
+    name: Keep 10 newest runs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      KEEP_RUNS: '10'
+    steps:
+      - name: Delete completed runs outside the global retention window
+        run: |
+          set -euo pipefail
+          inventory=$(mktemp)
+          stale=$(mktemp)
+          trap 'rm -f "$inventory" "$stale"' EXIT
+
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100" >"$inventory"
+          jq -r --argjson keep "$KEEP_RUNS" '
+            [.[].workflow_runs[]]
+            | unique_by(.id)
+            | sort_by(.created_at, .id)
+            | reverse
+            | .[$keep:][]
+            | select(.status == "completed")
+            | .id
+          ' "$inventory" >"$stale"
+
+          stale_count=$(wc -l <"$stale")
+          echo "Deleting $stale_count completed workflow runs outside the newest $KEEP_RUNS."
+          export GITHUB_REPOSITORY
+          delete_run() {
+            local run_id=$1 attempt
+            for attempt in 1 2 3; do
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" >/dev/null && return 0
+              sleep "$(( attempt * 2 ))"
+            done
+            echo "failed to delete workflow run $run_id" >&2
+            return 1
+          }
+          export -f delete_run
+          xargs -r -n1 -P4 bash -c 'delete_run "$1"' _ <"$stale"
+
+          remaining=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?per_page=1" --jq .total_count)
+          {
+            echo '## Actions run retention'
+            echo
+            echo "Deleted: $stale_count"
+            echo "Remaining: $remaining"
+            echo
+            echo "Only completed runs outside the newest $KEEP_RUNS are deleted; active runs are retained until a later cleanup."
+          } >>"$GITHUB_STEP_SUMMARY"

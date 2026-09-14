@@ -199,6 +199,8 @@ Set the Actions secret `UPSTREAM_MAINTENANCE_TOKEN` to a trusted GitHub App inst
 
 A later no-change run can recover a missed release dispatch. A 45-day empty maintenance heartbeat is retained because GitHub may disable scheduled workflows after prolonged public-repository inactivity; the heartbeat changes no release input and does not itself publish an image.
 
+`Actions Run Retention` keeps the Actions page bounded to the ten newest runs across the whole repository. It runs after the repository's workflows complete, once per hour as a recovery path, and on manual request. Only completed runs outside the global newest ten are deleted; an older active run is retained until a later cleanup.
+
 ## Download metrics
 
 `.github/workflows/image-download-metrics.yml` provides presentation/anonymous accounting; it is not in the update trust chain.
