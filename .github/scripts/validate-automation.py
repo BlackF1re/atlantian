@@ -139,6 +139,8 @@ if not {"schedule", "workflow_dispatch", "workflow_run"}.issubset(retention_on):
     fail("Actions run retention triggers are incomplete")
 if retention.get("permissions") != {"actions": "write", "contents": "read"}:
     fail("Actions run retention must have only actions:write and contents:read")
+if retention.get("concurrency", {}).get("cancel-in-progress") != "false":
+    fail("Actions run retention cleanups must run serially without cancellation")
 retention_jobs = retention.get("jobs", {})
 if set(retention_jobs) != {"prune"}:
     fail("Actions run retention must contain only its prune job")

@@ -23,7 +23,7 @@ permissions:
 
 concurrency:
   group: atlantian-actions-retention
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   prune:
