@@ -163,6 +163,31 @@ for token in ("EXPECTED_DIGEST", "git diff --binary --no-ext-diff", "sha256sum")
         fail(f"upstream privileged apply lost candidate digest verification: {token}")
 if "gh auth setup-git" not in apply_text:
     fail("upstream apply must authenticate git only inside the trusted privileged zone")
+dispatch_step = next(
+    (step for step in apply.get("steps", []) if isinstance(step, dict) and step.get("name") == "Dispatch verified release"),
+    None,
+)
+if not dispatch_step or dispatch_step.get("if") != "needs.candidate.outputs.changed == 'true'":
+    fail("every accepted upstream transaction must dispatch a verified release")
+if "release_due" in apply_text or "publication is deferred" in apply_text:
+    fail("upstream watcher still defers accepted Debian refreshes")
+if apply_text.count("gh workflow run build-release.yml --ref main -f publish=true") != 2:
+    fail("upstream watcher must dispatch both fresh and recovered releases")
+maintenance_steps = {
+    step.get("name"): step
+    for step in apply.get("steps", [])
+    if isinstance(step, dict) and step.get("name") in {"Merge changed inputs through protected main", "Keep schedule active"}
+}
+trusted_token_expression = "${{ secrets.UPSTREAM_MAINTENANCE_TOKEN || github.token }}"
+if set(maintenance_steps) != {"Merge changed inputs through protected main", "Keep schedule active"} or any(
+    step.get("env", {}).get("GH_TOKEN") != trusted_token_expression for step in maintenance_steps.values()
+):
+    fail("all automated maintenance PRs must support a trusted actor token")
+
+merge_helper_text = (ROOT / ".github" / "scripts" / "merge-protected-main.sh").read_text(encoding="utf-8")
+for token in ("main moved to unexpected commit after protected merge", "protected main tip did not converge to merge result"):
+    if token not in merge_helper_text:
+        fail(f"protected-main helper lost its post-merge convergence guard: {token}")
 
 # Public-release signing is deliberately split: one job can mint a Sigstore
 # identity but cannot mutate Releases; the other can upload the sealed bundle
@@ -198,7 +223,4 @@ for token in ("EXPECTED_SUMS_SHA256", "gh release upload", "SHA256SUMS.sigstore.
 all_text = "\n".join(p.read_text(encoding="utf-8") for p in WF.glob("*.y*ml"))
 if "origin=debian-watch" in all_text or "inputs.origin" in all_text or "debian-watch.yml" in all_text:
     fail("legacy watcher dispatch contract survived")
-if "gh workflow run build-release.yml --ref main -f publish=true" not in (WF / "upstream-watch.yml").read_text(encoding="utf-8"):
-    fail("upstream watcher does not request the ordinary verified publication path")
-
 print(f"validated {len(files)} workflow files and current CI/release/upstream/signing contracts")
