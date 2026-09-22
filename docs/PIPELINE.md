@@ -211,7 +211,7 @@ It:
 - publishes aggregate `imageDownloads` and `systemUpdates` through GitHub Pages;
 - publishes a per-release/per-asset index/mirror used by the retained backfill path;
 - can idempotently rewrite release-note artifact tables after the Pages payload has been deployed;
-- prunes superseded retained release-build artifacts while preserving the newest verified release artifact.
+- prunes superseded retained release-build artifacts while a newest verified release artifact is retained. If global run retention already removed that artifact with its workflow run, the cleanup safely skips without affecting a published release.
 
 Initial release notes no longer depend on a not-yet-deployed Pages key: `generate-release-notes.sh` uses Shields' native exact-tag/exact-asset GitHub download endpoint for the first artifact table. The later metrics backfill runs from a validated release snapshot after the Pages deployment, so the aggregate/per-asset mirror remains useful without being a prerequisite for initial release rendering.
 
