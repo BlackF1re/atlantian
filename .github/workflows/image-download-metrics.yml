@@ -384,8 +384,8 @@ jobs:
             ' "$artifacts"
           )
           [[ "$keep_id" =~ ^[0-9]+$ ]] || {
-            echo "Latest release $latest_sha has no retained verified artifact; refusing cleanup." >&2
-            exit 1
+            echo "Latest release $latest_sha has no retained verified artifact; it was likely removed with its workflow run by global run retention. Skipping artifact cleanup."
+            exit 0
           }
 
           deleted=0
