@@ -228,7 +228,7 @@ jobs:
 
       - name: Upload rootfs handoff
         # v7.0.1
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: atlantian-rootfs-state
           path: handoff/rootfs-state.tar.zst
@@ -298,7 +298,7 @@ jobs:
 
       - name: Upload kernel handoff
         # v7.0.1
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: atlantian-kernel-state
           path: handoff/kernel-state.tar.zst
@@ -425,7 +425,7 @@ jobs:
 
       - name: Upload release candidate
         # v7.0.1
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: atlantian-release-candidate
           path: handoff/release-candidate.tar.zst
@@ -436,7 +436,7 @@ jobs:
 
       - name: Upload NAND rebase state
         # v7.0.1
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: atlantian-nand-rebase-state
           path: handoff/rootfs-nand-state.tar.zst
@@ -765,7 +765,7 @@ jobs:
 
       - name: Upload verified artifact
         # v7.0.1
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ${{ needs.plan.outputs.artifact_name }}
           if-no-files-found: error
@@ -962,7 +962,7 @@ jobs:
         id: compact_artifact
         if: steps.publication.outputs.publish == 'true'
         # v7.0.1
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ${{ needs.plan.outputs.artifact_name }}
           if-no-files-found: error
