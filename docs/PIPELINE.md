@@ -54,12 +54,12 @@ artifacts      SD image         NAND bundle     upgrade         rebase
                          Publish release
                           (when requested)
                                   ↓
-                    reusable Release Signature
+                    Release Signature workflow
                                   ↓
                       updater-eligible release
 ```
 
-The final two boxes are separate workflow definitions and trust domains. The signing workflow is called directly from the verified release workflow, so authentication does not depend on a second event being emitted. A GitHub Release can exist briefly before its signature asset is attached; devices deliberately ignore it until the signature exists.
+The final two boxes are separate workflows/trust domains. A GitHub Release can exist briefly before its signature asset is attached; devices deliberately ignore it until the signature exists.
 
 ### Runner handoffs
 
@@ -144,7 +144,7 @@ The base publication contains the compressed image, three AtlANTian `.deb` packa
 
 ## Release Signature
 
-`.github/workflows/release-sign.yml` is a reusable workflow called directly by `Build & Release` after the publication job succeeds. The caller passes the exact verified source SHA, and the signer locates a published release whose `target_commitish` matches it. This avoids relying on a downstream `workflow_run` event, which GitHub can suppress when the upstream release workflow itself was dispatched with the repository `GITHUB_TOKEN`. If the successful publication path produced no release, the signer exits without publishing anything.
+`.github/workflows/release-sign.yml` is triggered by completion of `Build & Release`. It proceeds only for a successful run from this repository's `main` and locates a published release whose `target_commitish` is the exact successful build SHA. If that build produced no release (for example a build-only run), the signer exits without publishing anything.
 
 The signing flow deliberately separates capabilities:
 
@@ -193,9 +193,9 @@ The write-capable apply job **does not build the candidate Linux/U-Boot source**
 
 Changed inputs are combined into one maintenance transaction. The watcher never pushes directly through protected `main`; `.github/scripts/merge-protected-main.sh` validates the exact merge candidate through the required CI path before squash merge.
 
-Every accepted upstream transaction, including a Debian-only Snapshot refresh, is release-eligible immediately. The watcher invokes the ordinary `Build & Release` interface with `publish=true`; there is no private alternate publication origin.
+Every accepted upstream transaction, including a Debian-only Snapshot refresh, is release-eligible immediately. The watcher invokes the ordinary `Build & Release` interface with `publish=true`; there is no private alternate publication origin. That dispatch uses `UPSTREAM_MAINTENANCE_TOKEN`, not the repository `GITHUB_TOKEN`, because the latter suppresses follow-on workflow events and would prevent the separate Release Signature workflow from authenticating the published release.
 
-Set the Actions secret `UPSTREAM_MAINTENANCE_TOKEN` to a trusted GitHub App installation token or fine-grained user token that can push the temporary branch, create and merge its pull request, write commit statuses, and dispatch Actions. GitHub then emits the maintenance PR's ordinary `pull_request` validation run. Without the secret, the watcher safely falls back to `GITHUB_TOKEN`; GitHub may hold that bot-created PR run for manual approval, while the explicitly dispatched merge-candidate validation remains authoritative.
+Set the Actions secret `UPSTREAM_MAINTENANCE_TOKEN` to a trusted GitHub App installation token or fine-grained user token that can push the temporary branch, create and merge its pull request, write commit statuses, and dispatch Actions. GitHub then emits both the maintenance PR's ordinary `pull_request` validation run and the downstream release-signing event. The release dispatch deliberately has no `GITHUB_TOKEN` fallback: if the trusted token is unavailable, publication fails closed instead of creating an updater-ineligible unsigned release.
 
 A later no-change run can recover a missed release dispatch. A 45-day empty maintenance heartbeat is retained because GitHub may disable scheduled workflows after prolonged public-repository inactivity; the heartbeat changes no release input and does not itself publish an image.
 
