@@ -68,7 +68,7 @@ The public `atlantian-nand-install` wrapper checks the kernel probe log for the 
 
 These checks are **operator safety, not containment against a malicious root user**. Root can control process inputs and invoke lower-level MTD tooling directly, so the threat model does not claim to protect raw NAND from a deliberately hostile or unsafe administrator. The supported entry point remains `atlantian-nand-install`.
 
-The supported installation path creates or reuses a verified raw+OOB backup before erase/program operations. Raw boot is staged from the paired recovery SD, programmed and read-back verified by U-Boot before Linux replaces UBI. Same-major base upgrades capture only the documented persistent/rebase set before UBI replacement and restore it against the verified new immutable lower. Debian-major NAND transitions require a clean reinstall.
+The supported installation path creates or reuses a verified pigz-compressed raw+OOB backup on the recovery SD before erase/program operations by default. A fresh install may explicitly use `--no-backup`; this opts out only of retaining the original NAND recovery copy and does not bypass the exact-chip, geometry/ECC, payload, read-back or literal `INSTALL` confirmation gates. Raw boot is staged from the paired recovery SD, programmed and read-back verified by U-Boot before Linux replaces UBI. Same-major base upgrades capture only the documented persistent/rebase set before UBI replacement and restore it against the verified new immutable lower. Debian-major NAND transitions require a clean reinstall.
 
 ## Initial root access
 

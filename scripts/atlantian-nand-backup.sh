@@ -1,13 +1,14 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Create a verified read-only forensic backup of the Antminer S9 raw NAND.
-set -eu
+set -euo pipefail
 
 usage() {
   cat <<'EOF_USAGE'
 Usage: atlantian-nand-backup [--inspection-copy] [DIRECTORY]
 
-The default recovery set contains the raw+OOB physical dump. --inspection-copy
-also creates a padded main-area image for analysis; it is not needed for restore.
+The default recovery set contains a pigz-compressed raw+OOB physical dump.
+--inspection-copy also creates a compressed padded main-area image for analysis;
+it is not needed for restore.
 EOF_USAGE
 }
 inspection=false
@@ -22,7 +23,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ "$(id -u)" -eq 0 ] || { echo 'run as root' >&2; exit 77; }
-for cmd in nanddump sha256sum awk date; do command -v "$cmd" >/dev/null 2>&1 || { echo "missing required command: $cmd" >&2; exit 69; }; done
+for cmd in nanddump pigz sha256sum awk date; do command -v "$cmd" >/dev/null 2>&1 || { echo "missing required command: $cmd" >&2; exit 69; }; done
 [ -r /proc/mtd ] || { echo '/proc/mtd is unavailable' >&2; exit 69; }
 
 line=$(awk -F: '$2 ~ /"pl35x-nand-controller"/ {print; n++} END {if (n != 1) exit 1}' /proc/mtd) || {
@@ -39,21 +40,31 @@ umask 077; mkdir -p "$out"
 {
   echo 'AtlANTian Antminer S9 NAND backup'
   echo "created_utc=$stamp"; echo "device=$dev"; echo 'mtd_name=pl35x-nand-controller'
-  echo "size_hex=$size_hex"; echo "erase_hex=$erase_hex"; echo; cat /proc/mtd; echo
+  echo "size_hex=$size_hex"; echo "erase_hex=$erase_hex"
+  echo 'raw_oob_file=nand-raw-oob.bin.gz'; echo 'raw_oob_compression=gzip-pigz'; echo
+  cat /proc/mtd; echo
   for attr in name size erasesize writesize oobsize ecc_strength ecc_step_size; do
     path="/sys/class/mtd/$name/$attr"; [ -r "$path" ] && printf '%s=%s\n' "$attr" "$(cat "$path")"
   done
 } >"$out/NAND-INFO.txt"
 
-echo "Creating raw+OOB forensic dump from $dev ..."
-nanddump --quiet --noecc --oob --bb=dumpbad --file="$out/nand-raw-oob.bin" "$dev"
+raw_tmp="$out/.nand-raw-oob.bin.gz.tmp"
+inspection_tmp="$out/.nand-main-padded.bin.gz.tmp"
+cleanup() { rm -f "$raw_tmp" "$inspection_tmp"; }
+trap cleanup EXIT HUP INT TERM
+
+echo "Creating pigz-compressed raw+OOB forensic dump from $dev ..."
+nanddump --quiet --noecc --oob --bb=dumpbad "$dev" | pigz -1 >"$raw_tmp"
+pigz -t "$raw_tmp"
+mv -f "$raw_tmp" "$out/nand-raw-oob.bin.gz"
 
 if [ "$inspection" = true ]; then
-  echo 'Creating optional padded main-area inspection copy ...'
-  if nanddump --quiet --noecc --omitoob --bb=padbad --file="$out/nand-main-padded.bin" "$dev"; then
+  echo 'Creating optional pigz-compressed padded main-area inspection copy ...'
+  if nanddump --quiet --noecc --omitoob --bb=padbad "$dev" | pigz -1 >"$inspection_tmp" && pigz -t "$inspection_tmp"; then
+    mv -f "$inspection_tmp" "$out/nand-main-padded.bin.gz"
     printf 'inspection_copy=complete\n' >>"$out/NAND-INFO.txt"
   else
-    rm -f "$out/nand-main-padded.bin"
+    rm -f "$inspection_tmp"
     printf 'inspection_copy=failed\n' >>"$out/NAND-INFO.txt"
     echo 'warning: optional inspection copy failed; raw+OOB recovery set is intact' >&2
   fi
@@ -63,11 +74,14 @@ fi
 
 (
   cd "$out"
-  set -- NAND-INFO.txt nand-raw-oob.bin
-  [ ! -s nand-main-padded.bin ] || set -- "$@" nand-main-padded.bin
+  set -- NAND-INFO.txt nand-raw-oob.bin.gz
+  [ ! -s nand-main-padded.bin.gz ] || set -- "$@" nand-main-padded.bin.gz
   sha256sum "$@" >SHA256SUMS
   sha256sum -c SHA256SUMS
+  pigz -t nand-raw-oob.bin.gz
+  [ ! -s nand-main-padded.bin.gz ] || pigz -t nand-main-padded.bin.gz
 )
+trap - EXIT HUP INT TERM
 echo "NAND backup completed: $out"
-echo 'Keep NAND-INFO.txt, nand-raw-oob.bin and SHA256SUMS together.'
+echo 'Keep NAND-INFO.txt, nand-raw-oob.bin.gz and SHA256SUMS together.'
 echo 'Do not use dd to restore a raw NAND device.'

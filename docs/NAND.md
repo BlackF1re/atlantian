@@ -67,7 +67,7 @@ A NAND install records an installer/card identity. Later NAND base updates requi
 The supported destructive path is deliberately split:
 
 1. The public guard verifies exact NAND identity before handing off to the destructive implementation.
-2. The destructive implementation repeats exact NAND identity validation, then verifies board, release payload, geometry and ECC and creates/reuses a verified raw+OOB backup.
+2. The destructive implementation repeats exact NAND identity validation, then verifies board, release payload, geometry and ECC and, by default, creates/reuses a verified pigz-compressed raw+OOB backup on the recovery SD. An explicit fresh-install `--no-backup` opt-out skips only this recovery copy.
 3. Linux stages the raw boot payload on the recovery SD.
 4. SD U-Boot programs and read-back verifies raw boot.
 5. Only after the U-Boot verification marker exists does SD Linux replace the UBI region.
@@ -93,7 +93,9 @@ A Debian-major NAND transition requires a clean reinstall from the target-genera
 
 ## Backup
 
-`atlantian-nand-backup` is read-only and creates the recovery-critical raw+OOB dump by default. `--inspection-copy` adds a second padded main-area dump for offline analysis only.
+`atlantian-nand-backup` is read-only and creates the recovery-critical raw+OOB dump as `nand-raw-oob.bin.gz`. The dump is streamed through `pigz`, avoiding a full uncompressed temporary file on the recovery SD. `--inspection-copy` adds a compressed padded main-area dump for offline analysis only.
+
+Fresh installation stores its default backup under `/var/lib/atlantian/recovery/factory-nand-backup` on the SD root filesystem. `atlantian-nand-install --no-backup` explicitly skips the backup when the operator accepts losing the original NAND recovery copy; all hardware/payload verification and the literal `INSTALL` destructive confirmation remain in force.
 
 Never restore raw NAND with `dd`. Raw NAND restore must respect OOB, factory bad blocks, ECC and the board's boot layout. AtlANTian currently provides the verified backup path, not a generic automated raw-NAND restore command.
 

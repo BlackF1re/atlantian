@@ -10,7 +10,7 @@ Prefer narrow changes, explicit evidence and tests for behavioral contracts. Sta
 | DT/kernel | preserve boot-critical interfaces, runtime DDR detection policy and verified pin safety |
 | FPGA profile | document the exact bitstream/DT overlay, pins, voltage, reset/idle state and conflicts |
 | SD update | preserve A/B FIT, inactive-slot write/verify ordering and boot-ABI fail-closed behavior |
-| NAND | preserve exact `2c:da` stock-chip boundary, raw+OOB backup, recovery-SD staging, read-back verification and rebase ordering |
+| NAND | preserve exact `2c:da` stock-chip boundary, default compressed raw+OOB recovery backup with explicit opt-out semantics, recovery-SD staging, read-back verification and rebase ordering |
 | release tooling | preserve version-matched assets, authenticated `SHA256SUMS`, exact signer identity and same-source publication idempotency |
 | GitHub Actions | use allow-listed Actions pinned to immutable 40-hex commits and keep untrusted/new upstream execution separated from write privileges |
 
