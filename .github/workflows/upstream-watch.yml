@@ -228,7 +228,7 @@ jobs:
       - name: Dispatch verified release
         if: needs.candidate.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.UPSTREAM_MAINTENANCE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           EXPECTED_MAIN: ${{ steps.merge.outputs.merge_sha }}
         run: |
           set -euo pipefail
@@ -239,7 +239,7 @@ jobs:
         id: recovery
         if: needs.candidate.outputs.changed != 'true'
         env:
-          GH_TOKEN: ${{ secrets.UPSTREAM_MAINTENANCE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           echo 'dispatched=false' >>"$GITHUB_OUTPUT"
