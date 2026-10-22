@@ -62,6 +62,8 @@ The ordinary SD image is also the NAND recovery/maintenance medium. It contains 
 
 A NAND install records an installer/card identity. Later NAND base updates require that paired recovery SD. If it is inserted while NAND is running, it can also be explicitly adopted as the writable OverlayFS upper. Adoption keeps both SD partitions bootable and stores the external upper under the ext4 ROOT partition; token matching prevents a random ext4 card from silently becoming system state. Without the adopted card, boot falls back to the internal UBIFS upper.
 
+The SD/NAND jumper controls Zynq boot-mode straps that are sampled only at power-on reset. Every transition between SD and NAND boot therefore requires full power removal, jumper movement while unpowered, and power restoration; a software reboot does not perform that handoff.
+
 ## Install transaction
 
 The supported destructive path is deliberately split:
@@ -73,7 +75,7 @@ The supported destructive path is deliberately split:
 5. Only after the U-Boot verification marker exists does SD Linux replace the UBI region.
 6. The new static root is read back through `ubiblock` and its AtlANTian release identity is checked.
 7. A fresh writable upper is created (or preserved state is rebased during an upgrade).
-8. The board is handed back to NAND boot only after the complete transaction verifies.
+8. Only after the complete transaction verifies does the operator fully remove power, switch the boot-source jumper to NAND and restore power.
 
 This ordering keeps the old UBI untouched until raw boot is known-good and keeps the board on recovery SD until the new UBI is known-good. It does not make the raw boot update power-loss atomic; those physical fault cases remain part of [HARDWARE-VALIDATION.md](HARDWARE-VALIDATION.md).
 
