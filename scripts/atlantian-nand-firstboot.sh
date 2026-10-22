@@ -1,5 +1,5 @@
 #!/bin/sh
-# Interactive continuation for physical NAND handoff and staged maintenance.
+# Login continuation for physical NAND handoff and staged maintenance.
 # Ordinary storage status/adoption guidance is emitted only by atlantian-login-info.
 set -eu
 INSTALL_STATE=/var/lib/atlantian/nand-install

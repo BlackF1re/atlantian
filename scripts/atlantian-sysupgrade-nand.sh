@@ -62,10 +62,10 @@ AtlANTian NAND update model
     atlantian-sysupgrade
 
 The full updater downloads the matching NAND bundle onto the AtlANTian recovery
-microSD. After moving the physical jumper to SD and rebooting, login starts the
-verified maintenance transaction automatically. The raw boot area is read-back
-verified, SD Linux rebuilds UBI automatically, and writable layers are reconciled
-once against the new immutable base.
+microSD. After staging completes, fully remove board power, move the physical
+boot-source jumper from NAND to SD, and restore power. A normal reboot is not a
+boot-source handoff. Login on the recovery SD starts the verified maintenance
+transaction automatically; raw boot and UBI are then updated and verified.
 
 Options:
   --check   Show the newest compatible release
@@ -210,16 +210,14 @@ fi
 stage_release
 cleanup
 trap - EXIT INT TERM HUP
+sync
 cat <<'EOF_HANDOFF'
 
-The target bundle is safely stored on the recovery microSD.
+NAND update is staged on the recovery microSD.
+Fully remove power from the board, move the boot-source jumper from NAND to SD,
+then restore power. Do not use reboot: the boot-source straps are sampled only
+at power-on reset.
 
-  1. Move the physical boot-source jumper from NAND to SD.
-  2. Press Enter after the jumper is in SD position.
-
-The board will reboot from the same recovery card. At the next root login,
-AtlANTian automatically opens the prepared NAND maintenance transaction.
+At the next root login, AtlANTian automatically opens the prepared NAND
+maintenance transaction.
 EOF_HANDOFF
-IFS= read -r _
-sync
-systemctl reboot

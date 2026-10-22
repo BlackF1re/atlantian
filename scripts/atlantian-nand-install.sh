@@ -211,11 +211,12 @@ resume() {
 handoff() {
   verify_host; [ -s "$READY" ] || fatal 'NAND has not completed verified installation yet'
   cat <<'EOF_HANDOFF'
-NAND is ready. Leave the recovery microSD inserted, move the boot-source jumper
-from SD to NAND, then press Enter. The jumper is sampled by hardware at reset.
+NAND is ready and verified.
+Fully remove power from the board, move the boot-source jumper from SD to NAND,
+then restore power. Do not use reboot: the boot-source straps are sampled only
+at power-on reset.
 EOF_HANDOFF
-  if ! IFS= read -r _; then echo 'Handoff postponed. Run atlantian-nand-install --handoff when ready.'; return 0; fi
-  rm -f "$READY"; sync; if ! systemctl reboot; then : >"$READY"; sync; fatal 'reboot request failed; handoff state restored'; fi
+  rm -f "$READY"; sync
 }
 
 if [ "${ATLANTIAN_NAND_INSTALL_LIBRARY_ONLY:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi

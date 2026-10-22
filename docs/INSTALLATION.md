@@ -62,6 +62,17 @@ atlantian-nand-install --no-backup
 
 `--backup` and `--no-backup` are mutually exclusive. Skipping the backup does not bypass board, NAND identity, geometry/ECC, payload or read-back verification; it only removes the recovery copy of the original NAND.
 
+### Command summary
+
+- `atlantian-nand-install` — normal fresh installation from the currently booted, release-matched recovery SD.
+- `atlantian-nand-install --backup DIR` — use a different backup directory.
+- `atlantian-nand-install --no-backup` — install without preserving the original NAND dump.
+- `atlantian-nand-install --resume` — manually continue an interrupted verified transaction after the SD U-Boot stage.
+- `atlantian-nand-install --handoff` — print the final power-cycle instructions after NAND has been fully written and verified.
+- `atlantian-nand-backup [--inspection-copy] [DIR]` — create a standalone read-only compressed NAND backup.
+
+`--resume-auto` is for the installed systemd auto-resume service and is not a normal operator command.
+
 The normal transaction is:
 
 1. Verify exact NAND identity at the public entry point and repeat that identity check inside the destructive implementation; then verify board, release payload, NAND geometry and ECC.
@@ -72,9 +83,9 @@ The normal transaction is:
 6. SD U-Boot programs the raw 16 MiB boot region and read-back verifies it.
 7. SD Linux resumes automatically, formats only the UBI data region, writes/verifies the immutable SquashFS root and creates the writable UBIFS overlay.
 8. AtlANTian marks the NAND transaction ready for handoff.
-9. Move the jumper from **SD** to **NAND** only when prompted, then reboot.
+9. When instructed, **fully remove power**, move the jumper from **SD** to **NAND**, then restore power.
 
-Do not move the jumper during steps 4–7.
+Do not move the jumper during steps 4–7. Do not use `reboot` for step 9: the Zynq boot-source straps are sampled at power-on reset, so changing the jumper requires a real power cycle.
 
 ## Backup options
 
@@ -98,8 +109,6 @@ Manual recovery commands are:
 atlantian-nand-install --resume
 atlantian-nand-install --handoff
 ```
-
-`--resume-auto` exists for the installed auto-resume service and is not the normal operator entry point.
 
 Do not delete transaction markers or installer files merely to bypass an error. Resolve the reported verification failure first.
 

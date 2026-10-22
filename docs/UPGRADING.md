@@ -122,13 +122,21 @@ Staging performs these checks before handoff:
 
 After staging:
 
-1. move the physical boot-source jumper from NAND to SD when prompted;
-2. reboot from the paired recovery card;
-3. root login opens the prepared NAND maintenance transaction;
-4. current supported persistent state/package intent is captured;
-5. SD U-Boot programs and read-back verifies raw boot;
-6. SD Linux rebuilds/verifies UBI and rebases supported persistent state;
-7. move the jumper back to NAND only after verified handoff is offered.
+1. **fully remove power** from the board;
+2. move the boot-source jumper from **NAND** to **SD**, then restore power;
+3. log in as root on the paired recovery SD; `atlantian-nand-upgrade` starts automatically for the prepared update;
+4. confirm `UPGRADE`; the maintenance tool captures supported persistent state, stages raw boot and performs its automatic reboot while the jumper remains in **SD**;
+5. SD U-Boot programs and read-back verifies raw boot, then SD Linux automatically rebuilds/verifies UBI and rebases supported persistent state;
+6. after the verified final handoff message, **fully remove power** again, move the jumper from **SD** to **NAND**, and restore power.
+
+Do not substitute `reboot` for either physical boot-source transition. The jumper is sampled at power-on reset.
+
+### NAND update commands
+
+- `atlantian-sysupgrade` — normal user entry point while booted from NAND; discovers, authenticates and stages the target release on the paired recovery SD.
+- `atlantian-sysupgrade --check` / `--notes` — inspect the available target without staging it.
+- `atlantian-nand-upgrade` — recovery-SD maintenance helper for an already staged update; normally launched automatically at root login.
+- `atlantian-nand-install --resume` — manually continue a verified NAND transaction if automatic SD resume did not complete.
 
 The maintenance side checks the prepared bundle path and release identity again before destructive work. The exact persisted/rebased state is documented in [PERSISTENCE.md](PERSISTENCE.md), not “the whole previous upper”.
 
