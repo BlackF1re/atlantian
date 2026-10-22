@@ -78,7 +78,6 @@ required_build_jobs = {
     "nand_rebase",
     "seal",
     "publish",
-    "authenticate_release",
 }
 if set(build_jobs) != required_build_jobs:
     fail(f"Build & Release job graph changed unexpectedly: {sorted(build_jobs)}")
@@ -95,7 +94,6 @@ expected_needs = {
     "nand_rebase": {"plan", "assemble"},
     "seal": {"plan", "assemble", "validate_artifacts", "validate_sd", "validate_nand", "sd_upgrade", "nand_rebase"},
     "publish": {"plan", "seal"},
-    "authenticate_release": {"plan", "publish"},
 }
 for name, expected in expected_needs.items():
     actual = job_needs(build_jobs[name])
@@ -191,6 +189,16 @@ if "release_due" in apply_text or "publication is deferred" in apply_text:
     fail("upstream watcher still defers accepted Debian refreshes")
 if apply_text.count("gh workflow run build-release.yml --ref main -f publish=true") != 2:
     fail("upstream watcher must dispatch both fresh and recovered releases")
+release_dispatch_steps = {
+    step.get("name"): step
+    for step in apply.get("steps", [])
+    if isinstance(step, dict) and step.get("name") in {"Dispatch verified release", "Recover missed release dispatch"}
+}
+if set(release_dispatch_steps) != {"Dispatch verified release", "Recover missed release dispatch"} or any(
+    step.get("env", {}).get("GH_TOKEN") != "${{ secrets.UPSTREAM_MAINTENANCE_TOKEN }}"
+    for step in release_dispatch_steps.values()
+):
+    fail("automated release dispatch must use UPSTREAM_MAINTENANCE_TOKEN so downstream workflow_run signing is emitted")
 maintenance_steps = {
     step.get("name"): step
     for step in apply.get("steps", [])
@@ -211,31 +219,9 @@ for token in ("main moved to unexpected commit after protected merge", "protecte
 # identity but cannot mutate Releases; the other can upload the sealed bundle
 # but cannot obtain an OIDC signing token.
 sign_on = release_sign.get("on", {})
-workflow_call = sign_on.get("workflow_call", {}) if isinstance(sign_on, dict) else {}
-call_inputs = workflow_call.get("inputs", {}) if isinstance(workflow_call, dict) else {}
-source_sha_input = call_inputs.get("source_sha", {}) if isinstance(call_inputs, dict) else {}
-if not isinstance(source_sha_input, dict) or source_sha_input.get("required") != "true" or source_sha_input.get("type") != "string":
-    fail("Release Signature must be a reusable workflow with a required string source_sha input")
-if isinstance(sign_on, dict) and "workflow_run" in sign_on:
-    fail("Release Signature must not depend on workflow_run chaining")
-
-build_jobs = build["jobs"]
-sign_call = build_jobs.get("authenticate_release")
-if not isinstance(sign_call, dict):
-    fail("Build & Release must authenticate a successful publication")
-if sign_call.get("uses") != "./.github/workflows/release-sign.yml":
-    fail("Build & Release must call the repository Release Signature workflow directly")
-if job_needs(sign_call) != {"plan", "publish"}:
-    fail("release authentication must depend only on release planning and publication")
-if sign_call.get("permissions") != {"actions": "read", "contents": "write", "id-token": "write"}:
-    fail("release authentication caller must grant only the union of signer/publisher permissions")
-if sign_call.get("with", {}).get("source_sha") != "${{ github.sha }}":
-    fail("release authentication must bind the signer to the exact Build & Release source SHA")
-sign_call_if = str(sign_call.get("if", ""))
-for token in ("needs.plan.outputs.publish_requested == 'true'", "needs.publish.result == 'success'"):
-    if token not in sign_call_if:
-        fail(f"release authentication lost its successful-publication gate: {token}")
-
+workflow_run = sign_on.get("workflow_run", {}) if isinstance(sign_on, dict) else {}
+if not isinstance(workflow_run, dict) or workflow_run.get("workflows") != ["Build & Release"] or workflow_run.get("types") != ["completed"]:
+    fail("Release Signature must run only after completed Build & Release workflows")
 sign_jobs = release_sign["jobs"]
 if set(sign_jobs) != {"sign", "publish_signature"}:
     fail(f"Release Signature trust zones changed unexpectedly: {sorted(sign_jobs)}")
