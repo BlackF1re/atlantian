@@ -54,12 +54,12 @@ artifacts      SD image         NAND bundle     upgrade         rebase
                          Publish release
                           (when requested)
                                   ↓
-                    Release Signature workflow
+                    reusable Release Signature
                                   ↓
                       updater-eligible release
 ```
 
-The final two boxes are separate workflows/trust domains. A GitHub Release can exist briefly before its signature asset is attached; devices deliberately ignore it until the signature exists.
+The final two boxes are separate workflow definitions and trust domains. The signing workflow is called directly from the verified release workflow, so authentication does not depend on a second event being emitted. A GitHub Release can exist briefly before its signature asset is attached; devices deliberately ignore it until the signature exists.
 
 ### Runner handoffs
 
@@ -144,7 +144,7 @@ The base publication contains the compressed image, three AtlANTian `.deb` packa
 
 ## Release Signature
 
-`.github/workflows/release-sign.yml` is triggered by completion of `Build & Release`. It proceeds only for a successful run from this repository's `main` and locates a published release whose `target_commitish` is the exact successful build SHA. If that build produced no release (for example a build-only run), the signer exits without publishing anything.
+`.github/workflows/release-sign.yml` is a reusable workflow called directly by `Build & Release` after the publication job succeeds. The caller passes the exact verified source SHA, and the signer locates a published release whose `target_commitish` matches it. This avoids relying on a downstream `workflow_run` event, which GitHub can suppress when the upstream release workflow itself was dispatched with the repository `GITHUB_TOKEN`. If the successful publication path produced no release, the signer exits without publishing anything.
 
 The signing flow deliberately separates capabilities:
 
