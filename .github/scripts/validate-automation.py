@@ -214,7 +214,7 @@ sign_on = release_sign.get("on", {})
 workflow_call = sign_on.get("workflow_call", {}) if isinstance(sign_on, dict) else {}
 call_inputs = workflow_call.get("inputs", {}) if isinstance(workflow_call, dict) else {}
 source_sha_input = call_inputs.get("source_sha", {}) if isinstance(call_inputs, dict) else {}
-if not isinstance(source_sha_input, dict) or source_sha_input.get("required") is not True or source_sha_input.get("type") != "string":
+if not isinstance(source_sha_input, dict) or source_sha_input.get("required") != "true" or source_sha_input.get("type") != "string":
     fail("Release Signature must be a reusable workflow with a required string source_sha input")
 if isinstance(sign_on, dict) and "workflow_run" in sign_on:
     fail("Release Signature must not depend on workflow_run chaining")
