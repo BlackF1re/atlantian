@@ -78,6 +78,7 @@ required_build_jobs = {
     "nand_rebase",
     "seal",
     "publish",
+    "authenticate_release",
 }
 if set(build_jobs) != required_build_jobs:
     fail(f"Build & Release job graph changed unexpectedly: {sorted(build_jobs)}")
@@ -94,6 +95,7 @@ expected_needs = {
     "nand_rebase": {"plan", "assemble"},
     "seal": {"plan", "assemble", "validate_artifacts", "validate_sd", "validate_nand", "sd_upgrade", "nand_rebase"},
     "publish": {"plan", "seal"},
+    "authenticate_release": {"plan", "publish"},
 }
 for name, expected in expected_needs.items():
     actual = job_needs(build_jobs[name])
