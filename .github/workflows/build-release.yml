@@ -990,3 +990,20 @@ jobs:
             echo '| Publication eligible | ${{ steps.publication.outputs.publish }} |'
             echo '| Compact upgrade artifact | ${{ steps.compact_artifact.outcome || 'skipped' }} |'
           } >>"$GITHUB_STEP_SUMMARY"
+
+  authenticate_release:
+    name: Authenticate published release
+    needs: [plan, publish]
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.publish_requested == 'true' &&
+      needs.publish.result == 'success'
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/release-sign.yml
+    with:
+      source_sha: ${{ github.sha }}
