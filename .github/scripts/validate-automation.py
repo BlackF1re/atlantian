@@ -189,6 +189,16 @@ if "release_due" in apply_text or "publication is deferred" in apply_text:
     fail("upstream watcher still defers accepted Debian refreshes")
 if apply_text.count("gh workflow run build-release.yml --ref main -f publish=true") != 2:
     fail("upstream watcher must dispatch both fresh and recovered releases")
+release_dispatch_steps = {
+    step.get("name"): step
+    for step in apply.get("steps", [])
+    if isinstance(step, dict) and step.get("name") in {"Dispatch verified release", "Recover missed release dispatch"}
+}
+if set(release_dispatch_steps) != {"Dispatch verified release", "Recover missed release dispatch"} or any(
+    step.get("env", {}).get("GH_TOKEN") != "${{ secrets.UPSTREAM_MAINTENANCE_TOKEN }}"
+    for step in release_dispatch_steps.values()
+):
+    fail("automated release dispatch must use UPSTREAM_MAINTENANCE_TOKEN so downstream workflow_run signing is emitted")
 maintenance_steps = {
     step.get("name"): step
     for step in apply.get("steps", [])
