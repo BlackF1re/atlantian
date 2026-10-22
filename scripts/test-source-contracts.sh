@@ -74,7 +74,11 @@ for token in atlantian-A.itb atlantian-B.itb atlantian-boot-abi; do grep -Fq "$t
 
 # NAND backup remains read-only; destructive work stays behind explicit transaction gates.
 grep -Fq -- '--noecc --oob --bb=dumpbad' scripts/atlantian-nand-backup.sh || fail 'raw+OOB recovery dump missing'
+grep -Fq 'nand-raw-oob.bin.gz' scripts/atlantian-nand-backup.sh || fail 'raw+OOB recovery dump is not stored compressed'
+grep -Fq '| pigz -1' scripts/atlantian-nand-backup.sh || fail 'NAND backup is not streamed through pigz'
 ! grep -Eq 'nandwrite|flash_erase|ubiformat|mtdpart[[:space:]]+add' scripts/atlantian-nand-backup.sh || fail 'backup helper gained NAND writes'
+grep -Fq 'BACKUP_DEFAULT=/var/lib/atlantian/recovery/factory-nand-backup' scripts/atlantian-nand-install.sh || fail 'fresh NAND backup is not anchored on the recovery SD root'
+grep -Fq -- '--no-backup' scripts/atlantian-nand-install.sh || fail 'explicit fresh-install backup opt-out missing'
 grep -Fq 'type INSTALL' scripts/atlantian-nand-install.sh || fail 'fresh NAND destructive confirmation missing'
 grep -Fq 'Type UPGRADE' scripts/atlantian-nand-upgrade.sh || fail 'NAND update destructive confirmation missing'
 grep -Fq 'atln-stage.done' scripts/atlantian-nand-install.sh || fail 'U-Boot raw-boot verification marker missing'

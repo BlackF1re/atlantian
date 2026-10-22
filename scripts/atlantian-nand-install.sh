@@ -8,7 +8,9 @@ STATE=/var/lib/atlantian/nand-install
 PENDING=$STATE/pending
 READY=$STATE/ready-to-handoff
 UPGRADE_SAVE=/var/cache/atlantian/nand-overlay-preserve
-BACKUP_DEFAULT=/root/atlantian-factory-nand-backup
+# Fresh NAND installation always runs from /dev/mmcblk0p2, so the default
+# recovery backup lives explicitly on the recovery microSD root filesystem.
+BACKUP_DEFAULT=/var/lib/atlantian/recovery/factory-nand-backup
 BOOT=/boot
 MASTER_NAME=pl35x-nand-controller
 EXPECTED_MANUFACTURER=@ATLANTIAN_NAND_MANUFACTURER_ID@
@@ -18,7 +20,7 @@ MASTER= UBI_MTD= ROOT_UBI_VOL=
 usage() {
   cat <<'EOF_USAGE'
 Usage:
-  atlantian-nand-install [--backup DIR]
+  atlantian-nand-install [--backup DIR | --no-backup]
   atlantian-nand-install --resume
   atlantian-nand-install --resume-auto
   atlantian-nand-install --handoff
@@ -76,7 +78,7 @@ verify_fresh_bundle_identity() {
 verify_platform() {
   verify_host
   verify_nand_identity
-  for c in jq sha256sum mtdpart ubiformat ubiattach ubidetach ubimkvol ubiupdatevol ubiblock nanddump mount umount findmnt rsync atlantian-nand-rebase; do need "$c"; done
+  for c in jq sha256sum pigz mtdpart ubiformat ubiattach ubidetach ubimkvol ubiupdatevol ubiblock nanddump mount umount findmnt rsync atlantian-nand-rebase; do need "$c"; done
   [ -s "$BUNDLE/NAND-MANIFEST.json" ] && [ -s "$BUNDLE/SHA256SUMS" ] || fatal "NAND payload is missing under $BUNDLE"
   (cd "$BUNDLE" && sha256sum -c SHA256SUMS >/dev/null) || fatal 'NAND payload checksum verification failed'
   [ "$(jq -r .compression.rootfs_squashfs "$BUNDLE/NAND-MANIFEST.json")" = zstd ] || fatal 'unexpected SquashFS compression policy'
@@ -91,9 +93,23 @@ verify_platform() {
   strength=$(cat "/sys/class/mtd/$mtd/ecc_strength" 2>/dev/null || echo 0); ecc_step=$(cat "/sys/class/mtd/$mtd/ecc_step_size" 2>/dev/null || echo 0)
   [ "$strength" -ge 4 ] && [ "$ecc_step" = 512 ] || fatal "Linux NAND data ECC is $strength/$ecc_step; expected BCH >=4/512"
 }
-valid_backup() { d=$1; [ -s "$d/NAND-INFO.txt" ] && [ -s "$d/nand-raw-oob.bin" ] && [ -s "$d/SHA256SUMS" ] && (cd "$d" && sha256sum -c SHA256SUMS >/dev/null 2>&1); }
+valid_backup() {
+  d=$1
+  [ -s "$d/NAND-INFO.txt" ] && [ -s "$d/SHA256SUMS" ] || return 1
+  if [ -s "$d/nand-raw-oob.bin.gz" ]; then
+    raw_name=nand-raw-oob.bin.gz
+    pigz -t "$d/$raw_name" >/dev/null 2>&1 || return 1
+  elif [ -s "$d/nand-raw-oob.bin" ]; then
+    # Backward-compatible reuse of a verified pre-compression backup.
+    raw_name=nand-raw-oob.bin
+  else
+    return 1
+  fi
+  grep -Fq "  $raw_name" "$d/SHA256SUMS" || return 1
+  (cd "$d" && sha256sum -c SHA256SUMS >/dev/null 2>&1)
+}
 ensure_backup() {
-  backup=$1; step '[1/4] Backing up the existing NAND'
+  backup=$1; step '[1/4] Backing up the existing NAND to recovery storage'
   if valid_backup "$backup"; then echo "Using verified existing factory backup: $backup"; else atlantian-nand-backup "$backup"; valid_backup "$backup" || fatal 'factory backup did not verify'; fi
   echo "Factory backup verified: $backup"; echo 'Keep a copy on another computer if factory recovery matters.'
 }
@@ -204,10 +220,24 @@ EOF_HANDOFF
 
 if [ "${ATLANTIAN_NAND_INSTALL_LIBRARY_ONLY:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
 
-mode=install backup=$BACKUP_DEFAULT
+mode=install backup=$BACKUP_DEFAULT backup_option=default
 while [ $# -gt 0 ]; do
-  case "$1" in --resume) mode=resume; shift ;; --resume-auto) mode=resume-auto; shift ;; --handoff) mode=handoff; shift ;; --backup) [ $# -ge 2 ] || { usage >&2; exit 64; }; backup=$2; shift 2 ;; --help|-h) usage; exit 0 ;; *) usage >&2; exit 64 ;; esac
+  case "$1" in
+    --resume) mode=resume; shift ;;
+    --resume-auto) mode=resume-auto; shift ;;
+    --handoff) mode=handoff; shift ;;
+    --backup)
+      [ $# -ge 2 ] || { usage >&2; exit 64; }
+      [ "$backup_option" = default ] || { echo 'atlantian-nand-install: --backup and --no-backup are mutually exclusive' >&2; exit 64; }
+      backup=$2; backup_option=custom; shift 2 ;;
+    --no-backup)
+      [ "$backup_option" = default ] || { echo 'atlantian-nand-install: --backup and --no-backup are mutually exclusive' >&2; exit 64; }
+      backup_option=skip; shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) usage >&2; exit 64 ;;
+  esac
 done
+[ "$mode" = install ] || [ "$backup_option" = default ] || { echo 'atlantian-nand-install: backup options are valid only for a fresh install' >&2; exit 64; }
 lock_install
 case "$mode" in resume) resume no; exit ;; resume-auto) resume yes; exit ;; handoff) handoff; exit ;; esac
 verify_fresh_bundle_identity; verify_platform
@@ -220,7 +250,12 @@ This replaces the on-board NAND with verified raw boot, an immutable SquashFS
 base in static UBI, and a writable UBIFS OverlayFS upper. Existing NAND contents
 will be destroyed; the recovery microSD remains intact.
 EOF_INTRO
-ensure_backup "$backup"
+if [ "$backup_option" = skip ]; then
+  step '[1/4] Skipping NAND backup (--no-backup)'
+  echo 'WARNING: the existing NAND will be destroyed without a recovery dump.'
+else
+  ensure_backup "$backup"
+fi
 printf '\nFINAL DESTRUCTIVE CONFIRMATION: type INSTALL to replace the on-board NAND: '
 IFS= read -r answer; [ "$answer" = INSTALL ] || { echo 'Cancelled; NAND was not modified.'; exit 0; }
 stage_raw_boot fresh
