@@ -1,5 +1,5 @@
 #!/bin/bash
-# Shared SD/NAND updater: authenticate and stage on ext4, then kexec to RAM.
+# Shared SD/NAND updater: authenticate and package authenticated payload in RAM, then kexec.
 set -euo pipefail
 export LC_ALL=C
 fail() { printf 'atlantian-sysupgrade: %s\n' "$*" >&2; exit 1; }
@@ -23,14 +23,14 @@ for bin in curl jq kexec cpio zstd tar sha256sum systemctl ldd dropbearconvert \
 [[ $(cat /proc/sys/kernel/kexec_load_disabled) == 0 ]] || fail 'kexec disabled'
 case "$(tr -d '\000' </proc/device-tree/model)" in *Antminer*S9*) ;; *) fail 'unsupported board' ;; esac
 mem=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
-[[ $mem =~ ^[0-9]+$ && $mem -ge 400000 ]] || fail 'insufficient RAM'
+[[ $mem =~ ^[0-9]+$ && $mem -ge 700000 ]] || fail 'insufficient RAM'
 /usr/local/sbin/atlantian-release-check --refresh
 [[ -s /var/lib/atlantian/update/available.env ]] || { echo 'No newer compatible release.'; exit 0; }
 target=$(get version); tag=$(get tag); current=$(cat /usr/lib/atlantian/version)
 [[ $target =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]] || fail 'unsafe target version'
 [[ $tag == "v$target" ]] || fail 'release tag differs from target'
-[[ $(major "$target") == "$(major "$current")" ]] ||
- fail 'Debian-major changes are not supported by RAM updates; use migration/reinstallation'
+oldmajor=$(major "$current"); newmajor=$(major "$target")
+(( newmajor == oldmajor || newmajor == oldmajor + 1 )) || fail 'adjacent Debian major required'
 echo "AtlANTian $edition: $current -> $target"
 if [[ $mode == --notes ]]; then cat /var/lib/atlantian/update/available-notes.txt; exit 0; fi
 [[ $mode != --check ]] || exit 0
@@ -38,27 +38,35 @@ if [[ $mode != --yes ]]; then
  read -rp 'Type UPGRADE to stage autonomous RAM maintenance: ' answer
  [[ $answer == UPGRADE ]] || { echo 'Cancelled.'; exit 0; }
 fi
-# Stage on ext4 p2. On NAND this is NOT the SD boot partition, and may
-# be an adopted external OverlayFS medium with invalid/absent FAT p1.
+# The signed payload lives in RAM: SD is not required for internal NAND.
 if [[ $edition == sd ]]; then
- [[ $(findmnt -n -o SOURCE /) == /dev/mmcblk0p2 ]] || fail 'SD root must be mmcblk0p2'
- [[ -s /boot/atlantian-A.itb && -s /boot/atlantian-B.itb ]] || fail 'SD A/B FIT missing'
- root=/
+  [[ $(findmnt -n -o SOURCE /) == /dev/mmcblk0p2 ]] || fail 'SD root must be mmcblk0p2'
+  [[ -s /boot/atlantian-A.itb && -s /boot/atlantian-B.itb && -s /boot/atlantian-boot-abi ]] || fail 'SD boot missing'
+  overlay_mode=sd
 else
- root=/run/atlantian/external-overlay
- [[ $(cat /run/atlantian/overlay-mode) == external ]] ||
-   fail 'NAND currently requires adopted external OverlayFS p2 for staging'
- [[ $(findmnt -n -o SOURCE "$root") == /dev/mmcblk0p2 ]] || fail 'external p2 not mounted'
- [[ -d $root/.atlantian-extroot/upper && -d $root/.atlantian-extroot/work ]] ||
-   fail 'external upper/work absent'
- for b in flash_erase nandwrite nanddump ubiformat ubiattach ubidetach \
-   ubimkvol ubiupdatevol ubiblock; do need "$b"; done
+  [[ -d /run/atlantian/lower && -d /run/atlantian/internal-overlay/upper ]] || fail 'NAND mounts absent'
+  overlay_mode=$(cat /run/atlantian/overlay-mode)
+  case "$overlay_mode" in
+    internal) ;;
+    external)
+      ext=/run/atlantian/external-overlay
+      [[ $(findmnt -n -o SOURCE "$ext") == /dev/mmcblk0p2 ]] || fail 'active external upper card missing'
+      [[ -s $ext/.atlantian-extroot/token && -s /run/atlantian/internal-overlay/.extroot-token ]] || fail 'token absent'
+      cmp "$ext/.atlantian-extroot/token" /run/atlantian/internal-overlay/.extroot-token || fail 'token mismatch' ;;
+    *) fail 'unknown NAND upper layout' ;;
+  esac
+  for b in flash_erase nandwrite nanddump ubiformat ubiattach ubidetach ubimkvol ubiupdatevol ubiblock; do need "$b"; done
 fi
-relative="var/cache/atlantian/ram-upgrade/$target"
-stage="$root/$relative"
-[[ ! -e $stage/IN-PROGRESS ]] || fail "unfinished previous transaction: $stage"
-mkdir -p "$stage/payload"
-chmod 700 "$stage"
+work=$(mktemp -d /run/atlantian-ram-upgrade.XXXXXX)
+mounted=false
+cleanup() {
+  [[ $mounted != true ]] || umount "$work" >/dev/null 2>&1 || true
+  rmdir "$work" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM HUP
+mount -t tmpfs -o size=650m,mode=0700,nosuid,nodev tmpfs "$work"
+mounted=true
+mkdir -p "$work/payload" "$work/ramfs" "$work/trust" "$work/debs"
 . /etc/atlantian/releases.conf
 repo=${ATLANTIAN_GITHUB_REPO:?}
 api=${ATLANTIAN_RELEASE_API:-https://api.github.com}
@@ -68,65 +76,57 @@ fetch() {
  local n=$1 u
  u=$(asset_url "$n")
  [[ $u == https://* ]] || fail "release asset absent: $n"
- curl -fL --retry 3 --progress-bar -o "$stage/$n.new" "$u"
- mv -f "$stage/$n.new" "$stage/$n"
+ curl -fL --retry 3 --progress-bar -o "$work/$n.new" "$u"
+ mv -f "$work/$n.new" "$work/$n"
 }
 check_public_hash() {
  local n=$1 expected actual
- expected=$(awk -v n="$n" '$2==n || $2=="*"n {print $1; exit}' "$stage/SHA256SUMS")
+ expected=$(awk -v n="$n" '$2==n || $2=="*"n {print $1; exit}' "$work/SHA256SUMS")
  [[ $expected =~ ^[a-f0-9]{64}$ ]] || fail "unsigned artifact: $n"
- actual=$(sha256sum "$stage/$n" | awk '{print $1}')
+ actual=$(sha256sum "$work/$n" | awk '{print $1}')
  [[ $actual == "$expected" ]] || fail "hash mismatch: $n"
 }
 fetch SHA256SUMS
 fetch SHA256SUMS.sigstore.json
-ATLANTIAN_COSIGN_CACHE_DIR="$stage/trust" \
- /usr/local/sbin/atlantian-verify-release "$stage/SHA256SUMS" "$stage/SHA256SUMS.sigstore.json"
+ATLANTIAN_COSIGN_CACHE_DIR="$work/trust" \
+ /usr/local/sbin/atlantian-verify-release "$work/SHA256SUMS" "$work/SHA256SUMS.sigstore.json"
 archive="atlantian-nand-$target.tar.zst"
 fetch "$archive"
 check_public_hash "$archive"
 # Only the signed NAND payload is used by the RAM NAND writer and kexec.
-tar --zstd -xf "$stage/$archive" -C "$stage/payload"
-(cd "$stage/payload" && sha256sum -c SHA256SUMS) || fail 'invalid NAND payload'
-[[ $(jq -r .release "$stage/payload/NAND-MANIFEST.json") == "$target" ]] || fail 'bundle identity mismatch'
-[[ $(od -An -tx1 -N4 "$stage/payload/uImage" | tr -d ' \n') == 27051956 ]] || fail 'invalid legacy uImage'
+tar --zstd -xf "$work/$archive" -C "$work/payload"
+(cd "$work/payload" && sha256sum -c SHA256SUMS) || fail 'invalid NAND payload'
+[[ $(jq -r .release "$work/payload/NAND-MANIFEST.json") == "$target" ]] || fail 'bundle identity mismatch'
+[[ $(od -An -tx1 -N4 "$work/payload/uImage" | tr -d ' \n') == 27051956 ]] || fail 'invalid legacy uImage'
 if [[ $edition == sd ]]; then
- : >"$stage/packages.list"
+ : >"$work/packages.list"
  for kind in platform kernel release; do
    name=$(get "${kind}_name")
    [[ $name =~ ^atlantian-(platform|kernel|release)_[a-zA-Z0-9.+~-]+_(all|armhf)\.deb$ ]] || fail 'unsafe package filename'
    fetch "$name"
    check_public_hash "$name"
-   [[ $(dpkg-deb -f "$stage/$name" Package) == "atlantian-$kind" ]] ||
+   [[ $(dpkg-deb -f "$work/$name" Package) == "atlantian-$kind" ]] ||
      fail "Debian package identity mismatch: $name"
-   [[ $(dpkg-deb -f "$stage/$name" Version) == "$(get package_version)" ]] ||
+   [[ $(dpkg-deb -f "$work/$name" Version) == "$(get package_version)" ]] ||
      fail "Debian package version mismatch: $name"
    case "$kind" in kernel) expected_arch=armhf ;; *) expected_arch=all ;; esac
-   [[ $(dpkg-deb -f "$stage/$name" Architecture) == "$expected_arch" ]] ||
+   [[ $(dpkg-deb -f "$work/$name" Architecture) == "$expected_arch" ]] ||
      fail "Debian package architecture mismatch: $name"
-   printf '%s=%s\n' "$kind" "$name" >>"$stage/packages.list"
+   printf '%s=%s\n' "$kind" "$name" >>"$work/packages.list"
  done
  [[ -s /boot/atlantian-boot-abi ]] || fail 'SD boot ABI missing'
 else
- # Preserve the inactive internal upper independently and the *active* merged
- # external root without attempting to mount its busy upper a second time.
- [[ -d /run/atlantian/lower && -d /run/atlantian/internal-overlay/upper ]] || fail 'NAND mounts absent'
- snap="$stage/snapshot"; mkdir -p "$snap"
- /usr/local/sbin/atlantian-nand-rebase capture /run/atlantian/lower \
-   /run/atlantian/internal-overlay/upper /run/atlantian/internal-overlay/work "$snap/internal"
- /usr/local/sbin/atlantian-nand-rebase capture-mounted /run/atlantian/lower / "$snap/external"
- [[ -s $root/.atlantian-extroot/token && -s /run/atlantian/internal-overlay/.extroot-token ]] ||
-   fail 'external adoption token missing'
- cmp "$root/.atlantian-extroot/token" /run/atlantian/internal-overlay/.extroot-token ||
-   fail 'external adoption token mismatch'
- cp /run/atlantian/internal-overlay/.extroot-token "$stage/extroot-token"
+  : # NAND state capture follows kexec, before UBI format.
 fi
-# All authentication is complete. Free the large ARM Cosign download before kexec.
-rm -rf "$stage/trust"
-work=$(mktemp -d /run/atlantian-ram-upgrade.XXXXXX)
-cleanup() { rm -rf -- "$work"; }
-trap cleanup EXIT
-mkdir -p "$work/ramfs"/{bin,sbin,usr/bin,usr/sbin,etc/dropbear,dev,dev/pts,proc,sys,run,tmp,state,stage,root}
+if [[ $edition == sd ]]; then
+  for kind in platform kernel release; do
+    name=$(sed -n "s/^${kind}=//p" "$work/packages.list")
+    mv "$work/$name" "$work/debs/$name"
+  done
+fi
+# The entire authenticated release must persist inside the new initramfs.
+rm -rf "$work/trust" "$work/$archive"
+mkdir -p "$work/ramfs"/{bin,sbin,usr/bin,usr/sbin,etc/dropbear,dev,dev/pts,proc,sys,run,tmp,state,root,payload,debs}
 cp /usr/lib/atlantian/ram-upgrade-busybox "$work/ramfs/bin/busybox"
 chmod 755 "$work/ramfs/bin/busybox"
 for cmd in $(/usr/lib/atlantian/ram-upgrade-busybox --list); do
@@ -164,10 +164,17 @@ printf 'passwd: files\nshadow: files\ngroup: files\n' >"$work/ramfs/etc/nsswitch
 chmod 600 "$work/ramfs/etc/shadow"
 cp /usr/lib/atlantian/ram-upgrade-apply "$work/ramfs/sbin/ram-upgrade-apply"
 cp /usr/local/sbin/atlantian-nand-rebase "$work/ramfs/sbin/atlantian-nand-rebase"
-cp "$stage/payload/SHA256SUMS" "$work/ramfs/state/signed-internal-sums"
+cp -a "$work/payload/." "$work/ramfs/payload/"
+cp -a "$work/debs/." "$work/ramfs/debs/"
+[ ! -s "$work/packages.list" ] || cp "$work/packages.list" "$work/ramfs/state/packages.list"
+cp "$work/payload/SHA256SUMS" "$work/ramfs/state/signed-internal-sums"
+cp "$work/SHA256SUMS" "$work/ramfs/state/signed-public-sums"
 printf '%s\n' "$edition" >"$work/ramfs/state/edition"
+printf '%s\n' "$overlay_mode" >"$work/ramfs/state/overlay-mode"
 printf '%s\n' "$target" >"$work/ramfs/state/target"
-printf '%s\n' "$relative" >"$work/ramfs/state/stage-relative"
+printf '%s\n' "$oldmajor" >"$work/ramfs/state/old-major"
+printf '%s\n' "$newmajor" >"$work/ramfs/state/new-major"
+date -u +%s >"$work/ramfs/state/epoch"
 cat >"$work/ramfs/sbin/dhcp.script" <<'DHCP'
 #!/bin/sh
 case "$1" in
@@ -189,27 +196,24 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 mount -t devtmpfs devtmpfs /dev || exec sh
 mount -t proc proc /proc || exec sh
 mount -t sysfs sysfs /sys || exec sh
-mkdir -p /dev/pts /run /tmp /state /stage /root
+mkdir -p /dev/pts /run /root
 mount -t devpts devpts /dev/pts || true
+mount -t tmpfs -o mode=0755,size=400m tmpfs /run || exec sh
+mkdir -p /run/upgrade
+date -u -s "@$(cat /state/epoch)" >/dev/null 2>&1 || true
 ip link set lo up
 ip link set eth0 up
 udhcpc -i eth0 -n -q -t 6 -T 3 -s /sbin/dhcp.script || true
-/usr/sbin/dropbear -B -p 22 -r /etc/dropbear/host_ed25519 -P /run/dropbear.pid
-mount -t ext4 -o rw,noatime /dev/mmcblk0p2 /stage || {
- echo 'Cannot mount ext4 stage; SSH rescue remains available.' >/dev/console
- exec sh
-}
+/usr/sbin/dropbear -B -p 22 -r /etc/dropbear/host_ed25519 -P /run/dropbear.pid || true
 dmesg >/run/nand-dmesg
-/sbin/ram-upgrade-apply >/stage/var/cache/atlantian/ram-upgrade-last.log 2>&1
+/sbin/ram-upgrade-apply >/run/upgrade/upgrade.log 2>&1
 result=$?
 sync
 if [ "$result" -eq 0 ]; then
- echo 'RAM update verified; rebooting to existing boot source.' >/dev/console
- umount /stage || true
- reboot -f
+  echo 'RAM update verified; rebooting.' >/dev/console
+  reboot -f
 else
- echo 'RAM update FAILED. SSH rescue remains available.' >/dev/console
- echo 'Review /stage/var/cache/atlantian/ram-upgrade-last.log' >/dev/console
+  echo 'RAM update failed; SSH rescue active: /run/upgrade/upgrade.log' >/dev/console
 fi
 while :; do sleep 60; done
 INIT
@@ -217,13 +221,14 @@ chmod 755 "$work/ramfs/init"
 mknod -m 0600 "$work/ramfs/dev/console" c 5 1
 mknod -m 0666 "$work/ramfs/dev/null" c 1 3
 (cd "$work/ramfs" && find . -print0 | cpio --null -o -H newc 2>/dev/null | gzip -1 >"$work/initramfs.cpio.gz")
-dd if="$stage/payload/uImage" of="$work/zImage" bs=64 skip=1 status=none
+dd if="$work/payload/uImage" of="$work/zImage" bs=64 skip=1 status=none
 cat /sys/firmware/fdt >"$work/live.dtb"
 [[ -s $work/live.dtb ]] || fail 'live DTB missing'
-printf 'edition=%s\ntarget=%s\n' "$edition" "$target" >"$stage/IN-PROGRESS"
-sync
+image_kib=$((($(stat -c %s "$work/initramfs.cpio.gz") + 1023) / 1024))
+remaining=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+(( remaining >= 130000 + image_kib * 2 )) || fail 'insufficient kexec headroom'
 kexec --load --type=zImage --initrd="$work/initramfs.cpio.gz" --dtb="$work/live.dtb" \
  --command-line='console=ttyPS0,115200n8 mtdparts=pl35x-nand-controller:16m(atlantian-boot),-(atlantian-ubi) rdinit=/init panic=10' "$work/zImage"
-echo 'Verified RAM maintenance is loaded. Starting systemd kexec...'
+echo 'Authenticated image resident in RAM. Starting systemd kexec...'
 trap - EXIT
 systemctl kexec || { kexec -u || true; fail 'systemd kexec failed'; }

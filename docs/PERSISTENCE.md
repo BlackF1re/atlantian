@@ -73,7 +73,7 @@ Adoption does not repartition or erase the recovery card. It creates a private `
 
 Early NAND boot uses the external upper only when the expected recovery-card identity/layout and token match. If the adopted card is absent, normal boot falls back to the internal UBIFS upper. A random ext4 card cannot silently become system state.
 
-An adopted external upper is captured/restored by the same supported rebase policy during a same-major NAND base upgrade. Token/layout mismatch during a prepared update fails closed rather than rebasing state onto an unrelated card.
+An adopted external upper is captured/restored by the same supported rebase policy during an in-place NAND base upgrade, including an adjacent Debian-major transition. Token/layout mismatch during a prepared update fails closed rather than rebasing state onto an unrelated card.
 
 The RAM updater uses the existing adopted ext4 p2 as a staging area and verifies its active external-upper adoption token against the internal NAND token. It never assumes that FAT p1 contains a recovery system and never erases either SD partition for staging. A separate bootable recovery card is useful only for manual disaster recovery, not for the normal update transaction.
 

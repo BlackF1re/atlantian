@@ -14,91 +14,104 @@ The earlier SD online-update backend and NAND recovery-SD/jumper upgrade handoff
 are no longer invoked or installed by the new image. Ordinary `apt update` and
 `apt upgrade` remain available for Debian packages.
 
-## Authentication and RAM handoff
+## One RAM path for both SD and NAND
 
-1. Discover the newest published compatible release, with the authenticated
-   release manifest and a NAND bundle required for **both** storage editions.
-2. Confirm `UPGRADE`, unless `--yes` was selected.
-3. Authenticate `SHA256SUMS.sigstore.json` with the pinned AtlANTian signer;
-   verify downloaded assets and the NAND bundle's own checksums.
-4. Stage verified assets on **ext4 partition `/dev/mmcblk0p2`**, not on the
-   FAT boot partition. An adopted NAND external-overlay card does not need a
-   bootable FAT partition.
-5. Prepare a replacement Linux kernel from the signed NAND `uImage`, with a
-   private static BusyBox initramfs, staged utilities and their libraries.
-   Bring up Ethernet using DHCP and an unauthenticated `root` Dropbear SSH
-   server on port 22 (maintenance mode only). The SSH session on the live
-   operating system disconnects at the kexec handoff.
-6. Systemd stops running userspace and executes `kexec`. The RAM kernel
-   receives the correct MTD partition split and mounts ext4 p2 for staging.
-7. Recheck the internal checksums sealed inside the initramfs **before**
-   modifying the target storage. On failure the RAM maintenance system remains
-   available over SSH; logs are written to
-   `/var/cache/atlantian/ram-upgrade-last.log` on p2.
-8. After verifying the update, issue a normal software reboot into the
-   selected physical boot source. No jumper change or power cycling is
-   involved in the normal update transaction.
+1. The running AtlANTian checks published releases, respecting the stable vs.
+   prerelease channel. Both storage editions require a full NAND bundle and the
+   matching Debian packages in the release.
+2. The target is downloaded into a bounded temporary RAM filesystem. The
+   Sigstore identity, signing issuer, public SHA256SUMS, NAND bundle checksums
+   and (for SD) Debian package identities and checksums are verified.
+3. The complete verified NAND bundle, target kernel, and any SD Debian packages
+   are copied into a self-contained kexec initramfs **before** the previous
+   kernel exits. The original RAM filesystem itself does not survive kexec.
+4. A separate Linux boots with the live board device tree, an explicit MTD
+   partition layout, DHCP, preserved pre-kexec clock time, and SSH access.
+   No existing system root is running or mounted as the updater root.
+5. Only this new RAM system reads the old storage and performs the target
+   operation. A failed check stops the transaction, leaving RAM recovery SSH.
+   Once the target verifies, it software-reboots into the same physical boot
+   source. No jumper movement is needed.
 
-## SD maintenance
+Normal operation requires **no bootable recovery SD** and no external storage
+for payload staging. Before kexec at least 700 MiB RAM must be available; the
+standalone RAM system has a bounded 400 MiB runtime tmpfs for snapshots and
+checks memory reserves before erasing NAND. If the snapshot is too large, the
+transaction fails *before* erasing. SSH on the RAM rescue system intentionally
+allows passwordless root access and must only be used on a trusted network.
 
-The SD root on p2 is not mounted as the running system in RAM. The maintainer
-bind-mounts `/proc`, `/sys`, `/dev`, `/run`, mounts the existing FAT p1
-and uses `chroot` to apply the **authenticated AtlANTian package set** and
-same-major Debian full upgrade. The kernel package's existing verified A/B FIT
-post-install transaction switches only the inactive FIT slot.
+The update log lives at /run/upgrade/upgrade.log and status at
+/run/upgrade/status in the RAM rescue system. These logs and RAM snapshots are
+lost on power-off. If a transaction fails, do not reboot before investigating.
 
-The original SD SPL and U-Boot are not rewritten by this path. Their boot ABI
-must remain compatible.
+## SD
 
-## NAND maintenance
+The RAM OS mounts the card's ext4 partition (mmcblk0p2) as a target, with
+the FAT partition (mmcblk0p1) for the existing A/B FIT kernel transaction.
+It mounts /proc, /sys, /dev and /run within the target and runs Debian
+APT through a chroot. The authenticated AtlANTian Debian packages are
+read from RAM, not downloaded to or executed from the running root.
 
-This first RAM writer requires a **mounted, explicitly adopted external ext4
-overlay** on p2 to stage the authenticated bundle and state snapshots. It does
-**not** need the p1 recovery FAT filesystem, a bootable recovery SD image,
-or a jumper switch. An internal-overlay-only NAND installation is rejected
-until a separately verified staging/backup layout is implemented.
+On the same Debian major, the signed packages and full Debian upgrade are
+installed. On an **adjacent Debian-major transition** (e.g. Debian 13 to
+Debian 14), the updater upgrades the source generation, backs up its APT
+sources and disables third-party repositories, obtains the target codename's
+repository template from the signed target platform package, migrates target
+Debian packages, installs the signed AtlANTian packages with the explicit
+major-upgrade authorization, and audits dpkg. Errors stop in RAM rather
+than rebooting a partially upgraded target.
 
-The old internal OverlayFS state is captured independently; the active external
-OverlayFS state is captured from the live merged root (its busy upper is **not**
-mounted again). Persistent paths, deletions and package intent follow the
-existing [persistence contract](PERSISTENCE.md).
+SD early BOOT.bin and U-Boot are not rewritten by this update; the bootloader
+ABI and the transactional A/B FIT layout still must be compatible. On-card
+filesystem capacity and network connectivity are essential to a Debian-major
+APT transition. Third-party package compatibility across majors is not assured.
 
-RAM maintenance revalidates the Micron 2c:da chip, 256 MiB capacity, exact MTD
-partition offsets, 128 KiB eraseblocks, 2 KiB pages, 64-byte OOB, ECC 4/512
-and zero bad blocks. An unsupported chip or bad-block layout fails before erase.
+## NAND, with or without SD card
 
-The maintainer formats the UBI data region, writes a static SquashFS rootfs and
-UBIFS overlay, checks the rootfs byte-for-byte through ubiblock, mounts both
-filesystems and restores the two separate state snapshots. The previous external
-upper/work trees are retained for diagnosis instead of being silently deleted.
+For an internal UBIFS upper, **no card is needed at all**. The RAM OS attaches
+the old NAND UBI, mounts the old immutable SquashFS lower and active merged
+OverlayFS view, and captures the supported user/admin state and package intent
+to its own RAM tmpfs. It then unmounts and detaches the old UBI, rechecks
+available memory, formats the 240 MiB UBI data partition, writes and reads
+back the new static SquashFS, recreates UBIFS, rebases user state and verifies
+the new root. Only then are the changed fixed-address raw-boot slots written
+and verified individually. Redundant U-Boot goes first; SPL copies go last,
+in reverse order, to reduce the unbootable window.
 
-Only after UBI rebase and verification does the writer update changed raw boot
-slots. The redundant U-Boot slot is written before the primary U-Boot slot.
-Kernel, initramfs and DTB slots are verified after each write. SPL is written
-**last**, in reverse copy order (3, 2, 1, 0), with individual readback checks.
+If the system actually uses an **adopted external ext4 OverlayFS upper**, that
+card must remain present: the RAM OS verifies its adoption token, takes a
+separate snapshot of the internal fallback state and the active external
+state, then restores the external upper into a side directory. The old
+external upper/work are retained on that card. The card is needed because
+it holds live user data, *not* because of firmware staging.
 
-Raw NAND updates **cannot guarantee recovery from power loss** during boot
-programming. Keep a verified external backup or a recovery method available.
-The hardware tests to date verified read equivalence and a successful RAM kexec
-cycle; actual Linux raw-boot write compatibility has **not yet been physically
-tested**, so treat the NAND write mode as experimental.
+A NAND update between Debian major generations is also supported: unlike SD,
+the target rootfs is a fresh immutable image; the snapshot/rebase and
+post-boot package reconciliation adapt the retained state to the new base.
+Only supported persistence paths and compatible package intent are retained;
+see [PERSISTENCE.md](PERSISTENCE.md).
 
-## Limitations
+NAND safety guards verify the Micron chip ID, exact capacity/partitions,
+128 KiB eraseblocks, 2 KiB pages, 64-byte OOB, ECC 4/512, zero reported
+bad blocks, signed image sizes, and enough memory **before any erase**.
+The initial writer rejects NAND with detected bad blocks.
 
-- Only **same Debian-major** system updates are supported. Major upgrades
-  require separately planned migration or reinstall.
-- The initial NAND writer fails closed if factory bad blocks are present.
-- RAM maintenance permits passwordless root SSH by design. Any device on the
-  same network may connect while that environment is active.
-- Logs and snapshots are retained on ext4 p2 for inspection. Do not discard
-  them before verifying the new system.
+**Experimental hardware warning:** raw NAND *writes* using Linux have not yet
+been physically validated, although the RAM kexec+SSH+reboot cycle and raw
+NAND readback were. A power failure while replacing UBI/SPL can destroy the
+only bootable system and the volatile backup. Have an independent verified
+backup and a recovery path for the first hardware trial.
 
-## Ordinary Debian packages
+## Debian major version policy
 
-```sh
-apt update
-apt upgrade
-```
+Same-major **and immediately next-major** releases are eligible on both SD
+and NAND. The updater chooses the newest complete signed release allowed by
+the stable/prerelease channel, including a next-major release where present.
+Downgrades and skipping multiple Debian majors in one step still require a
+separately tested migration. Ordinary apt package maintenance is not a
+replacement for immutable NAND system updates.
 
-These operations remain distinct from immutable NAND base and raw-boot
-updates. They are not a substitute for `atlantian-sysupgrade`.
+The old online SD update backend and the old SD-recovery/jumper NAND-update
+backend are no longer installed or called by atlantian-sysupgrade. The
+separate first-time NAND factory installer remains available for installation
+and disaster recovery, not normal system updates.

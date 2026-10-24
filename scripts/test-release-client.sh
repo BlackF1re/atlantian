@@ -67,12 +67,15 @@ reject_case 13.1.0 13.1.1-alpha.1 false 13.1.1.alpha.1-1
 reject_case 13.1.0 13.1.1-rc.1 false 13.1.1.rc.1-1
 reject_case 13.1.0 13.1.1 true 13.1.1-1
 
-# NAND can update only within its Debian major; a next-major release must not be advertised as sysupgrade.
+# Both editions must accept an adjacent Debian-major release over RAM kexec.
+run_case nand 13.1.0 14.1.0 false 14.1.0-1 14.1.0-1
+run_case sd 13.1.0 14.1.0 false 14.1.0-1 14.1.0-1
+# Never skip a Debian major or offer a downgrade in the automatic updater.
 printf '13.1.0\n' >"$tmp/version"
-release_json 14.1.0 false 14.1.0-1 | jq -s . >"$tmp/releases.json"
+release_json 15.1.0 false 15.1.0-1 | jq -s . >"$tmp/releases.json"
 PATH="$tmp/bin:$PATH" ATLANTIAN_TEST_RELEASES_JSON="$tmp/releases.json" ATLANTIAN_RELEASE_CONFIG="$tmp/releases.conf" \
   ATLANTIAN_UPDATE_STATE_DIR="$tmp/state" ATLANTIAN_VERSION_FILE="$tmp/version" ATLANTIAN_STORAGE_EDITION=nand sh "$CHECKER" --refresh >/dev/null
-[[ ! -e $tmp/state/available.env ]] || fail 'NAND advertised a cross-major sysupgrade'
+[[ ! -e $tmp/state/available.env ]] || fail 'NAND advertised a two-major skip'
 
 # An otherwise complete release is not eligible until its signer workflow has uploaded the Sigstore bundle.
 rm -rf "$tmp/state"; mkdir -p "$tmp/state"; printf '13.1.0\n' >"$tmp/version"

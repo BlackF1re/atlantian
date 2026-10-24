@@ -1,6 +1,6 @@
 # NAND architecture
 
-> **Update path (2026-10):** System upgrades use the authenticated RAM kexec maintainer in both SD and NAND modes. No boot-source jumper change and no bootable recovery microSD are required for routine upgrades. The first NAND writer still needs an adopted ext4 p2 external OverlayFS as staging storage. The original SD-U-Boot raw-stage procedure documented below applies to fresh NAND installation or historical releases, **not** to the current atlantian-sysupgrade path. See [UPGRADING.md](UPGRADING.md).
+> **Update path (2026-10):** System upgrades use the authenticated RAM kexec maintainer in both SD and NAND modes. No boot-source jumper change and no bootable recovery microSD are required for routine upgrades. The entire verified update and the preserved user-state snapshot reside in RAM; internal-only NAND installations require no SD card. The original SD-U-Boot raw-stage procedure documented below applies to fresh NAND installation or historical releases, **not** to the current atlantian-sysupgrade path. See [UPGRADING.md](UPGRADING.md).
 
 
 AtlANTian's NAND edition targets the stock Micron `MT29F2G08ABAEAWP` 256 MiB raw NAND used on the supported Antminer S9 control board. Raw-flash code is intentionally board/chip-specific; a part is not considered compatible merely because its capacity and page geometry match.
@@ -59,13 +59,17 @@ Early `/init` attaches UBI, exposes the static root through `ubiblock`, mounts S
 
 The initramfs uses a build-only static BusyBox binary. `busybox-static` is extracted during the build and purged before either normal runtime rootfs is cloned; it is not retained in the running system merely for early NAND boot.
 
-## Recovery microSD
+## SD recovery and factory installation
 
-The ordinary SD image is also the NAND recovery/maintenance medium. It contains the release-matched NAND bundle under `/usr/lib/atlantian/nand`. A NAND update may use the original paired recovery card **or an actively adopted external-upper card**, if its on-card token matches the token retained in NAND and its BOOT and ROOT partitions still contain a bootable AtlANTian maintenance OS. The original installer-card ID is not a requirement in the latter case; bootability and overlay token matching are. A stripped/overlay-only card is not automatically promoted into a recovery SD.
+A bootable AtlANTian SD image remains useful for first-time NAND installation
+and disaster recovery. The older SD-U-Boot raw-boot programming procedure
+described below is for factory installation or historical releases, not the
+current system-upgrade path.
 
-A NAND install records an installer/card identity. Later NAND base updates require that paired recovery SD. If it is inserted while NAND is running, it can also be explicitly adopted as the writable OverlayFS upper. Adoption keeps both SD partitions bootable and stores the external upper under the ext4 ROOT partition; token matching prevents a random ext4 card from silently becoming system state. Without the adopted card, boot falls back to the internal UBIFS upper.
-
-The SD/NAND jumper controls Zynq boot-mode straps that are sampled only at power-on reset. Every transition between SD and NAND boot therefore requires full power removal, jumper movement while unpowered, and power restoration; a software reboot does not perform that handoff.
+Routine firmware updates stage signed files and user snapshots in RAM. They
+require no bootable recovery card, no working SD FAT partition, and no inserted
+card for an internal UBIFS upper. An *adopted external SD OverlayFS upper*
+must remain present to preserve that active user state, not to stage firmware.
 
 ## Install transaction
 
@@ -82,19 +86,26 @@ The supported destructive path is deliberately split:
 
 This ordering keeps the old UBI untouched until raw boot is known-good and keeps the board on recovery SD until the new UBI is known-good. It does not make the raw boot update power-loss atomic; those physical fault cases remain part of [HARDWARE-VALIDATION.md](HARDWARE-VALIDATION.md).
 
-## Same-major base upgrade
+## NAND base upgrades via RAM
 
-NAND does not install the SD-oriented `atlantian-kernel` package into the live immutable base. `atlantian-sysupgrade` downloads the target NAND bundle plus authenticated public checksum manifest/signature to the paired recovery SD. After booting that SD, the prepared maintenance transaction:
+The system updater never boots recovery SD. It fetches and verifies the signed
+target release while running, then packages the full image and maintenance tools
+into a self-contained `kexec` initramfs. The RAM kernel mounts the old UBI
+only to copy supported persistent user state into a bounded RAM tmpfs, checks
+that the snapshot and firmware fit, detaches the old UBI, formats the data
+region, writes SquashFS/UBIFS and verifies the raw boot slots. An external SD
+overlay is optional; if it is adopted, its token and state are handled explicitly.
 
-- verifies the prepared bundle path, authenticated checksums and release identity;
-- mounts the current immutable lower and active upper;
-- captures the explicitly supported persistent deltas, extra manual package intent and holds;
-- requires the target to stay within the current Debian major;
-- stages the same verified raw-boot transaction used by installation;
-- rebuilds UBI with the target SquashFS;
-- restores selected state against the new lower rather than copying the previous upper wholesale.
+Same-major and *adjacent* Debian-major upgrades are supported. The target
+Debian rootfs is a newly built immutable image, not a live `apt dist-upgrade`
+of the old NAND base. Local state and package intent are captured by
+`atlantian-nand-rebase` and subsequently reconciled against the target
+Debian generation. Cross-major compatibility of third-party packages is not
+promised. Downgrades and skipping a major need separate explicit migration.
 
-A Debian-major NAND transition requires a clean reinstall from the target-generation SD image. It is intentionally not advertised as a compatible NAND `sysupgrade`.
+Power loss during NAND programming can still make the device unbootable; a
+RAM-only snapshot is necessarily volatile. Linux raw-boot writes have not yet
+received their first physical write validation.
 
 ## Backup
 
