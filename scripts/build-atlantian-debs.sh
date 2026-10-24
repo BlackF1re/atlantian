@@ -48,7 +48,7 @@ mkdir -p "$p/usr/lib/systemd/system"; cp -a "$RFS/usr/lib/systemd/system/atlanti
 copy usr/lib/systemd/system/run-apt.mount "$p"; copy usr/lib/tmpfiles.d/atlantian-apt.conf "$p"
 mkdir -p "$p/lib/firmware/atlantian" "$p/etc/atlantian" "$p/usr/share/atlantian" "$p/usr/lib/atlantian"
 cp -a "$RFS/lib/firmware/atlantian/." "$p/lib/firmware/atlantian/"; cp -a "$RFS/etc/atlantian/." "$p/etc/atlantian/"; cp -a "$RFS/usr/share/atlantian/." "$p/usr/share/atlantian/"
-for f in version package-version source-revision debian-codename debian-major debian-snapshot release-repo os-release runtime-sources.list release-trust.env atlantian-sysupgrade-sd atlantian-sysupgrade-nand; do
+for f in version package-version source-revision debian-codename debian-major debian-snapshot release-repo os-release runtime-sources.list release-trust.env ram-upgrade ram-upgrade-apply; do
   [[ -e $RFS/usr/lib/atlantian/$f ]] && copy "usr/lib/atlantian/$f" "$p"
 done
 conffiles "$p"; install_maintainer platform preinst "$p"; install_maintainer platform postinst "$p"
@@ -56,6 +56,7 @@ dpkg-deb --build --root-owner-group "$p" "$OUT/atlantian-platform_${PACKAGE_VERS
 
 k="$work/kernel"; mkdir -p "$k"; control "$k" atlantian-kernel armhf 'AtlANTian kernel and transactional SD boot payload'
 install_maintainer kernel preinst "$k"
+copy usr/lib/atlantian/ram-upgrade-busybox "$k"
 mkdir -p "$k/usr/lib/atlantian/boot" "$k/lib/modules"; cp -a "$RFS/lib/modules/." "$k/lib/modules/"
 BOOT_BIN="$ROOT/out/bootloader/BOOT.bin" UBOOT_IMG="$ROOT/out/bootloader/u-boot.img" DTB="$ROOT/out/boot/devicetree.dtb" ZIMAGE="$ROOT/out/boot/zImage" \
   "$ROOT/scripts/populate-boot-files.sh" "$k/usr/lib/atlantian/boot" package

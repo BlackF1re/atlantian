@@ -1,8 +1,6 @@
 # Updating AtlANTian
 
-`atlantian-sysupgrade` is the stable user command in both storage modes. It reads the installed storage identity and dispatches to the SD or NAND backend.
-
-## User commands
+The user-facing entry point is the same for SD and NAND installations:
 
 ```sh
 atlantian-sysupgrade --check
@@ -11,193 +9,96 @@ atlantian-sysupgrade
 atlantian-sysupgrade --yes
 ```
 
-- `--check` refreshes release discovery and reports a compatible update without installing it.
-- `--notes` refreshes discovery and prints the selected release notes.
-- no option performs the normal interactive transaction and requires the literal `UPGRADE` confirmation.
-- `--yes` installs/stages without that confirmation. It does **not** disable any signature, checksum, compatibility, free-space or NAND safety check.
+All system releases use a **signed, offline kexec RAM-maintenance transaction**.
+The earlier SD online-update backend and NAND recovery-SD/jumper upgrade handoff
+are no longer invoked or installed by the new image. Ordinary `apt update` and
+`apt upgrade` remain available for Debian packages.
 
-Interactive SSH login also shows a cached notice when a compatible newer release has already been discovered by `atlantian-release-check.timer`.
+## Authentication and RAM handoff
 
-## Which release is selected
+1. Discover the newest published compatible release, with the authenticated
+   release manifest and a NAND bundle required for **both** storage editions.
+2. Confirm `UPGRADE`, unless `--yes` was selected.
+3. Authenticate `SHA256SUMS.sigstore.json` with the pinned AtlANTian signer;
+   verify downloaded assets and the NAND bundle's own checksums.
+4. Stage verified assets on **ext4 partition `/dev/mmcblk0p2`**, not on the
+   FAT boot partition. An adopted NAND external-overlay card does not need a
+   bootable FAT partition.
+5. Prepare a replacement Linux kernel from the signed NAND `uImage`, with a
+   private static BusyBox initramfs, staged utilities and their libraries.
+   Bring up Ethernet using DHCP and an unauthenticated `root` Dropbear SSH
+   server on port 22 (maintenance mode only). The SSH session on the live
+   operating system disconnects at the kexec handoff.
+6. Systemd stops running userspace and executes `kexec`. The RAM kernel
+   receives the correct MTD partition split and mounts ext4 p2 for staging.
+7. Recheck the internal checksums sealed inside the initramfs **before**
+   modifying the target storage. On failure the RAM maintenance system remains
+   available over SSH; logs are written to
+   `/var/cache/atlantian/ram-upgrade-last.log` on p2.
+8. After verifying the update, issue a normal software reboot into the
+   selected physical boot source. No jumper change or power cycling is
+   involved in the normal update transaction.
 
-Release discovery scans published, non-draft GitHub Releases and considers only complete version-matched package sets that already have both `SHA256SUMS` and `SHA256SUMS.sigstore.json`. GitHub's `prerelease` display flag is **not** the source of truth for installed-system update channels: the semantic version suffix is.
+## SD maintenance
 
-Selection policy is deliberate:
+The SD root on p2 is not mounted as the running system in RAM. The maintainer
+bind-mounts `/proc`, `/sys`, `/dev`, `/run`, mounts the existing FAT p1
+and uses `chroot` to apply the **authenticated AtlANTian package set** and
+same-major Debian full upgrade. The kernel package's existing verified A/B FIT
+post-install transaction switches only the inactive FIT slot.
 
-- an installation on a **stable** AtlANTian release ignores all `-alpha.*`, `-beta.*` and `-rc.*` versions even when GitHub marks them as regular Releases; GitHub-flagged prereleases are ignored as an additional safeguard;
-- installations on a **prerelease** may follow newer compatible alpha/beta/rc versions or a later stable release;
-- alpha installations can move to the public beta channel without reinstalling, subject to the normal SD/NAND compatibility and signature checks;
-- a newer release in the **currently installed Debian major** is preferred when one exists;
-- only SD can then consider the **immediate next Debian major** (`N -> N+1`);
-- NAND never advertises a cross-major in-place base update.
+The original SD SPL and U-Boot are not rewritten by this path. Their boot ABI
+must remain compatible.
 
-This means release ordering is not simply “highest tag wins”: current-generation maintenance is completed before an SD installation is offered a Debian-major transition.
+## NAND maintenance
 
-## Release authentication
+This first RAM writer requires a **mounted, explicitly adopted external ext4
+overlay** on p2 to stage the authenticated bundle and state snapshots. It does
+**not** need the p1 recovery FAT filesystem, a bootable recovery SD image,
+or a jumper switch. An internal-overlay-only NAND installation is rejected
+until a separately verified staging/backup layout is implemented.
 
-A release is eligible for AtlANTian system update only after the release-signing workflow has attached `SHA256SUMS.sigstore.json`. Existence of that asset makes the release discoverable; the installation transaction then downloads and cryptographically verifies the bundle before trusting any checksum in `SHA256SUMS`.
+The old internal OverlayFS state is captured independently; the active external
+OverlayFS state is captured from the live merged root (its busy upper is **not**
+mounted again). Persistent paths, deletions and package intent follow the
+existing [persistence contract](PERSISTENCE.md).
 
-The installed trust root pins:
+RAM maintenance revalidates the Micron 2c:da chip, 256 MiB capacity, exact MTD
+partition offsets, 128 KiB eraseblocks, 2 KiB pages, 64-byte OOB, ECC 4/512
+and zero bad blocks. An unsupported chip or bad-block layout fails before erase.
 
-- the Cosign version used on ARM;
-- the exact expected Cosign executable size and SHA-256;
-- the exact GitHub Actions workflow identity allowed to sign AtlANTian release manifests;
-- the GitHub Actions OIDC issuer.
+The maintainer formats the UBI data region, writes a static SquashFS rootfs and
+UBIFS overlay, checks the rootfs byte-for-byte through ubiblock, mounts both
+filesystems and restores the two separate state snapshots. The previous external
+upper/work trees are retained for diagnosis instead of being silently deleted.
 
-If the verifier is not cached, `atlantian-verify-release` downloads that pinned ARM Cosign binary and validates its size/hash before executing it. SD caches it in local persistent storage. NAND update staging caches it on the paired recovery microSD instead of consuming the small NAND overlay.
+Only after UBI rebase and verification does the writer update changed raw boot
+slots. The redundant U-Boot slot is written before the primary U-Boot slot.
+Kernel, initramfs and DTB slots are verified after each write. SPL is written
+**last**, in reverse copy order (3, 2, 1, 0), with individual readback checks.
 
-This policy is enforced only by images that contain the signed-update client/trust root. An older image from before that client existed cannot retroactively authenticate the first update that installs it; see [../SECURITY.md](../SECURITY.md).
+Raw NAND updates **cannot guarantee recovery from power loss** during boot
+programming. Keep a verified external backup or a recovery method available.
+The hardware tests to date verified read equivalence and a successful RAM kexec
+cycle; actual Linux raw-boot write compatibility has **not yet been physically
+tested**, so treat the NAND write mode as experimental.
 
-`atlantian-update.json` is separate, optional telemetry. Failure to fetch or validate it never weakens or blocks release authentication.
+## Limitations
 
-## SD updates
+- Only **same Debian-major** system updates are supported. Major upgrades
+  require separately planned migration or reinstall.
+- The initial NAND writer fails closed if factory bad blocks are present.
+- RAM maintenance permits passwordless root SSH by design. Any device on the
+  same network may connect while that environment is active.
+- Logs and snapshots are retained on ext4 p2 for inspection. Do not discard
+  them before verifying the new system.
 
-Run:
-
-```sh
-atlantian-sysupgrade
-```
-
-The SD backend:
-
-1. refreshes published release discovery using the policy above;
-2. advertises only a complete release that has the signed-manifest asset;
-3. best-effort records the optional `atlantian-update.json` activity marker;
-4. downloads the three AtlANTian Debian packages plus `SHA256SUMS` and `SHA256SUMS.sigstore.json`;
-5. authenticates the checksum manifest against the pinned Sigstore signer identity/issuer;
-6. verifies public filenames, Debian package metadata, common package revision and payload SHA-256;
-7. installs the package set through APT;
-8. runs a normal Debian `full-upgrade` for the configured codename;
-9. audits dpkg state and reboots.
-
-The downloaded AtlANTian package set is exactly one `atlantian-platform` (`all`), one `atlantian-kernel` (`armhf`) and one `atlantian-release` (`all`) package whose internal Debian versions correspond to the selected public release. Mixed revisions are rejected.
-
-### SD boot transaction
-
-The kernel package is an A/B FIT transaction. It requires both complete FIT slots and a matching SD boot ABI, writes only the inactive slot, verifies it, syncs it, and only then changes the active-slot marker. U-Boot can fall back to the other complete slot.
-
-Online updates do **not** replace SD `BOOT.bin` or `u-boot.img`. If the target changes the early-boot contract/ABI in an incompatible way, the safe path is a fresh current image rather than an in-place bootloader rewrite.
-
-When comparing generated `boot.scr` content, U-Boot legacy header CRC/timestamp bytes are treated as build metadata rather than semantic script differences.
-
-### Debian-major transition on SD
-
-The SD updater supports only the immediate next Debian major. Before crossing the boundary it:
-
-1. requires additional free space;
-2. backs up the existing APT source configuration;
-3. disables third-party `.list`/`.sources` entries for the transition;
-4. fully upgrades the current Debian generation;
-5. records a resumable target marker;
-6. installs the authenticated target AtlANTian package set under explicit major-upgrade authorization;
-7. switches to the packaged target-codename Debian repositories;
-8. completes the target `full-upgrade`, audits dpkg state and reboots.
-
-If interrupted after the major-upgrade marker is written, run:
-
-```sh
-atlantian-sysupgrade
-```
-
-AtlANTian resumes the recorded target rather than selecting a different release. The updater deliberately does not skip a Debian major.
-
-## NAND updates
-
-### RAM-only maintenance readiness
-
-A read-only kernel-handoff diagnostic is available on newly built NAND images:
-
-```sh
-atlantian-nand-ram-probe --check
-atlantian-nand-ram-probe --probe
-```
-
-`--check` checks the board, booted NAND identity, resident RAM and required
-tools without downloading anything or rebooting. `--probe` requires explicit
-confirmation, downloads and authenticates the published NAND bundle, then uses
-`kexec` to launch its kernel into a **non-destructive RAM-only initramfs**.
-The SSH-oriented `--probe` requires the existing external overlay-only SD
-(`/dev/mmcblk0p2`) **only to record its result**; it does not need a bootable
-recovery SD. After a successful RAM boot it writes
-`/run/atlantian/external-overlay/var/lib/atlantian/ram-probe.state` with
-`phase=ram-booted`, outside the active upper/work tree, syncs and unmounts
-the card, then attempts a normal NAND-mode software reboot. The initial
-`phase=prepared` marker is **not** proof of a successful kexec. If the
-board never returns to SSH, physically power-cycle it without touching the
-NAND/SD boot jumper and inspect the marker. `--probe` does **not** write
-NAND or install firmware. Zynq `kexec` handoff is not yet physically
-verified, so UART remains preferable for debugging failures.
-
-The diagnostic is a prerequisite, **not a new NAND updater**. Do not
-misinterpret successful CI or `CONFIG_KEXEC=y` as authorization to erase
-raw boot slots. Until Linux NAND bad-block/ECC equivalence, memory isolation,
-state rebase and power-failure recovery have been validated on actual boards,
-`atlantian-sysupgrade` retains the recovery-SD maintenance method.
-
-
-
-
-The same command is used while booted from NAND:
-
-```sh
-atlantian-sysupgrade
-```
-
-The NAND backend advertises **same-Debian-major authenticated releases only**. For the physical NAND maintenance handoff it needs an **actually bootable AtlANTian recovery microSD** (FAT BOOT with the SD boot chain and an ext4 SD root with the maintenance tools). It accepts either the original installer-paired card or the SD currently serving as the adopted external OverlayFS upper whose token matches the NAND internal token. A blank card, a filesystem containing only an overlay directory, or a card with a mismatched adoption token is not safe for NAND programming and is rejected. The check is read-only and never reformats the card. Existing systems must already contain this validation logic; changing the published updater cannot retroactively modify the updater in an old immutable NAND base.
-
-Staging performs these checks before handoff:
-
-1. locate the exact `atlantian-nand-<version>.tar.zst` asset for the selected release;
-2. best-effort record the optional update metric marker;
-3. download the NAND bundle, public `SHA256SUMS` and `SHA256SUMS.sigstore.json` to the recovery SD;
-4. authenticate `SHA256SUMS` with the pinned release signer;
-5. verify the bundle against that authenticated public checksum;
-6. extract it and verify the bundle's internal `SHA256SUMS` and `NAND-MANIFEST.json` release identity;
-7. record the prepared target on the recovery SD.
-
-After staging:
-
-1. **fully remove power** from the board;
-2. move the boot-source jumper from **NAND** to **SD**, then restore power;
-3. log in as root on the paired recovery SD; `atlantian-nand-upgrade` starts automatically for the prepared update;
-4. confirm `UPGRADE`; the maintenance tool captures supported persistent state, stages raw boot and performs its automatic reboot while the jumper remains in **SD**;
-5. SD U-Boot programs and read-back verifies raw boot, then SD Linux automatically rebuilds/verifies UBI and rebases supported persistent state;
-6. after the verified final handoff message, **fully remove power** again, move the jumper from **SD** to **NAND**, and restore power.
-
-Do not substitute `reboot` for either physical boot-source transition. The jumper is sampled at power-on reset.
-
-### NAND update commands
-
-- `atlantian-sysupgrade` — normal user entry point while booted from NAND; discovers, authenticates and stages the target release on the paired recovery SD.
-- `atlantian-sysupgrade --check` / `--notes` — inspect the available target without staging it.
-- `atlantian-nand-upgrade` — recovery-SD maintenance helper for an already staged update; normally launched automatically at root login.
-- `atlantian-nand-install --resume` — manually continue a verified NAND transaction if automatic SD resume did not complete.
-
-The maintenance side checks the prepared bundle path and release identity again before destructive work. The exact persisted/rebased state is documented in [PERSISTENCE.md](PERSISTENCE.md), not “the whole previous upper”.
-
-### Debian-major transition on NAND
-
-A NAND immutable-base transition to another Debian major is a **clean reinstall**, not an in-place sysupgrade. Write/boot the target-generation SD release and follow [INSTALLATION.md](INSTALLATION.md).
-
-## Ordinary Debian updates
-
-AtlANTian runtime APT sources track the configured Debian codename. Normal package maintenance remains ordinary Debian administration:
+## Ordinary Debian packages
 
 ```sh
 apt update
 apt upgrade
 ```
 
-APT repository indexes are stored in a bounded 96 MiB tmpfs under `/run/apt`; package archives use normal storage-backed staging and are not retained after successful installation.
-
-On NAND ordinary package/configuration writes go to the active OverlayFS upper. AtlANTian's immutable NAND base and raw boot are changed only through `atlantian-sysupgrade`/the paired recovery transaction.
-
-## Release filenames and metrics
-
-Beta `.deb` **asset filenames** use GitHub-safe dotted versions such as `13.1.0.beta.1-1`, while the package's internal Debian version retains native `~` ordering such as `13.1.0~beta.1-1`. Legacy alpha assets retain their original names.
-
-GitHub Release artifact download badges are presentation only. Runtime update accounting is anonymous and best-effort through the small `atlantian-update.json` asset; it is not part of the authenticated payload and never gates a transaction.
-
-## Recovery rule
-
-Do not bypass failed verification by deleting markers, editing `available.env`, replacing the signed manifest, or manually copying boot files. SD and NAND update markers are transaction state. Diagnose the reported failing invariant, then resume or reflash/reinstall as instructed.
+These operations remain distinct from immutable NAND base and raw-boot
+updates. They are not a substitute for `atlantian-sysupgrade`.

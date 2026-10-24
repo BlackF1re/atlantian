@@ -7,7 +7,7 @@ EDITION=${2:?usage: install-nand-tools.sh ROOTFS EDITION}
 case "$EDITION" in sd|nand) ;; *) echo "invalid storage edition: $EDITION" >&2; exit 64 ;; esac
 . "$PROJECT/config/nand-layout.env"
 
-for tool in atlantian-nand-backup atlantian-nand-upgrade atlantian-nand-rebase atlantian-storage atlantian-validate-recovery-sd atlantian-nand-firstboot atlantian-nand-reconcile; do
+for tool in atlantian-nand-backup atlantian-nand-rebase atlantian-storage atlantian-validate-recovery-sd atlantian-nand-firstboot atlantian-nand-reconcile; do
   install -D -m 0755 "$PROJECT/scripts/$tool.sh" "$ROOT/usr/local/sbin/$tool"
 done
 # Keep an early public guard and make the destructive implementation repeat the
@@ -26,9 +26,13 @@ for installer in \
     exit 2
   }
 done
+rm -f "$ROOT/usr/local/sbin/atlantian-nand-upgrade"
 install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade.sh" "$ROOT/usr/local/sbin/atlantian-sysupgrade"
-install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade-sd.sh" "$ROOT/usr/lib/atlantian/atlantian-sysupgrade-sd"
-install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade-nand.sh" "$ROOT/usr/lib/atlantian/atlantian-sysupgrade-nand"
+install -D -m 0755 "$PROJECT/scripts/atlantian-ram-upgrade.sh" "$ROOT/usr/lib/atlantian/ram-upgrade"
+install -D -m 0755 "$PROJECT/scripts/atlantian-ram-upgrade-apply.sh" "$ROOT/usr/lib/atlantian/ram-upgrade-apply"
+install -D -m 0755 "$PROJECT/out/build-tools/busybox-static-armhf" "$ROOT/usr/lib/atlantian/ram-upgrade-busybox"
+# The old per-edition sysupgrade backends are no longer installed.
+rm -f "$ROOT/usr/lib/atlantian/atlantian-sysupgrade-sd" "$ROOT/usr/lib/atlantian/atlantian-sysupgrade-nand"
 install -D -m 0755 "$PROJECT/scripts/atlantian-verify-release.sh" "$ROOT/usr/local/sbin/atlantian-verify-release"
 install -D -m 0644 "$PROJECT/config/release-trust.env" "$ROOT/usr/lib/atlantian/release-trust.env"
 install -D -m 0644 "$PROJECT/systemd/atlantian-nand-auto-resume.service" "$ROOT/usr/lib/systemd/system/atlantian-nand-auto-resume.service"

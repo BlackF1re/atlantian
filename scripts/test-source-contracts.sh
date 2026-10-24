@@ -53,6 +53,7 @@ grep -Fq 'atlantian-verify-release.sh' scripts/install-nand-tools.sh || fail 're
 grep -Fq 'atlantian-validate-recovery-sd atlantian-nand-firstboot' scripts/install-nand-tools.sh || fail 'recovery SD validator is not installed'
 grep -Fq 'atlantian-storage is-upgrade-card' scripts/atlantian-sysupgrade-nand.sh || fail 'NAND update still requires installer identity'
 grep -Fq '.extroot-token' scripts/atlantian-storage.sh || fail 'external overlay token validation disappeared'
+scripts/test-ram-upgrade.sh
 scripts/test-recovery-sd-layout.sh
 grep -Fq 'release-trust.env' scripts/install-nand-tools.sh || fail 'release trust root is not installed into runtime images'
 grep -Fq 'release-trust.env' scripts/build-atlantian-debs.sh || fail 'platform package does not carry the release trust root'
