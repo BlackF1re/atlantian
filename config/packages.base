@@ -26,6 +26,8 @@ alsa-utils
 v4l-utils
 usbutils
 mtd-utils
+kexec-tools
+cpio
 device-tree-compiler
 kmod
 file

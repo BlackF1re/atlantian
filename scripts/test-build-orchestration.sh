@@ -17,6 +17,12 @@ validate_packages() {
 validate_packages config/packages.base
 [[ ! -e config/packages.nand ]] || fail 'NAND package delta profile must not exist'
 grep -qx 'busybox-static' < <(sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' config/packages.base) || fail 'build-only BusyBox source package is missing'
+grep -qx 'kexec-tools' config/packages.base || fail 'missing kexec userspace'
+grep -qx 'cpio' config/packages.base || fail 'missing NAND RAM initramfs packer'
+grep -Fq 'ram-probe-busybox' scripts/build-nand-rootfs.sh || fail 'static NAND RAM maintenance tool is not packaged'
+grep -Fq 'atlantian-nand-ram-probe.sh' scripts/install-nand-tools.sh || fail 'NAND RAM probe command not installed'
+grep -Fq 'scripts/test-nand-ram-probe.sh' scripts/test-build-orchestration.sh || fail 'NAND RAM probe regression test not wired'
+scripts/test-nand-ram-probe.sh
 
 scripts/test-release-client.sh
 scripts/test-recovery-sd-layout.sh

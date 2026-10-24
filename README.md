@@ -85,6 +85,8 @@ sudo -E scripts/build-incremental.sh all
 
 The rootfs and kernel branches build independently and join before artifact assembly. Production GitHub Actions exposes the same boundary as separate parallel jobs, then fans release validation out into artifact, SD image, NAND bundle, cross-release SD update and NAND rebase gates. Only a fully verified candidate is sealed and eligible for publication.
 
+A non-destructive `atlantian-nand-ram-probe` diagnostic is included in NAND builds to validate a future cardless maintenance route. It is not a cardless flasher; NAND programming still requires verified recovery-SD maintenance. See [Updating AtlANTian](docs/UPGRADING.md) for details.
+
 NAND system upgrades require a bootable maintenance SD. The originally paired card remains supported; an actively adopted external-overlay card is also eligible when its NAND token matches and it retains the AtlANTian SD boot/recovery system. Overlay-only reformatted media cannot carry out the SD-to-NAND maintenance handoff.
 
 The SSH update notice is explicitly cached; run `atlantian-sysupgrade --check` for live release discovery. The periodic timer normally refreshes the cache approximately hourly (subject to scheduling jitter).

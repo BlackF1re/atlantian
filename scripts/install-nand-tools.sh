@@ -35,6 +35,12 @@ install -D -m 0644 "$PROJECT/systemd/atlantian-nand-auto-resume.service" "$ROOT/
 install -D -m 0644 "$PROJECT/systemd/atlantian-nand-reconcile.service" "$ROOT/usr/lib/systemd/system/atlantian-nand-reconcile.service"
 
 install -d -m 0755 "$ROOT/etc/systemd/system/multi-user.target.wants"
+if [[ $EDITION == nand ]]; then
+  install -D -m 0755 "$PROJECT/scripts/atlantian-nand-ram-probe.sh" "$ROOT/usr/local/sbin/atlantian-nand-ram-probe"
+else
+  rm -f "$ROOT/usr/local/sbin/atlantian-nand-ram-probe"
+fi
+
 if [[ $EDITION == sd ]]; then
   ln -sfn /usr/lib/systemd/system/atlantian-nand-auto-resume.service "$ROOT/etc/systemd/system/multi-user.target.wants/atlantian-nand-auto-resume.service"
   rm -f "$ROOT/etc/systemd/system/multi-user.target.wants/atlantian-nand-reconcile.service"
