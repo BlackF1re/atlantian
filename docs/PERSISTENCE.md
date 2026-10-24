@@ -62,20 +62,20 @@ Anything outside the roots listed above is **not** promised by the automated NAN
 
 ## External writable layer
 
-The same microSD used to install/recover NAND can be adopted as the NAND writable layer:
+An ext4 microSD used for NAND state can be adopted as the NAND writable layer (it need not be bootable for RAM updates):
 
 ```sh
 atlantian-storage status
 atlantian-storage adopt
 ```
 
-Adoption does not repartition or erase the recovery card. It creates a private `.atlantian-extroot` upper/work tree inside the existing ext4 ROOT partition, copies the current internal writable state there and records a generated token on both sides. The card remains bootable as the recovery/maintenance SD.
+Adoption does not repartition or erase the recovery card. It creates a private `.atlantian-extroot` upper/work tree inside the existing ext4 ROOT partition, copies the current internal writable state there and records a generated token on both sides. The adopted card may contain only ext4 p2; a usable FAT p1 is no longer a prerequisite for RAM maintenance.
 
 Early NAND boot uses the external upper only when the expected recovery-card identity/layout and token match. If the adopted card is absent, normal boot falls back to the internal UBIFS upper. A random ext4 card cannot silently become system state.
 
 An adopted external upper is captured/restored by the same supported rebase policy during a same-major NAND base upgrade. Token/layout mismatch during a prepared update fails closed rather than rebasing state onto an unrelated card.
 
-A card may serve as NAND update staging/recovery even if its original installer ID is different, **provided** its active external-upper adoption token matches NAND and the card retains a bootable AtlANTian SD system with NAND maintenance/resume tools. Recovery eligibility is not implied by OverlayFS adoption alone. Never erase the SD boot/root system to obtain more overlay space; a reformatted overlay-only card cannot boot the required maintenance session.
+The RAM updater uses the existing adopted ext4 p2 as a staging area and verifies its active external-upper adoption token against the internal NAND token. It never assumes that FAT p1 contains a recovery system and never erases either SD partition for staging. A separate bootable recovery card is useful only for manual disaster recovery, not for the normal update transaction.
 
 ## What is not persistent
 
