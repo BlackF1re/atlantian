@@ -97,6 +97,13 @@ if [[ $edition == sd ]]; then
    [[ $name =~ ^atlantian-(platform|kernel|release)_[a-zA-Z0-9.+~-]+_(all|armhf)\.deb$ ]] || fail 'unsafe package filename'
    fetch "$name"
    check_public_hash "$name"
+   [[ $(dpkg-deb -f "$stage/$name" Package) == "atlantian-$kind" ]] ||
+     fail "Debian package identity mismatch: $name"
+   [[ $(dpkg-deb -f "$stage/$name" Version) == "$(get package_version)" ]] ||
+     fail "Debian package version mismatch: $name"
+   case "$kind" in kernel) expected_arch=armhf ;; *) expected_arch=all ;; esac
+   [[ $(dpkg-deb -f "$stage/$name" Architecture) == "$expected_arch" ]] ||
+     fail "Debian package architecture mismatch: $name"
    printf '%s=%s\n' "$kind" "$name" >>"$stage/packages.list"
  done
  [[ -s /boot/atlantian-boot-abi ]] || fail 'SD boot ABI missing'

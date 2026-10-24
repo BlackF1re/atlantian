@@ -174,6 +174,9 @@ sd_apply() {
  mount --bind /run /stage/run || fail 'bind run failed'
  mkdir -p /stage/run/systemd/resolve /stage/run/apt/lists/partial /stage/run/apt/archives/partial
  cp /run/resolv.conf /stage/run/systemd/resolve/stub-resolv.conf || fail 'no DNS supplied by DHCP'
+ mark refreshing-sd-repositories
+ chroot /stage /usr/bin/env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update ||
+   fail 'SD apt update failed'
  mark installing-sd-packages
  set --
  for kind in platform kernel release; do
@@ -183,12 +186,13 @@ sd_apply() {
  done
  # Existing package maintainer hooks handle the A/B FIT verification and
  # switch only the inactive image. apt processes dependencies on the SD root.
- chroot /stage /usr/bin/apt-get -y -o Dpkg::Options::=--force-confdef \
-   -o Dpkg::Options::=--force-confold install "$@" || fail 'SD package installation failed'
+ chroot /stage /usr/bin/env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get -y \
+   -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+   install "$@" || fail 'SD package installation failed'
  mark upgrading-debian
- chroot /stage /usr/bin/apt-get update || fail 'SD apt update failed'
- chroot /stage /usr/bin/apt-get -y -o Dpkg::Options::=--force-confdef \
-   -o Dpkg::Options::=--force-confold full-upgrade || fail 'SD Debian upgrade failed'
+ chroot /stage /usr/bin/env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get -y \
+   -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+   full-upgrade || fail 'SD Debian upgrade failed'
  [ -z "$(chroot /stage /usr/bin/dpkg --audit)" ] || fail 'dpkg audit nonempty'
  [ "$(cat /stage/usr/lib/atlantian/version)" = "$target" ] || fail 'SD version marker mismatch'
  sync

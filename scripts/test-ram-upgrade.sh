@@ -32,7 +32,8 @@ assert a.index('flash_slot UBOOT_REDUND') < a.index('flash_slot UBOOT_MAIN')
 assert a.index('flash_slot UBOOT_MAIN') < a.index('flash_slot "SPL_$copy"')
 assert 'bad boot PEBs unsupported' in a
 assert 'bad UBI PEBs unsupported' in a
-assert 'chroot /stage /usr/bin/apt-get' in a
+assert 'chroot /stage /usr/bin/env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get' in a
+assert a.index('mark refreshing-sd-repositories') < a.index('mark installing-sd-packages')
 assert 'previous-upper' in a and 'previous-work' in a
 init=s.split("<<'INIT'\n",1)[1].split("\nINIT\n",1)[0]
 import subprocess
