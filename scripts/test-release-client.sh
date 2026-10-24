@@ -79,4 +79,12 @@ PATH="$tmp/bin:$PATH" ATLANTIAN_TEST_RELEASES_JSON="$tmp/releases.json" ATLANTIA
   ATLANTIAN_UPDATE_STATE_DIR="$tmp/state" ATLANTIAN_VERSION_FILE="$tmp/version" ATLANTIAN_STORAGE_EDITION=sd sh "$CHECKER" --refresh >/dev/null
 [[ ! -e $tmp/state/available.env ]] || fail 'unsigned release was advertised as an update'
 
+# The login banner uses a cached result, not a live GitHub check.
+printf '13.1.0-alpha.63\n' >"$tmp/version"
+printf 'version=13.1.0-beta.1\ntag=v13.1.0-beta.1\n' >"$tmp/state/available.env"
+notice=$(ATLANTIAN_RELEASE_CONFIG="$tmp/releases.conf" ATLANTIAN_UPDATE_STATE_DIR="$tmp/state" \
+  ATLANTIAN_VERSION_FILE="$tmp/version" ATLANTIAN_STORAGE_EDITION=nand sh "$CHECKER" --notice)
+[[ $notice == *'Cached update: v13.1.0-beta.1 (checked '* ]] ||
+  fail 'SSH notice falsely presents cached discovery as a current update check'
+
 echo 'signed alpha-to-beta upgrade, SemVer channel isolation and storage-aware discovery contracts passed'

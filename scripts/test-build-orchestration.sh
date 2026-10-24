@@ -19,6 +19,7 @@ validate_packages config/packages.base
 grep -qx 'busybox-static' < <(sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' config/packages.base) || fail 'build-only BusyBox source package is missing'
 
 scripts/test-release-client.sh
+scripts/test-recovery-sd-layout.sh
 scripts/test-public-release-assets.sh
 scripts/test-release-publication-policy.sh
 scripts/test-release-notes.sh

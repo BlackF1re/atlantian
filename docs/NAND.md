@@ -58,7 +58,7 @@ The initramfs uses a build-only static BusyBox binary. `busybox-static` is extra
 
 ## Recovery microSD
 
-The ordinary SD image is also the NAND recovery/maintenance medium. It contains the release-matched NAND bundle under `/usr/lib/atlantian/nand`.
+The ordinary SD image is also the NAND recovery/maintenance medium. It contains the release-matched NAND bundle under `/usr/lib/atlantian/nand`. A NAND update may use the original paired recovery card **or an actively adopted external-upper card**, if its on-card token matches the token retained in NAND and its BOOT and ROOT partitions still contain a bootable AtlANTian maintenance OS. The original installer-card ID is not a requirement in the latter case; bootability and overlay token matching are. A stripped/overlay-only card is not automatically promoted into a recovery SD.
 
 A NAND install records an installer/card identity. Later NAND base updates require that paired recovery SD. If it is inserted while NAND is running, it can also be explicitly adopted as the writable OverlayFS upper. Adoption keeps both SD partitions bootable and stores the external upper under the ext4 ROOT partition; token matching prevents a random ext4 card from silently becoming system state. Without the adopted card, boot falls back to the internal UBIFS upper.
 

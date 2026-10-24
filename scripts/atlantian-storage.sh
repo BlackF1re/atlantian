@@ -17,9 +17,10 @@ usage() {
 Usage:
   atlantian-storage status
   atlantian-storage is-installer-card
+  atlantian-storage is-upgrade-card
   atlantian-storage adopt [ /dev/mmcblk0 ]
 
-`adopt` keeps the existing AtlANTian recovery microSD intact and creates the
+`is-upgrade-card` accepts either the original paired recovery card or an\nexternally adopted SD whose token matches NAND, provided it still boots AtlANTian\nmaintenance. An overlay-only reformatted card is not sufficient.\n\n`adopt` keeps the existing AtlANTian recovery microSD intact and creates the
 external OverlayFS writable layer inside its ext4 ROOT partition. The same card
 therefore remains bootable for NAND maintenance. With no adopted card at boot,
 AtlANTian automatically falls back to the internal NAND upper layer.
@@ -51,6 +52,67 @@ installer_card_id() {
     return 1
 }
 
+# Validate a suitable SD maintenance environment, not merely the identity
+# of the card that happened to install NAND. A card currently providing the
+# authenticated external upper is eligible when its adoption token matches the
+# internal NAND marker and it still contains a bootable recovery OS.
+upgrade_card() {
+    require_nand
+    [ -b "$BOOT_PART" ] && [ -b "$ROOT_PART" ] || {
+        echo 'NAND maintenance requires both partitions of a bootable AtlANTian recovery SD.' >&2
+        return 1
+    }
+
+    tmp=$(mktemp -d /run/atlantian-upgrade-card.XXXXXX) || return 1
+    mkdir -p "$tmp/boot" "$tmp/root"
+    boot_mounted=false
+    root_mounted=false
+    root="$tmp/root"
+    if mount -t vfat -o ro "$BOOT_PART" "$tmp/boot"; then
+        boot_mounted=true
+    else
+        echo 'Cannot read the recovery SD boot partition.' >&2
+        rmdir "$tmp/boot" "$tmp/root" "$tmp"
+        return 1
+    fi
+    if mountpoint -q "$RUNTIME/external-overlay" &&
+       [ "$(findmnt -n -o SOURCE "$RUNTIME/external-overlay" 2>/dev/null || true)" = "$ROOT_PART" ]; then
+        root="$RUNTIME/external-overlay"
+    elif mount -t ext4 -o ro "$ROOT_PART" "$tmp/root"; then
+        root_mounted=true
+    else
+        echo 'Cannot read the recovery SD root partition.' >&2
+        umount "$tmp/boot"
+        rmdir "$tmp/boot" "$tmp/root" "$tmp"
+        return 1
+    fi
+
+    result=0
+    /usr/local/sbin/atlantian-validate-recovery-sd "$tmp/boot" "$root" || result=1
+    if [ "$result" -eq 0 ]; then
+        if [ -s "$INTERNAL/.extroot-token" ]; then
+            # Preserve the currently adopted upper; NEVER accept a different
+            # card's writable state merely because it has a bootable SD image.
+            [ -s "$root/$EXTROOT_DIR/token" ] &&
+            [ "$(cat "$root/$EXTROOT_DIR/token")" = "$(cat "$INTERNAL/.extroot-token")" ] &&
+            [ -d "$root/$EXTROOT_DIR/upper" ] &&
+            [ -d "$root/$EXTROOT_DIR/work" ] || {
+                echo 'External OverlayFS adoption token/layout does not match the running NAND.' >&2
+                result=1
+            }
+        else
+            installer_card_id || {
+                echo 'Card is not paired with NAND and no adopted external upper token exists.' >&2
+                result=1
+            }
+        fi
+    fi
+    if [ "$root_mounted" = true ]; then umount "$tmp/root" || result=1; fi
+    if [ "$boot_mounted" = true ]; then umount "$tmp/boot" || result=1; fi
+    rmdir "$tmp/boot" "$tmp/root" "$tmp" || result=1
+    return "$result"
+}
+
 status() {
     require_nand
     mode=$(cat "$RUNTIME/overlay-mode" 2>/dev/null || printf unknown)
@@ -73,8 +135,10 @@ status() {
     else
         echo 'External overlay: not adopted'
     fi
-    if installer_card_id; then
-        echo 'AtlANTian install/recovery microSD: recognized and preserved'
+    if upgrade_card >/dev/null 2>&1; then
+        echo 'AtlANTian bootable recovery microSD: suitable for NAND upgrades'
+    elif installer_card_id; then
+        echo 'AtlANTian installer microSD: identity matches, but recovery bootability is unverified'
     fi
 }
 
@@ -141,6 +205,7 @@ cmd=${1:-status}
 case "$cmd" in
     status) [ $# -eq 1 ] || { usage >&2; exit 64; }; status ;;
     is-installer-card) [ $# -eq 1 ] || { usage >&2; exit 64; }; require_nand; installer_card_id ;;
+    is-upgrade-card) [ $# -eq 1 ] || { usage >&2; exit 64; }; upgrade_card ;;
     adopt) [ $# -le 2 ] || { usage >&2; exit 64; }; adopt "${2:-$TARGET}" ;;
     --help|-h|help) usage ;;
     *) usage >&2; exit 64 ;;

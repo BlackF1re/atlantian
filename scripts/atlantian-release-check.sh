@@ -77,7 +77,14 @@ notice() {
   [ -r "$STATE_FILE" ] || exit 0
   version=$(get version); tag=$(get tag); installed=$(current)
   [ -n "$version" ] && [ -n "$installed" ] && newer "$version" "$installed" || { clear_state; exit 0; }
-  printf '\nUpdate is available: %s\nRun: atlantian-sysupgrade\n\n' "$tag"
+  # Login notices are cache-only and must not present yesterday's result as live.
+  checked_epoch=$(stat -c %Y "$STATE_FILE" 2>/dev/null || true)
+  checked_at=unknown
+  case "$checked_epoch" in
+    ''|*[!0-9]*) ;;
+    *) checked_at=$(date -u -d "@$checked_epoch" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || printf unknown) ;;
+  esac
+  printf '\nCached update: %s (checked %s)\nFor current availability: atlantian-sysupgrade --check\nRun: atlantian-sysupgrade\n\n' "$tag" "$checked_at"
 }
 
 case "${1:---refresh}" in --notice) notice; exit 0 ;; --refresh) ;; *) echo 'usage: atlantian-release-check [--refresh|--notice]' >&2; exit 64 ;; esac

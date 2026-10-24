@@ -50,6 +50,10 @@ grep -Fqx 'CONFIG_HIGHMEM=y' config/kernel.fragment || fail 'HIGHMEM is disabled
 [[ $ATLANTIAN_COSIGN_ARM_SHA256 =~ ^[0-9a-f]{64}$ && $ATLANTIAN_COSIGN_AMD64_SHA256 =~ ^[0-9a-f]{64}$ ]] || fail 'Cosign verifier pins are malformed'
 grep -Fq 'SHA256SUMS.sigstore.json' scripts/atlantian-release-check.sh || fail 'release discovery no longer requires a signature asset'
 grep -Fq 'atlantian-verify-release.sh' scripts/install-nand-tools.sh || fail 'release verifier is not installed into runtime images'
+grep -Fq 'atlantian-validate-recovery-sd.sh' scripts/install-nand-tools.sh || fail 'recovery SD validator is not installed'
+grep -Fq 'atlantian-storage is-upgrade-card' scripts/atlantian-sysupgrade-nand.sh || fail 'NAND update still requires installer identity'
+grep -Fq '.extroot-token' scripts/atlantian-storage.sh || fail 'external overlay token validation disappeared'
+scripts/test-recovery-sd-layout.sh
 grep -Fq 'release-trust.env' scripts/install-nand-tools.sh || fail 'release trust root is not installed into runtime images'
 grep -Fq 'release-trust.env' scripts/build-atlantian-debs.sh || fail 'platform package does not carry the release trust root'
 python3 - <<'PY_AUTH_ORDER'

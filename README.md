@@ -85,6 +85,10 @@ sudo -E scripts/build-incremental.sh all
 
 The rootfs and kernel branches build independently and join before artifact assembly. Production GitHub Actions exposes the same boundary as separate parallel jobs, then fans release validation out into artifact, SD image, NAND bundle, cross-release SD update and NAND rebase gates. Only a fully verified candidate is sealed and eligible for publication.
 
+NAND system upgrades require a bootable maintenance SD. The originally paired card remains supported; an actively adopted external-overlay card is also eligible when its NAND token matches and it retains the AtlANTian SD boot/recovery system. Overlay-only reformatted media cannot carry out the SD-to-NAND maintenance handoff.
+
+The SSH update notice is explicitly cached; run `atlantian-sysupgrade --check` for live release discovery. The periodic timer normally refreshes the cache approximately hourly (subject to scheduling jitter).
+
 The upstream watcher refreshes pinned inputs daily but does not publish images. Automatic releases run at the weekly publication window (Sunday 12:17 Asia/Tomsk) only if release-relevant sources have changed. Maintainers can explicitly publish critical fixes earlier; installed boards continue receiving Debian updates independently via APT.
 
 A separate post-publication `Release Signature` workflow signs the exact public `SHA256SUMS`; release-write permission and OIDC signing permission are intentionally split across different jobs. Release discovery ignores a publication until `SHA256SUMS.sigstore.json` exists; the SD/NAND transaction then fails closed unless that bundle cryptographically verifies against the installed trust root.

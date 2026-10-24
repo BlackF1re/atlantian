@@ -28,6 +28,7 @@ scripts/test-build-orchestration.sh
 scripts/test-release-pending.sh
 scripts/test-release-publication-policy.sh
 scripts/test-release-notes.sh
+scripts/test-recovery-sd-layout.sh
 scripts/test-runtime-policy.sh
 scripts/test-release-versioning.sh
 scripts/test-source-contracts.sh
