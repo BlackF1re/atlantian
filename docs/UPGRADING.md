@@ -116,10 +116,17 @@ atlantian-nand-ram-probe --probe
 tools without downloading anything or rebooting. `--probe` requires explicit
 confirmation, downloads and authenticates the published NAND bundle, then uses
 `kexec` to launch its kernel into a **non-destructive RAM-only initramfs**.
-It reports the result on UART and attempts a normal software reboot with the
-jumper unchanged in NAND. `--probe` does **not** write NAND, change the
-overlay, or install firmware. Run it only with UART/recovery access: Zynq
-`kexec` handoff has not yet been verified physically.
+The SSH-oriented `--probe` requires the existing external overlay-only SD
+(`/dev/mmcblk0p2`) **only to record its result**; it does not need a bootable
+recovery SD. After a successful RAM boot it writes
+`/run/atlantian/external-overlay/var/lib/atlantian/ram-probe.state` with
+`phase=ram-booted`, outside the active upper/work tree, syncs and unmounts
+the card, then attempts a normal NAND-mode software reboot. The initial
+`phase=prepared` marker is **not** proof of a successful kexec. If the
+board never returns to SSH, physically power-cycle it without touching the
+NAND/SD boot jumper and inspect the marker. `--probe` does **not** write
+NAND or install firmware. Zynq `kexec` handoff is not yet physically
+verified, so UART remains preferable for debugging failures.
 
 The diagnostic is a prerequisite, **not a new NAND updater**. Do not
 misinterpret successful CI or `CONFIG_KEXEC=y` as authorization to erase
