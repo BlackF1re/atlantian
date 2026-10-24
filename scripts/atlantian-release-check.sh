@@ -121,15 +121,15 @@ while [ "$page" -le "$MAX_RELEASE_PAGES" ]; do
     complete_release "$release_json" "$version" || continue
     if [ "$candidate_major" -eq "$installed_major" ]; then
       if [ -z "$best_same_version" ] || newer "$version" "$best_same_version"; then best_same=$release_json; best_same_version=$version; fi
-    elif [ "${ATLANTIAN_ALLOW_LEGACY_MAJOR:-0}" = 1 ] && [ "$EDITION" = sd ] && [ "$candidate_major" -eq $((installed_major + 1)) ]; then
+    elif [ "$candidate_major" -eq $((installed_major + 1)) ]; then
       if [ -z "$best_next_version" ] || newer "$version" "$best_next_version"; then best_next=$release_json; best_next_version=$version; fi
     fi
   done
   [ "$count" -eq 100 ] || break; page=$((page + 1))
 done
 
-if [ -n "$best_same" ]; then json=$best_same
-elif [ -n "$best_next" ]; then json=$best_next
+if [ -n "$best_next" ] && { [ -z "$best_same_version" ] || newer "$best_next_version" "$best_same_version"; }; then json=$best_next
+elif [ -n "$best_same" ]; then json=$best_same
 else clear_state; echo "No newer compatible authenticated AtlANTian release found for installed version $installed."; exit 0; fi
 
 tag=$(printf '%s' "$json" | jq -r '.tag_name // empty'); published=$(printf '%s' "$json" | jq -r '.published_at // empty')
