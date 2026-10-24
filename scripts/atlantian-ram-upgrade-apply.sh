@@ -109,7 +109,9 @@ nand_apply() {
  mark formatting-ubi
  ubiformat /dev/mtd1 -y || fail 'UBI format failed'
  ubiattach -p /dev/mtd1 || fail 'UBI attach failed'
+ mdev -s
  ubimkvol /dev/ubi0 -N rootfs -t static -s "$root_bytes" || fail 'rootfs create failed'
+ mdev -s
  vol=$(find_vol rootfs)
  ubiupdatevol "/dev/$vol" rootfs.squashfs || fail 'rootfs write failed'
  [ "$(cat "/sys/class/ubi/$vol/data_bytes")" = "$image_bytes" ] || fail 'rootfs volume size mismatch'
