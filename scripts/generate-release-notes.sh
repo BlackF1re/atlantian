@@ -21,7 +21,13 @@ PY
 RELEASE=${values[0]}; PACKAGE_VERSION=${values[1]}; SOURCE_REVISION=${values[2]}; DEBIAN_MAJOR=${values[3]}; DEBIAN_CODENAME=${values[4]}; DEBIAN_SNAPSHOT=${values[5]}; DEBIAN_PACKAGES=${values[6]}; KERNEL=${values[7]}; UBOOT=${values[8]}; IMAGE_BYTES=${values[9]}; BOOT_PART_BYTES=${values[10]}; BOOT_FS_BYTES=${values[11]}; BOOT_USED_BYTES=${values[12]}; BOOT_AVAILABLE_BYTES=${values[13]}; BOOT_USED_PERCENT=${values[14]}; ROOT_PART_BYTES=${values[15]}; ROOT_FS_BYTES=${values[16]}; ROOT_USED_BYTES=${values[17]}; ROOT_AVAILABLE_BYTES=${values[18]}; ROOT_USED_PERCENT=${values[19]}; NAND_ROOT_IMAGE_BYTES=${values[20]}; NAND_ROOT_VOLUME_BYTES=${values[21]}; NAND_DEPLOYED_BASE_BYTES=${values[22]}; NAND_MIN_OVERLAY_BYTES=${values[23]}
 [[ $CURRENT == "$RELEASE" ]] || { echo "release tag/version mismatch: tag=$CURRENT metadata=$RELEASE" >&2; exit 2; }
 [[ $SHORT_COMMIT == "$SOURCE_REVISION" ]] || { echo "release source mismatch: ref=$SHORT_COMMIT metadata=$SOURCE_REVISION" >&2; exit 2; }
-case "$RELEASE" in *-*) RELEASE_TYPE="prerelease (${RELEASE#*-})" ;; *) RELEASE_TYPE=stable ;; esac
+case "$RELEASE" in
+  *-beta.*) RELEASE_TYPE='beta (public release channel)' ;;
+  *-alpha.*) RELEASE_TYPE='alpha (legacy prerelease)' ;;
+  *-rc.*) RELEASE_TYPE='release candidate (prerelease)' ;;
+  *-*) RELEASE_TYPE="prerelease (${RELEASE#*-})" ;;
+  *) RELEASE_TYPE=stable ;;
+esac
 fmt_bytes() { numfmt --to=iec-i --suffix=B --format='%.2f' "$1"; }
 download_badge() {
   local name=$1 repository=${GITHUB_REPOSITORY:-BlackF1re/atlantian}
@@ -45,6 +51,25 @@ IMAGE="$ARTIFACT_DIR/${RAW_IMAGE_NAME}.xz"; NAND_BUNDLE="$ARTIFACT_DIR/atlantian
 PLATFORM_DEB=$(find_one 'atlantian-platform_*.deb' platform); KERNEL_DEB=$(find_one 'atlantian-kernel_*.deb' kernel); RELEASE_DEB=$(find_one 'atlantian-release_*.deb' release)
 UPDATE_MARKER="$ARTIFACT_DIR/atlantian-update.json"; SUMS="$ARTIFACT_DIR/SHA256SUMS"
 {
+  # The graduation announcement is intentionally unique to the first beta.
+  if [[ "$RELEASE" == 13.1.0-beta.1 ]]; then
+    cat <<'BETA_MILESTONE'
+# AtlANTian GNU/Linux enters beta
+
+AtlANTian has graduated from alpha development. **Beta is now the only actively published development channel**; existing alpha installations remain supported by the authenticated updater and can upgrade to beta.
+
+The transition is backed by:
+
+- Successful baseline SD and NAND boot/install testing on 512 MiB and 1 GiB Antminer S9 boards.
+- Transactional SD A/B FIT updates and verified NAND installation/recovery procedures.
+- Reproducible Debian Snapshot inputs and pinned Linux and U-Boot source revisions.
+- Automated SD/NAND image validation, cross-release upgrade and state-rebase checks.
+- Version-matched packages and authenticated release manifests verified by the installed updater.
+
+Beta is intended for regular use on the explicitly supported hardware, but it is **not a final stable release**. Some destructive power-loss, NAND bad-block and FIT fallback cases remain outside the completed physical test baseline; see [hardware validation](https://github.com/BlackF1re/atlantian/blob/main/docs/HARDWARE-VALIDATION.md).
+
+BETA_MILESTONE
+  fi
   printf '## Release\n\n| Parameter | Value |\n|---|---|\n'
   printf '| AtlANTian | `%s` |\n| Type | `%s` |\n| Debian package version | `%s` |\n| Debian | `%s` (`%s`) |\n| Debian snapshot | `%s` |\n| Installed Debian packages | **%s** |\n| Linux | `%s` |\n| U-Boot | `%s` |\n' "$RELEASE" "$RELEASE_TYPE" "$PACKAGE_VERSION" "$DEBIAN_MAJOR" "$DEBIAN_CODENAME" "$DEBIAN_SNAPSHOT" "$DEBIAN_PACKAGES" "$KERNEL" "$UBOOT"
   if [[ -n ${GITHUB_REPOSITORY:-} ]]; then printf '| Source revision | [`%s`](https://github.com/%s/commit/%s) |\n' "$SHORT_COMMIT" "$GITHUB_REPOSITORY" "$COMMIT"; else printf '| Source revision | `%s` |\n' "$COMMIT"; fi

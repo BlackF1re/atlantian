@@ -101,7 +101,13 @@ while [ "$page" -le "$MAX_RELEASE_PAGES" ]; do
     release_json=$(printf '%s' "$page_json" | jq -c --arg tag "$tag" '.[] | select(.tag_name == $tag)' | head -n1)
     [ -n "$release_json" ] || continue
     is_prerelease=$(printf '%s' "$release_json" | jq -r '.prerelease')
-    [ "$is_prerelease" != true ] || [ "$allow_prerelease" = true ] || continue
+    # GitHub's display flag is not a trustworthy indication of SemVer
+    # stability: public beta releases are intentionally shown as full Releases.
+    # Installed stable systems must never silently enter alpha/beta/rc.
+    if [ "$allow_prerelease" = false ]; then
+      case "$version" in *-*) continue ;; esac
+      [ "$is_prerelease" = true ] && continue
+    fi
     newer "$version" "$installed" || continue
     candidate_major=$(major_of "$version" 2>/dev/null || true); [ -n "$candidate_major" ] || continue
     complete_release "$release_json" "$version" || continue

@@ -2,6 +2,8 @@
 
 [![Latest Release](https://img.shields.io/github/v/release/BlackF1re/atlantian?include_prereleases&sort=semver&label=release)](https://github.com/BlackF1re/atlantian/releases) [![Latest Release Date](https://img.shields.io/github/release-date-pre/BlackF1re/atlantian?display_date=published_at&label=latest%20release)](https://github.com/BlackF1re/atlantian/releases) [![Release Pipeline](https://img.shields.io/github/actions/workflow/status/BlackF1re/atlantian/build-release.yml?branch=main&event=schedule&label=release%20pipeline)](https://github.com/BlackF1re/atlantian/actions/workflows/build-release.yml) [![Image Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fblackf1re.github.io%2Fatlantian%2Fimage-downloads.json&query=%24.imageDownloads&label=image%20downloads&cacheSeconds=3600)](https://github.com/BlackF1re/atlantian/releases) [![System Updates](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fblackf1re.github.io%2Fatlantian%2Fimage-downloads.json&query=%24.systemUpdates&label=system%20updates&cacheSeconds=3600)](docs/UPGRADING.md)
 
+**Release channel:** AtlANTian has graduated from alpha and publishes beta releases as regular GitHub Releases. Beta is the active public development channel, not a final stable version. Each release contains both SD and NAND payloads.
+
 AtlANTian is a Debian-based GNU/Linux distribution for the Bitmain Antminer S9 control board built around Xilinx Zynq-7000. It turns the board into a general-purpose embedded Linux/FPGA platform while keeping boot, update and raw-NAND operations reproducible, recoverable and fail-closed at their destructive boundaries.
 
 ## What is supported
@@ -68,7 +70,7 @@ atlantian-sysupgrade
 
 SD supports compatible same-major releases and an explicit immediate-next-Debian-major transition. NAND advertises same-major base releases only; a Debian-major NAND transition is a clean reinstall from the target SD image.
 
-Stable installations do not automatically opt into prereleases. An installation already on a prerelease line may follow compatible prerelease or stable releases. Release discovery prefers a newer release in the currently installed Debian major before offering the immediate next major on SD.
+Stable installations do not automatically opt into alpha/beta/rc versions, regardless of GitHub's display label. Existing alpha installations may upgrade to the public beta line, and beta installations may upgrade to later beta or compatible stable versions. Release discovery prefers a newer release in the currently installed Debian major before offering the immediate next major on SD.
 
 Release discovery, signed-manifest verification, recovery behavior and the noninteractive `--yes` option are documented in [docs/UPGRADING.md](docs/UPGRADING.md).
 

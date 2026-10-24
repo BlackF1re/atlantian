@@ -927,8 +927,11 @@ jobs:
             echo "Release $RELEASE_TAG appeared for another source revision." >&2; exit 1
           fi
           [[ -z "$tag_commit" || "$tag_commit" = "$GITHUB_SHA" ]] || { echo "Tag $RELEASE_TAG moved to $tag_commit." >&2; exit 1; }
-          prerelease=(); [[ -z "$ATLANTIAN_PRERELEASE" ]] || prerelease+=(--prerelease)
-          if ! gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "AtlANTian GNU/Linux $ATLANTIAN_VERSION" --notes-file release-notes.md "${prerelease[@]}" "${release_assets[@]}"; then
+          # Public beta is a full GitHub Release, but remains a SemVer
+          # prerelease for installed-system update compatibility.
+          publication_flags=$(scripts/release-publication-flags.sh "$ATLANTIAN_VERSION")
+          mapfile -t release_flags <<<"$publication_flags"
+          if ! gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "AtlANTian GNU/Linux $ATLANTIAN_VERSION" --notes-file release-notes.md "${release_flags[@]}" "${release_assets[@]}"; then
             if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               tag_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha 2>/dev/null) || tag_commit=""
               [[ "$tag_commit" = "$GITHUB_SHA" ]] && exit 0

@@ -20,12 +20,13 @@ Interactive SSH login also shows a cached notice when a compatible newer release
 
 ## Which release is selected
 
-Release discovery scans published, non-draft GitHub Releases and considers only complete version-matched package sets that already have both `SHA256SUMS` and `SHA256SUMS.sigstore.json`.
+Release discovery scans published, non-draft GitHub Releases and considers only complete version-matched package sets that already have both `SHA256SUMS` and `SHA256SUMS.sigstore.json`. GitHub's `prerelease` display flag is **not** the source of truth for installed-system update channels: the semantic version suffix is.
 
 Selection policy is deliberate:
 
-- an installation on a **stable** AtlANTian release ignores prereleases;
-- an installation already on a **prerelease** may follow newer compatible prereleases or a later stable release;
+- an installation on a **stable** AtlANTian release ignores all `-alpha.*`, `-beta.*` and `-rc.*` versions even when GitHub marks them as regular Releases; GitHub-flagged prereleases are ignored as an additional safeguard;
+- installations on a **prerelease** may follow newer compatible alpha/beta/rc versions or a later stable release;
+- alpha installations can move to the public beta channel without reinstalling, subject to the normal SD/NAND compatibility and signature checks;
 - a newer release in the **currently installed Debian major** is preferred when one exists;
 - only SD can then consider the **immediate next Debian major** (`N -> N+1`);
 - NAND never advertises a cross-major in-place base update.
@@ -159,7 +160,7 @@ On NAND ordinary package/configuration writes go to the active OverlayFS upper. 
 
 ## Release filenames and metrics
 
-Prerelease `.deb` **asset filenames** use GitHub-safe dotted versions such as `13.1.0.alpha.20-1`, while the package's internal Debian version retains native `~` ordering such as `13.1.0~alpha.20-1`.
+Beta `.deb` **asset filenames** use GitHub-safe dotted versions such as `13.1.0.beta.1-1`, while the package's internal Debian version retains native `~` ordering such as `13.1.0~beta.1-1`. Legacy alpha assets retain their original names.
 
 GitHub Release artifact download badges are presentation only. Runtime update accounting is anonymous and best-effort through the small `atlantian-update.json` asset; it is not part of the authenticated payload and never gates a transaction.
 

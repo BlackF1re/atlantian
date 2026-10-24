@@ -69,5 +69,9 @@ require 'displayAssetName' "$notes"
 reject '$.assetDownloads.' "$notes"
 require 'per-asset' "$pipeline"
 require 'Downloads' "$pipeline"
+require 'scripts/release-publication-flags.sh "$ATLANTIAN_VERSION"' "$workflow"
+require 'if [[ "$RELEASE" == 13.1.0-beta.1 ]]' "$notes"
+require 'AtlANTian has graduated from alpha development' "$notes"
+require 'beta (public release channel)' "$notes"
 
 echo 'versioned XZ image, anonymous update accounting and retained download metrics contracts passed'
