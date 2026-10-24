@@ -109,7 +109,7 @@ The same command is used while booted from NAND:
 atlantian-sysupgrade
 ```
 
-The NAND backend advertises **same-Debian-major authenticated releases only**. It requires the recovery microSD paired during NAND installation and refuses an unrelated card.
+The NAND backend advertises **same-Debian-major authenticated releases only**. For the physical NAND maintenance handoff it needs an **actually bootable AtlANTian recovery microSD** (FAT BOOT with the SD boot chain and an ext4 SD root with the maintenance tools). It accepts either the original installer-paired card or the SD currently serving as the adopted external OverlayFS upper whose token matches the NAND internal token. A blank card, a filesystem containing only an overlay directory, or a card with a mismatched adoption token is not safe for NAND programming and is rejected. The check is read-only and never reformats the card. Existing systems must already contain this validation logic; changing the published updater cannot retroactively modify the updater in an old immutable NAND base.
 
 Staging performs these checks before handoff:
 

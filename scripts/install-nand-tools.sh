@@ -7,7 +7,7 @@ EDITION=${2:?usage: install-nand-tools.sh ROOTFS EDITION}
 case "$EDITION" in sd|nand) ;; *) echo "invalid storage edition: $EDITION" >&2; exit 64 ;; esac
 . "$PROJECT/config/nand-layout.env"
 
-for tool in atlantian-nand-backup atlantian-nand-upgrade atlantian-nand-rebase atlantian-storage atlantian-nand-firstboot atlantian-nand-reconcile; do
+for tool in atlantian-nand-backup atlantian-nand-upgrade atlantian-nand-rebase atlantian-storage atlantian-validate-recovery-sd atlantian-nand-firstboot atlantian-nand-reconcile; do
   install -D -m 0755 "$PROJECT/scripts/$tool.sh" "$ROOT/usr/local/sbin/$tool"
 done
 # Keep an early public guard and make the destructive implementation repeat the

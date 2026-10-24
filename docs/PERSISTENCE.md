@@ -75,6 +75,8 @@ Early NAND boot uses the external upper only when the expected recovery-card ide
 
 An adopted external upper is captured/restored by the same supported rebase policy during a same-major NAND base upgrade. Token/layout mismatch during a prepared update fails closed rather than rebasing state onto an unrelated card.
 
+A card may serve as NAND update staging/recovery even if its original installer ID is different, **provided** its active external-upper adoption token matches NAND and the card retains a bootable AtlANTian SD system with NAND maintenance/resume tools. Recovery eligibility is not implied by OverlayFS adoption alone. Never erase the SD boot/root system to obtain more overlay space; a reformatted overlay-only card cannot boot the required maintenance session.
+
 ## What is not persistent
 
 - `/tmp` on NAND is tmpfs.

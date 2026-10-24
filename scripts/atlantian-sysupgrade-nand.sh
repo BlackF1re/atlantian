@@ -86,8 +86,8 @@ trap cleanup EXIT INT TERM HUP
 
 find_recovery_root() {
     [ -b "$RECOVERY_PART" ] || { echo 'Insert the AtlANTian recovery microSD used for this NAND installation.' >&2; exit 69; }
-    /usr/local/sbin/atlantian-storage is-installer-card >/dev/null 2>&1 || {
-        echo 'The inserted microSD is not the recovery/install card paired with this NAND installation.' >&2
+    /usr/local/sbin/atlantian-storage is-upgrade-card || {
+        echo 'NAND upgrades need a bootable AtlANTian recovery microSD with either the original installer identity or the active external-overlay token.' >&2
         exit 65
     }
     if mountpoint -q "$RUNTIME_EXT" && [ "$(findmnt -n -o SOURCE "$RUNTIME_EXT" 2>/dev/null || true)" = "$RECOVERY_PART" ]; then
