@@ -78,9 +78,10 @@ for file in scripts/build-uboot.sh scripts/build-uboot-nand.sh; do
   ! grep -Fq 'git -C "$SRC" fetch' "$file" || fail "$file still duplicates U-Boot source fetching"
 done
 
-# One public sysupgrade command dispatches by persistent/runtime storage edition.
-grep -Fq 'atlantian-sysupgrade-$edition' scripts/atlantian-sysupgrade.sh || fail 'sysupgrade is not a storage dispatcher'
-for backend in scripts/atlantian-sysupgrade-sd.sh scripts/atlantian-sysupgrade-nand.sh; do [[ -x $backend ]] || fail "missing executable backend: $backend"; done
+# Both installations enter the same authenticated autonomous RAM maintenance.
+grep -Fq 'exec /usr/lib/atlantian/ram-upgrade' scripts/atlantian-sysupgrade.sh || fail 'sysupgrade is not unified'
+grep -Fq 'atlantian-ram-upgrade.sh' scripts/install-nand-tools.sh || fail 'RAM updater is not installed'
+grep -Fq 'ram-upgrade-busybox' scripts/build-atlantian-debs.sh || fail 'armhf package omits RAM BusyBox'
 ! grep -Fq 'install -m 0755 /usr/lib/atlantian/atlantian-sysupgrade-nand' packaging/platform/postinst || fail 'platform postinst still self-replaces sysupgrade'
 
 # NAND destructive flow stays single-layered: no launcher/core wrappers.
