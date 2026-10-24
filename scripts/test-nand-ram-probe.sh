@@ -13,6 +13,9 @@ grep -Fq 'sha256sum -c SHA256SUMS' "$script" || fail 'internal bundle authentica
 grep -Fq 'cat /sys/firmware/fdt' "$script" || fail 'live DDR-sized FDT is not used'
 grep -Fq 'kexec --load --type=zImage' "$script" || fail 'kexec image staging missing'
 grep -Fq 'systemctl kexec' "$script" || fail 'safe userspace shutdown missing'
+grep -Fq 'phase=ram-booted' "$script" || fail 'SSH probe success marker missing'
+grep -Fq 'findmnt -n -o SOURCE "$extroot"' "$script" || fail 'SSH probe no longer checks external overlay SD'
+grep -Fq 'NAND was NOT modified' "$script" || fail 'non-destructive confirmation missing'
 grep -Fq 'NAND was NOT modified' "$script" || fail 'non-destructive probe does not identify itself'
 # Flash operations have no place in a non-destructive smoke test.
 if grep -Eiq '(^|[[:space:]])(nandwrite|flash_erase|ubiformat|ubiupdatevol|mtdpart[[:space:]]+add)([[:space:]]|$)' "$script"; then
@@ -26,6 +29,9 @@ assert source.index('atlantian-verify-release') < source.index('kexec --load')
 assert source.index('sha256sum -c SHA256SUMS') < source.index('kexec --load')
 assert source.index('read -rp') < source.index('kexec --load')
 assert source.index('if [[ $MODE == --check ]]') < source.index('mount -t tmpfs')
+assert source.index('atlantian-verify-release') < source.index("printf 'phase=prepared")
+assert source.index('kexec --load') < source.index('systemctl kexec')
+assert "phase=ram-booted" in source
 PY
 grep -Fxq kexec-tools config/packages.base || fail 'missing kexec-tools package'
 grep -Fxq cpio config/packages.base || fail 'missing cpio package'

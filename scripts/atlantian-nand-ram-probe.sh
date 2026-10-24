@@ -1,6 +1,7 @@
 #!/bin/bash
 # Read-only kexec smoke test for future NAND maintenance without recovery SD.
-# This command NEVER programs NAND or modifies the external overlay.
+# This command NEVER programs NAND. The SSH-safe probe writes only a small
+# diagnostic marker OUTSIDE the active external OverlayFS upper/work tree.
 set -euo pipefail
 
 MODE=${1:---check}
@@ -37,10 +38,21 @@ if [[ $MODE == --check ]]; then
   echo 'No download, reboot or NAND write has occurred.'
   exit 0
 fi
+# Without UART, a successful RAM boot must have a persistent, distinguishable
+# result. The removable SD need not be bootable; its external OverlayFS storage
+# partition is used solely for this diagnostic marker.
+extroot=/run/atlantian/external-overlay
+[ "$(findmnt -n -o SOURCE "$extroot" 2>/dev/null || true)" = /dev/mmcblk0p2 ] ||
+  fail 'SSH-only probe requires the active /dev/mmcblk0p2 external upper as a result store'
+[ -d "$extroot/.atlantian-extroot/upper" ] ||
+  fail 'external OverlayFS upper tree is missing; cannot safely identify this media'
+marker="$extroot/var/lib/atlantian/ram-probe.state"
 echo
 echo 'This smoke test loads a replacement Linux kernel into RAM, without flashing.'
-echo 'SSH will disconnect. UART access is strongly recommended.'
-echo 'If kexec cannot start on this board, a physical power cycle may be required.'
+echo 'SSH will disconnect. The RAM kernel will write a result to the overlay SD'
+echo 'OUTSIDE its upper/work tree, then try to reboot into the existing NAND OS.'
+echo 'If kexec or reboot hangs, power-cycle the board; leave the jumper on NAND.'
+echo "After reconnecting: cat $marker"
 read -rp 'Type PROBE to continue: ' answer
 [[ $answer == PROBE ]] || { echo 'Cancelled.'; exit 0; }
 
@@ -83,7 +95,7 @@ ATLANTIAN_COSIGN_CACHE_DIR="$work/trust" /usr/local/sbin/atlantian-verify-releas
   "$work/SHA256SUMS" "$work/SHA256SUMS.sigstore.json"
 (cd "$work" && sha256sum -c SHA256SUMS --ignore-missing | grep -Fx "$bundle: OK") ||
   fail 'the archive is not authenticated by the signed release manifest'
-mkdir -p "$work/payload" "$work/ramfs/bin" "$work/ramfs/dev" "$work/ramfs/proc" "$work/ramfs/sys"
+mkdir -p "$work/payload" "$work/ramfs/bin" "$work/ramfs/dev" "$work/ramfs/proc" "$work/ramfs/sys" "$work/ramfs/state"
 tar --zstd -xf "$work/$bundle" -C "$work/payload"
 (cd "$work/payload" && sha256sum -c SHA256SUMS) || fail 'NAND bundle integrity check failed'
 [[ $(jq -r '.release' "$work/payload/NAND-MANIFEST.json") == "$target" ]] ||
@@ -93,18 +105,38 @@ tar --zstd -xf "$work/$bundle" -C "$work/payload"
 dd if="$work/payload/uImage" of="$work/kernel-zImage" bs=64 skip=1 status=none
 cp "$busybox" "$work/ramfs/bin/busybox"
 chmod 0755 "$work/ramfs/bin/busybox"
+# Ensure kernel/init diagnostics have a console before devtmpfs is mounted.
+mknod -m 0600 "$work/ramfs/dev/console" c 5 1
+mknod -m 0666 "$work/ramfs/dev/null" c 1 3
 cat >"$work/ramfs/init" <<'EOF_INIT'
 #!/bin/busybox sh
 # This is intentionally a NON-destructive kernel + initramfs test.
 export PATH=/bin
-/bin/busybox mount -t devtmpfs devtmpfs /dev
-/bin/busybox mount -t proc proc /proc
-/bin/busybox mount -t sysfs sysfs /sys
+/bin/busybox mount -t devtmpfs devtmpfs /dev || exec /bin/busybox sh
+/bin/busybox mount -t proc proc /proc || exec /bin/busybox sh
+/bin/busybox mount -t sysfs sysfs /sys || exec /bin/busybox sh
 echo
 echo 'AtlANTian RAM MAINTENANCE PROBE BOOTED SUCCESSFULLY.'
-echo 'NAND was NOT modified. Attempting a normal NAND-mode software reboot.'
-echo
-/bin/busybox sync
+echo 'NAND was NOT modified. Recording success on overlay-only SD...'
+n=0
+while [ "$n" -lt 20 ]; do
+    [ -b /dev/mmcblk0p2 ] && break
+    n=$((n + 1))
+    /bin/busybox sleep 1
+done
+if [ -b /dev/mmcblk0p2 ] &&
+   /bin/busybox mount -t ext4 -o rw,noatime /dev/mmcblk0p2 /state; then
+    /bin/busybox mkdir -p /state/var/lib/atlantian
+    printf 'phase=ram-booted\nbooted_kernel=%s\nnand_modified=no\n' \
+        "$(/bin/busybox uname -r)" >/state/var/lib/atlantian/ram-probe.state.new
+    /bin/busybox mv -f /state/var/lib/atlantian/ram-probe.state.new /state/var/lib/atlantian/ram-probe.state
+    /bin/busybox sync
+    /bin/busybox umount /state
+    echo 'The persistent RAM-boot success marker was written.'
+else
+    echo 'WARNING: could not mount overlay SD to write SSH diagnostic result!'
+fi
+echo 'Attempting a normal NAND-mode software reboot.'
 /bin/busybox sleep 5
 /bin/busybox reboot -f
 echo 'Automatic reboot failed; use a physical power cycle (jumper stays on NAND).'
@@ -114,9 +146,12 @@ chmod 0755 "$work/ramfs/init"
 (cd "$work/ramfs" && find . -print0 | cpio --null -o -H newc 2>/dev/null | gzip -1 >"$work/maintenance-initramfs.cpio.gz")
 cat /sys/firmware/fdt >"$work/live.dtb"
 [ -s "$work/live.dtb" ] || fail 'live board DTB could not be copied'
+mkdir -p "$(dirname "$marker")"
+printf 'phase=prepared\ntarget=%s\n' "$target" >"$marker.new"
+mv -f "$marker.new" "$marker"
 sync
 kexec --load --type=zImage --initrd="$work/maintenance-initramfs.cpio.gz" \
-  --dtb="$work/live.dtb" --command-line='console=ttyPS0,115200n8 rdinit=/init' \
+  --dtb="$work/live.dtb" --command-line='console=ttyPS0,115200n8 rdinit=/init panic=10' \
   "$work/kernel-zImage"
 loaded=true
 echo 'Kernel accepted by kexec. Requesting clean systemd kexec handoff...'
