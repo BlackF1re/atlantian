@@ -103,6 +103,33 @@ AtlANTian resumes the recorded target rather than selecting a different release.
 
 ## NAND updates
 
+### RAM-only maintenance readiness
+
+A read-only kernel-handoff diagnostic is available on newly built NAND images:
+
+```sh
+atlantian-nand-ram-probe --check
+atlantian-nand-ram-probe --probe
+```
+
+`--check` checks the board, booted NAND identity, resident RAM and required
+tools without downloading anything or rebooting. `--probe` requires explicit
+confirmation, downloads and authenticates the published NAND bundle, then uses
+`kexec` to launch its kernel into a **non-destructive RAM-only initramfs**.
+It reports the result on UART and attempts a normal software reboot with the
+jumper unchanged in NAND. `--probe` does **not** write NAND, change the
+overlay, or install firmware. Run it only with UART/recovery access: Zynq
+`kexec` handoff has not yet been verified physically.
+
+The diagnostic is a prerequisite, **not a new NAND updater**. Do not
+misinterpret successful CI or `CONFIG_KEXEC=y` as authorization to erase
+raw boot slots. Until Linux NAND bad-block/ECC equivalence, memory isolation,
+state rebase and power-failure recovery have been validated on actual boards,
+`atlantian-sysupgrade` retains the recovery-SD maintenance method.
+
+
+
+
 The same command is used while booted from NAND:
 
 ```sh
