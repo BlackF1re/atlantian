@@ -70,6 +70,7 @@ complete_release() {
   [ -n "$(package_asset "$release_json" "$release_version" atlantian-platform all 2>/dev/null || true)" ] &&
   [ -n "$(package_asset "$release_json" "$release_version" atlantian-kernel armhf 2>/dev/null || true)" ] &&
   [ -n "$(package_asset "$release_json" "$release_version" atlantian-release all 2>/dev/null || true)" ] &&
+  [ -n "$(asset "$release_json" "atlantian-nand-$release_version.tar.zst")" ] &&
   [ -n "$(asset "$release_json" SHA256SUMS)" ] &&
   [ -n "$(asset "$release_json" SHA256SUMS.sigstore.json)" ]
 }
@@ -120,7 +121,7 @@ while [ "$page" -le "$MAX_RELEASE_PAGES" ]; do
     complete_release "$release_json" "$version" || continue
     if [ "$candidate_major" -eq "$installed_major" ]; then
       if [ -z "$best_same_version" ] || newer "$version" "$best_same_version"; then best_same=$release_json; best_same_version=$version; fi
-    elif [ "$EDITION" = sd ] && [ "$candidate_major" -eq $((installed_major + 1)) ]; then
+    elif [ "${ATLANTIAN_ALLOW_LEGACY_MAJOR:-0}" = 1 ] && [ "$EDITION" = sd ] && [ "$candidate_major" -eq $((installed_major + 1)) ]; then
       if [ -z "$best_next_version" ] || newer "$version" "$best_next_version"; then best_next=$release_json; best_next_version=$version; fi
     fi
   done

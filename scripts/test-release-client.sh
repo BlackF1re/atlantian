@@ -23,11 +23,13 @@ release_json() {
   platform=$(asset_json "atlantian-platform_${public}_all.deb")
   kernel=$(asset_json "atlantian-kernel_${public}_armhf.deb")
   release=$(asset_json "atlantian-release_${public}_all.deb")
+  local nand
+  nand=$(asset_json "atlantian-nand-$version.tar.zst" 73000000)
   sums=$(asset_json SHA256SUMS); signature=$(asset_json SHA256SUMS.sigstore.json 4096); marker=$(asset_json atlantian-update.json 81)
   jq -cn --arg tag "v$version" --arg published '2026-08-24T00:00:00Z' --argjson prerelease "$prerelease" \
     --argjson platform "$platform" --argjson kernel "$kernel" --argjson release "$release" --argjson sums "$sums" \
-    --argjson signature "$signature" --argjson marker "$marker" \
-    '{tag_name:$tag,draft:false,prerelease:$prerelease,published_at:$published,body:"fixture",assets:[$platform,$kernel,$release,$sums,$signature,$marker]}'
+    --argjson signature "$signature" --argjson marker "$marker" --argjson nand "$nand" \
+    '{tag_name:$tag,draft:false,prerelease:$prerelease,published_at:$published,body:"fixture",assets:[$platform,$kernel,$release,$nand,$sums,$signature,$marker]}'
 }
 run_case() {
   local edition=$1 installed=$2 candidate=$3 prerelease=$4 public=$5 expected_deb=$6

@@ -8,6 +8,7 @@ usage() {
     cat <<'EOF'
 Usage:
   atlantian-nand-rebase capture LOWER UPPER WORK SNAPSHOT
+  atlantian-nand-rebase capture-mounted LOWER MOUNTED_ROOT SNAPSHOT
   atlantian-nand-rebase restore SNAPSHOT LOWER UPPER WORK TARGET_RELEASE
 EOF
 }
@@ -71,29 +72,36 @@ EOF_ARGS
 }
 
 capture() {
-    lower=$1 upper=$2 work=$3 out=$4
+    lower=$1 upper=$2 work=$3 out=$4 mounted=${5:-}
     [ -d "$lower" ] || fatal "lower does not exist: $lower"
-    [ -d "$upper" ] || fatal "upper does not exist: $upper"
-    [ -d "$work" ] || fatal "workdir does not exist: $work"
+    if [ -z "$mounted" ]; then
+        [ -d "$upper" ] || fatal "upper does not exist: $upper"
+        [ -d "$work" ] || fatal "workdir does not exist: $work"
+    else
+        [ -d "$mounted" ] || fatal "merged root does not exist: $mounted"
+    fi
 
     rm -rf "$out"
     mkdir -p "$out/delta"
     : >"$out/deleted.paths"
 
-    merged=$(mktemp -d /run/atlantian-rebase-capture.XXXXXX)
-    cleanup_capture() {
-        set +e
-        mountpoint -q "$merged" && umount "$merged"
-        rmdir "$merged" 2>/dev/null || true
-        set -e
-    }
+    if [ -n "$mounted" ]; then
+        # The live upper is already mounted by OverlayFS. Mounting it a second
+        # time is unsafe and can fail with EBUSY: read the existing merged view.
+        merged=$mounted
+        cleanup_capture() { :; }
+    else
+        merged=$(mktemp -d /run/atlantian-rebase-capture.XXXXXX)
+        cleanup_capture() {
+            set +e
+            mountpoint -q "$merged" && umount "$merged"
+            rmdir "$merged" 2>/dev/null || true
+            set -e
+        }
+        mount -t overlay overlay -o "lowerdir=$lower,upperdir=$upper,workdir=$work" "$merged" \
+          || fatal 'cannot assemble old merged filesystem for rebase capture'
+    fi
     trap cleanup_capture EXIT INT TERM HUP
-
-    # Use the same standard lower/upper/work relationship as NAND boot. The
-    # capture path itself performs only reads against this merged view; OverlayFS
-    # interprets old whiteouts and opaque directories for us.
-    mount -t overlay overlay -o "lowerdir=$lower,upperdir=$upper,workdir=$work" "$merged" \
-      || fatal 'cannot assemble old merged filesystem for rebase capture'
 
     tmp=$(mktemp -d /run/atlantian-rebase-pkgs.XXXXXX)
     pkg_manual "$lower" >"$tmp/base.manual"
@@ -176,6 +184,7 @@ restore() {
 cmd=${1:-}
 case "$cmd" in
     capture) [ $# -eq 5 ] || { usage >&2; exit 64; }; capture "$2" "$3" "$4" "$5" ;;
+    capture-mounted) [ $# -eq 4 ] || { usage >&2; exit 64; }; capture "$2" '' '' "$4" "$3" ;;
     restore) [ $# -eq 6 ] || { usage >&2; exit 64; }; restore "$2" "$3" "$4" "$5" "$6" ;;
     -h|--help|help) usage ;;
     *) usage >&2; exit 64 ;;

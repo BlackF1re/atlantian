@@ -1,5 +1,8 @@
 # NAND architecture
 
+> **Update path (2026-10):** System upgrades use the authenticated RAM kexec maintainer in both SD and NAND modes. No boot-source jumper change and no bootable recovery microSD are required for routine upgrades. The first NAND writer still needs an adopted ext4 p2 external OverlayFS as staging storage. The original SD-U-Boot raw-stage procedure documented below applies to fresh NAND installation or historical releases, **not** to the current atlantian-sysupgrade path. See [UPGRADING.md](UPGRADING.md).
+
+
 AtlANTian's NAND edition targets the stock Micron `MT29F2G08ABAEAWP` 256 MiB raw NAND used on the supported Antminer S9 control board. Raw-flash code is intentionally board/chip-specific; a part is not considered compatible merely because its capacity and page geometry match.
 
 ## Device identity, geometry and ECC
