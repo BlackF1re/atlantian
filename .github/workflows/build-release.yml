@@ -8,9 +8,12 @@ on:
         required: true
         type: boolean
         default: false
-  schedule:
-    - cron: '17 12 * * 0'
-      timezone: 'Asia/Tomsk'
+  # Paused for RAM-updater hardware validation on 2026-10-25.
+  # Keep manual workflow_dispatch builds available while scheduled publication is frozen.
+  # Re-enable this schedule after end-to-end SD and NAND updater validation.
+  # schedule:
+  #   - cron: '17 12 * * 0'
+  #     timezone: 'Asia/Tomsk'
 
 permissions:
   contents: read
