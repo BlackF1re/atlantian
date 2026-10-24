@@ -8,25 +8,16 @@ on:
         required: true
         type: boolean
         default: false
-  push:
-    branches: [main]
-    paths:
-      - 'board/**'
-      - 'config/**'
-      - 'debian-*.sha256'
-      - 'fpga/**'
-      - 'kernel-overlay/**'
-      - 'packaging/**'
-      - 'scripts/**'
-      - '!scripts/generate-release-notes.sh'
-      - 'systemd/**'
+  schedule:
+    - cron: '17 12 * * 0'
+      timezone: 'Asia/Tomsk'
 
 permissions:
   contents: read
 
 concurrency:
   group: atlantian-release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   ATLANTIAN_GITHUB_REPO: ${{ github.repository }}
@@ -67,7 +58,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          AUTOMATIC_PUSH: ${{ github.event_name == 'push' }}
+          WEEKLY_SCHEDULE: ${{ github.event_name == 'schedule' }}
           MANUAL_PUBLICATION: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
         run: |
           set -euo pipefail
@@ -80,14 +71,13 @@ jobs:
 
           if [[ "$MANUAL_PUBLICATION" == true ]]; then
             publish_requested=true
-          elif [[ "$AUTOMATIC_PUSH" == true ]]; then
-            release_input_commits=$(scripts/release-batch-state.sh "$GITHUB_SHA")
-            if (( release_input_commits >= 5 )); then
-              publish_requested=true
-            else
-              build_required=false
-              echo "Deferring release build: ${release_input_commits}/5 release-input commits since the last release."
-            fi
+          elif [[ "$WEEKLY_SCHEDULE" == true ]]; then
+            release_pending=$(scripts/release-pending.sh "$GITHUB_SHA")
+            case "$release_pending" in
+              true) publish_requested=true ;;
+              false) build_required=false; echo 'No release-relevant changes since last release.' ;;
+              *) echo "Invalid release-pending result: $release_pending" >&2; exit 1 ;;
+            esac
           fi
 
           if [[ "$publish_requested" == true ]]; then
@@ -122,7 +112,7 @@ jobs:
             echo '| Item | Value |'
             echo '|---|---|'
             echo "| Version | $ATLANTIAN_VERSION |"
-            echo "| Release-input commits since last release | ${release_input_commits:-manual} |"
+            echo "| Changes since last release | ${release_pending:-manual} |"
             echo "| Publish requested | $publish_requested |"
             echo "| Build required | $build_required |"
             echo "| Already published | $already_published |"

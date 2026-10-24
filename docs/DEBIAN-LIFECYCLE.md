@@ -13,7 +13,7 @@ AtlANTian deliberately separates reproducible image construction from maintenanc
 | `armhf` availability is validated | moving `stable` aliases are not used |
 | snapshot recorded in release metadata | ordinary Debian updates do not change AtlANTian release identity |
 
-A factory Snapshot refresh therefore does not need to publish an image every day. Installed boards continue receiving normal Debian updates from the configured codename while Snapshot changes accumulate under the release batching policy.
+A factory Snapshot refresh therefore does not need to publish an image every day. Installed boards continue receiving normal Debian updates from the configured codename while Snapshot changes accumulate for the weekly publication window.
 
 APT indexes live in a bounded 96 MiB tmpfs. Downloaded package archives use storage-backed APT staging and are configured not to be retained after installation.
 
@@ -36,7 +36,7 @@ The daily [Upstream Base Watch](PIPELINE.md#upstream-base-watch):
 5. validates the complete changed input set;
 6. merges the combined upstream transaction through protected `main`.
 
-Debian-only changes join the normal five-release-input batch. If the same transaction also contains an accepted Linux or U-Boot update, the combined transaction becomes immediately release-eligible.
+Accepted changes accumulate until the weekly release check. Urgent updates can be published manually after the normal validation gates.
 
 ## Debian-major transition
 

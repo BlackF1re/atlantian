@@ -25,6 +25,7 @@ python3 .github/scripts/validate-automation.py
 python3 .github/scripts/actions-policy.py scan .github/workflows
 python3 .github/scripts/check-doc-links.py
 scripts/test-build-orchestration.sh
+scripts/test-release-pending.sh
 scripts/test-runtime-policy.sh
 scripts/test-release-versioning.sh
 scripts/test-source-contracts.sh

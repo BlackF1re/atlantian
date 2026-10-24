@@ -225,34 +225,8 @@ jobs:
           [[ "$merge_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid protected merge SHA: $merge_sha" >&2; exit 1; }
           echo "merge_sha=$merge_sha" >>"$GITHUB_OUTPUT"
 
-      - name: Dispatch verified release
-        if: needs.candidate.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EXPECTED_MAIN: ${{ steps.merge.outputs.merge_sha }}
-        run: |
-          set -euo pipefail
-          [[ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$EXPECTED_MAIN" ]] || { echo 'main moved after upstream merge' >&2; exit 1; }
-          gh workflow run build-release.yml --ref main -f publish=true
-
-      - name: Recover missed release dispatch
-        id: recovery
-        if: needs.candidate.outputs.changed != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          echo 'dispatched=false' >>"$GITHUB_OUTPUT"
-          latest_tag=$(git tag --list 'v*' --sort=-version:refname | head -n1)
-          [[ -n "$latest_tag" ]] || exit 0
-          upstream_paths=(config/debian-snapshot.env debian-release.sha256 debian-updates-release.sha256 debian-security-release.sha256 config/release.env config/u-boot.env)
-          git diff --quiet "$latest_tag" -- "${upstream_paths[@]}" && exit 0
-          [[ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$GITHUB_SHA" ]] || { echo 'main moved before recovery dispatch' >&2; exit 1; }
-          gh workflow run build-release.yml --ref main -f publish=true
-          echo 'dispatched=true' >>"$GITHUB_OUTPUT"
-
       - name: Keep schedule active
-        if: needs.candidate.outputs.changed != 'true' && steps.recovery.outputs.dispatched != 'true'
+        if: needs.candidate.outputs.changed != 'true'
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_MAINTENANCE_TOKEN || github.token }}
         run: |

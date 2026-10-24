@@ -61,8 +61,12 @@ dispatch = build_on.get("workflow_dispatch", {})
 inputs = dispatch.get("inputs", {}) if isinstance(dispatch, dict) else {}
 if set(inputs) != {"publish"}:
     fail("Build & Release must expose only the public publish input")
-if "push" not in build_on:
-    fail("Build & Release must retain automatic main push planning")
+if build_on.get("schedule") != [{"cron": "17 12 * * 0", "timezone": "Asia/Tomsk"}]:
+    fail("Build & Release must retain weekly publication planning")
+if "push" in build_on:
+    fail("Build & Release must not publish on every main push")
+if "scripts/release-pending.sh" not in (WF / "build-release.yml").read_text():
+    fail("weekly publication lacks change detection")
 
 build_jobs = build["jobs"]
 required_build_jobs = {
@@ -181,16 +185,8 @@ for token in ("EXPECTED_DIGEST", "git diff --binary --no-ext-diff", "sha256sum")
         fail(f"upstream privileged apply lost candidate digest verification: {token}")
 if "gh auth setup-git" not in apply_text:
     fail("upstream apply must authenticate git only inside the trusted privileged zone")
-dispatch_step = next(
-    (step for step in apply.get("steps", []) if isinstance(step, dict) and step.get("name") == "Dispatch verified release"),
-    None,
-)
-if not dispatch_step or dispatch_step.get("if") != "needs.candidate.outputs.changed == 'true'":
-    fail("every accepted upstream transaction must dispatch a verified release")
-if "release_due" in apply_text or "publication is deferred" in apply_text:
-    fail("upstream watcher still defers accepted Debian refreshes")
-if apply_text.count("gh workflow run build-release.yml --ref main -f publish=true") != 2:
-    fail("upstream watcher must dispatch both fresh and recovered releases")
+if "gh workflow run build-release.yml" in apply_text:
+    fail("upstream watcher must not bypass release scheduling")
 maintenance_steps = {
     step.get("name"): step
     for step in apply.get("steps", [])

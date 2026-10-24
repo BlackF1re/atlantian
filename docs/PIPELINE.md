@@ -109,7 +109,7 @@ The fast contracts check externally meaningful boundaries rather than exact pros
 
 - `publish=false` on `main`: build/verify only.
 - `publish=true` on `main`: build or reuse a matching verified artifact, then publish.
-- qualifying pushes to `main`: the release planner applies the configured release-input batching policy.
+- weekly Sunday 12:17 Asia/Tomsk: publish only when release-relevant sources have changed since the previous release tag. Changes to documentation alone are ignored. A manual `publish=true` remains available for urgent releases.
 
 The workflow refuses to publish a build if `main` moved after the source revision was selected.
 
@@ -193,11 +193,11 @@ The write-capable apply job **does not build the candidate Linux/U-Boot source**
 
 Changed inputs are combined into one maintenance transaction. The watcher never pushes directly through protected `main`; `.github/scripts/merge-protected-main.sh` validates the exact merge candidate through the required CI path before squash merge.
 
-Every accepted upstream transaction, including a Debian-only Snapshot refresh, is release-eligible immediately. The watcher invokes the ordinary `Build & Release` interface with `publish=true`; there is no private alternate publication origin. Release authentication is part of that workflow DAG through the reusable Release Signature workflow, so a `GITHUB_TOKEN`-initiated dispatch remains safe.
+Accepted upstream transactions update protected `main` without triggering publication. The weekly release schedule aggregates upstream and platform changes, skips empty weeks, and retains the regular validation and release-signing gates. Critical fixes may be published manually.
 
 Set the Actions secret `UPSTREAM_MAINTENANCE_TOKEN` to a trusted GitHub App installation token or fine-grained user token that can push the temporary branch, create and merge its pull request, write commit statuses, and dispatch Actions. Without the secret, the watcher safely falls back to `GITHUB_TOKEN`; the explicitly dispatched merge-candidate validation remains authoritative.
 
-A later no-change run can recover a missed release dispatch. A 45-day empty maintenance heartbeat is retained because GitHub may disable scheduled workflows after prolonged public-repository inactivity; the heartbeat changes no release input and does not itself publish an image.
+The weekly schedule retries pending changes without a separate upstream release dispatch. A 45-day empty maintenance heartbeat is retained because GitHub may disable scheduled workflows after prolonged public-repository inactivity; the heartbeat changes no release input and does not itself publish an image.
 
 `Actions Run Retention` keeps the Actions page bounded to the ten newest runs across the whole repository. It runs after the repository's workflows complete, once per hour as a recovery path, and on manual request. Only completed runs outside the global newest ten are deleted; an older active run is retained until a later cleanup.
 
