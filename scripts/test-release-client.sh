@@ -42,7 +42,28 @@ run_case() {
   grep -qx 'signature_name=SHA256SUMS.sigstore.json' "$state" || fail 'release signature asset was not selected'
 }
 run_case sd 13.1.0-alpha.6 13.1.0-alpha.7 true 13.1.0.alpha.7-3 13.1.0~alpha.7-3
+# Public beta is not marked as a GitHub prerelease. Old alpha clients must
+# still see it as newer on both storage editions.
+run_case sd 13.1.0-alpha.65 13.1.0-beta.1 false 13.1.0.beta.1-1 13.1.0~beta.1-1
+run_case nand 13.1.0-alpha.65 13.1.0-beta.1 false 13.1.0.beta.1-1 13.1.0~beta.1-1
+run_case sd 13.1.0-beta.1 13.1.0-beta.2 false 13.1.0.beta.2-1 13.1.0~beta.2-1
+run_case sd 13.1.0-beta.1 13.1.0 false 13.1.0-1 13.1.0-1
 run_case sd 13.1.0 13.1.1 false 13.1.1-2 13.1.1-2
+
+reject_case() {
+  local installed=$1 candidate=$2 prerelease=$3 public=$4
+  rm -rf "$tmp/state"; mkdir -p "$tmp/state"
+  printf '%s\n' "$installed" >"$tmp/version"
+  release_json "$candidate" "$prerelease" "$public" | jq -s . >"$tmp/releases.json"
+  PATH="$tmp/bin:$PATH" ATLANTIAN_TEST_RELEASES_JSON="$tmp/releases.json" ATLANTIAN_RELEASE_CONFIG="$tmp/releases.conf" \
+    ATLANTIAN_UPDATE_STATE_DIR="$tmp/state" ATLANTIAN_VERSION_FILE="$tmp/version" ATLANTIAN_STORAGE_EDITION=sd sh "$CHECKER" --refresh >/dev/null
+  [[ ! -e "$tmp/state/available.env" ]] || fail "stable installation $installed was offered $candidate (GitHub prerelease=$prerelease)"
+}
+# SemVer suffix, not the GitHub display flag, governs upgrade-channel safety.
+reject_case 13.1.0 13.1.1-beta.1 false 13.1.1.beta.1-1
+reject_case 13.1.0 13.1.1-alpha.1 false 13.1.1.alpha.1-1
+reject_case 13.1.0 13.1.1-rc.1 false 13.1.1.rc.1-1
+reject_case 13.1.0 13.1.1 true 13.1.1-1
 
 # NAND can update only within its Debian major; a next-major release must not be advertised as sysupgrade.
 printf '13.1.0\n' >"$tmp/version"
@@ -58,4 +79,4 @@ PATH="$tmp/bin:$PATH" ATLANTIAN_TEST_RELEASES_JSON="$tmp/releases.json" ATLANTIA
   ATLANTIAN_UPDATE_STATE_DIR="$tmp/state" ATLANTIAN_VERSION_FILE="$tmp/version" ATLANTIAN_STORAGE_EDITION=sd sh "$CHECKER" --refresh >/dev/null
 [[ ! -e $tmp/state/available.env ]] || fail 'unsigned release was advertised as an update'
 
-echo 'signed public filenames and storage-aware release discovery contracts passed'
+echo 'signed alpha-to-beta upgrade, SemVer channel isolation and storage-aware discovery contracts passed'

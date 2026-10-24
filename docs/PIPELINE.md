@@ -108,7 +108,7 @@ The fast contracts check externally meaningful boundaries rather than exact pros
 `.github/workflows/build-release.yml` has one manual input: `publish`. The release DAG is explicitly restricted to protected `main`; manually selecting another ref does not enter the build/release trust domain. Feature branches and pull requests are validated by `CI / Validate`.
 
 - `publish=false` on `main`: build/verify only.
-- `publish=true` on `main`: build or reuse a matching verified artifact, then publish.
+- `publish=true` on `main`: build or reuse a matching verified artifact, then publish the configured release channel.
 - weekly Sunday 12:17 Asia/Tomsk: publish only when release-relevant sources have changed since the previous release tag. Changes to documentation alone are ignored. A manual `publish=true` remains available for urgent releases.
 
 The workflow refuses to publish a build if `main` moved after the source revision was selected.
@@ -130,6 +130,8 @@ A full build validates:
 The sealed Actions artifact records `VERIFIED-SOURCE-SHA` and `VERIFIED-VERSION`. Publication may reuse only a non-expired artifact for the exact source SHA.
 
 ## Public release payload
+
+AtlANTian publishes **one active beta channel** rather than generating parallel alpha and beta releases from the same source. Every release contains both the SD image and the matching NAND payload, plus three version-matched Debian packages. Existing alpha tags/assets stay available for authenticated upgrades; no new alpha release is generated.
 
 `prepare-public-release.sh` performs publication-only normalization before release notes are generated:
 
@@ -225,6 +227,8 @@ Public release versions are:
 <Debian major>.<AtlANTian minor>.<AtlANTian patch>[-prerelease]
 ```
 
-For prereleases, Debian package metadata uses native Debian ordering, for example `13.1.0~alpha.20-1`, while the public release remains `13.1.0-alpha.20` and its GitHub asset filename uses dots.
+The public beta line starts at `13.1.0-beta.1`. Its internal Debian version is `13.1.0~beta.1-1`, with a GitHub-safe public filename such as `atlantian-platform_13.1.0.beta.1-1_all.deb`. The SD image is `atlantian-13.1.0-beta.1.img.xz`, and its paired NAND archive is `atlantian-nand-13.1.0-beta.1.tar.zst`.
+
+The `release-publication-flags.sh` contract intentionally makes beta a **normal/latest GitHub Release** (without the GitHub prerelease badge), while retaining the SemVer `-beta.N` suffix. Alpha and release-candidate channels, if configured, remain GitHub prereleases. This is a presentation policy, **not** a promotion to stable: installed-system update discovery uses the version suffix independently of the GitHub flag. The first beta gets a one-time milestone announcement in generated release notes. New releases remain ineligible for authenticated installation until the Sigstore bundle has been attached.
 
 Debian-major and Linux-LTS-series transitions are explicit policy changes; routine Snapshot, Linux patch and stable U-Boot refreshes remain automated within the configured generation/series.

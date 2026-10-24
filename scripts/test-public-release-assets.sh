@@ -6,10 +6,10 @@ PREP="$ROOT/scripts/prepare-public-release.sh"
 fail() { printf 'public release asset contract: %s\n' "$*" >&2; exit 1; }
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-release=13.1.0-alpha.8
-package_version='13.1.0~alpha.8-5'
-public_version='13.1.0.alpha.8-5'
-image=atlantian-13.1.0-alpha.8.img
+release=13.1.0-beta.1
+package_version='13.1.0~beta.1-5'
+public_version='13.1.0.beta.1-5'
+image=atlantian-13.1.0-beta.1.img
 printf 'raw-image-fixture\n' >"$tmp/$image"; xz -c "$tmp/$image" >"$tmp/$image.xz"
 printf 'nand-fixture\n' >"$tmp/atlantian-nand-$release.tar.zst"
 python3 - "$tmp/RELEASE-METADATA.json" "$release" "$package_version" "$image" <<'PY'
@@ -56,7 +56,7 @@ for spec in \
 done
 (cd "$tmp" && sha256sum -c SHA256SUMS >/dev/null)
 [[ $(wc -l <"$tmp/SHA256SUMS") -eq 7 ]] || fail 'public SHA256SUMS must cover exactly seven downloadable payloads'
-! grep -Fq '~alpha.8' "$tmp/SHA256SUMS" || fail 'public SHA256SUMS contains a canonical-only ~ filename'
+! grep -Fq '~beta.1' "$tmp/SHA256SUMS" || fail 'public SHA256SUMS contains a canonical-only ~ filename'
 jq -e --arg release "$release" '.schema_version == 1 and .kind == "atlantian-system-update" and .release == $release' \
   "$tmp/atlantian-update.json" >/dev/null || fail 'invalid update marker'
 
