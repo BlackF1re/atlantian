@@ -9,7 +9,7 @@ fail() { printf 'NAND identity test: %s\n' "$*" >&2; exit 1; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/root"
-scripts/install-nand-tools.sh "$tmp/root" sd
+ATLANTIAN_BUSYBOX_STATIC=/bin/true scripts/install-nand-tools.sh "$tmp/root" sd
 
 for installer in \
   "$tmp/root/usr/local/sbin/atlantian-nand-install" \

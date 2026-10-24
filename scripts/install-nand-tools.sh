@@ -30,7 +30,7 @@ rm -f "$ROOT/usr/local/sbin/atlantian-nand-upgrade"
 install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade.sh" "$ROOT/usr/local/sbin/atlantian-sysupgrade"
 install -D -m 0755 "$PROJECT/scripts/atlantian-ram-upgrade.sh" "$ROOT/usr/lib/atlantian/ram-upgrade"
 install -D -m 0755 "$PROJECT/scripts/atlantian-ram-upgrade-apply.sh" "$ROOT/usr/lib/atlantian/ram-upgrade-apply"
-install -D -m 0755 "$PROJECT/out/build-tools/busybox-static-armhf" "$ROOT/usr/lib/atlantian/ram-upgrade-busybox"
+install -D -m 0755 "${ATLANTIAN_BUSYBOX_STATIC:-$PROJECT/out/build-tools/busybox-static-armhf}" "$ROOT/usr/lib/atlantian/ram-upgrade-busybox"
 # The old per-edition sysupgrade backends are no longer installed.
 rm -f "$ROOT/usr/lib/atlantian/atlantian-sysupgrade-sd" "$ROOT/usr/lib/atlantian/atlantian-sysupgrade-nand"
 install -D -m 0755 "$PROJECT/scripts/atlantian-verify-release.sh" "$ROOT/usr/local/sbin/atlantian-verify-release"
