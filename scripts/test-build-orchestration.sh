@@ -20,7 +20,7 @@ grep -qx 'busybox-static' < <(sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/
 
 scripts/test-release-client.sh
 scripts/test-public-release-assets.sh
-scripts/test-release-batch.sh
+scripts/test-release-pending.sh
 
 # One debootstrap creates the common userspace. NAND is a storage-policy clone;
 # build-only BusyBox is extracted and purged before the clone.
