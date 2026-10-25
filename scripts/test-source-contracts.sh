@@ -75,7 +75,7 @@ grep -Fq "grep -q '^AtlANTian GNU/Linux '" packaging/platform/postinst ||
   fail 'SD package upgrade does not refresh factory SSH banner'
 # The board remains a general-purpose Zynq Linux development system: user
 # interfaces are available as drivers without claiming unverified PCB routes.
-for config in CONFIG_I2C_CADENCE CONFIG_I2C_CHARDEV CONFIG_SPI_CADENCE CONFIG_SPI_SPIDEV CONFIG_CAN_XILINCCAN CONFIG_GPIO_XILINX CONFIG_FPGA_MGR_ZYNQ_FPGA; do
+for config in CONFIG_I2C_CADENCE CONFIG_I2C_CHARDEV CONFIG_SPI_CADENCE CONFIG_SPI_SPIDEV CONFIG_CAN_XILINXCAN CONFIG_GPIO_XILINX CONFIG_FPGA_MGR_ZYNQ_FPGA; do
   grep -q "^$config=y" config/kernel.fragment || fail "universal Linux hardware interface was removed: $config"
 done
 for file in atlantian-status-leds.bit atlantian-status-leds.hwh atlantian-status-leds.dtso; do
