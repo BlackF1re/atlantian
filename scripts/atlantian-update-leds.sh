@@ -1,9 +1,7 @@
 #!/bin/sh
-# D3 update pattern player for package-based AtlANTian upgrades.
-#
-# atlantian-sysupgrade starts this helper before release assets are downloaded
-# and keeps it alive until reboot begins. Direct invocation restores the normal
-# LED services on exit so the pattern can also be tested safely by hand.
+# D3 update pattern for signed, autonomous RAM maintenance upgrades.
+# The unified updater starts this helper during staging. systemd shuts it down
+# during kexec; manual invocation restores normal LED services on exit.
 PATTERN='red red red green green green'
 ON_SECONDS=0.05
 OFF_SECONDS=0.05
