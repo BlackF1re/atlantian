@@ -129,9 +129,19 @@ rm -rf "$work/trust" "$work/$archive"
 mkdir -p "$work/ramfs"/{bin,sbin,usr/bin,usr/sbin,etc/dropbear,dev,dev/pts,proc,sys,run,tmp,state,root,payload,debs}
 cp /usr/lib/atlantian/ram-upgrade-busybox "$work/ramfs/bin/busybox"
 chmod 755 "$work/ramfs/bin/busybox"
-for cmd in $(/usr/lib/atlantian/ram-upgrade-busybox --list); do
- case "$cmd" in '['|'[[') continue ;; esac
+# BusyBox dispatches by argv[0]: invoke the staged copy as "busybox", not
+# "ram-upgrade-busybox". A failed --list must abort before kexec, otherwise the
+# initramfs can lack /bin/sh and the kernel will panic/reboot.
+applets=$("$work/ramfs/bin/busybox" --list) || fail 'cannot list staged RAM BusyBox applets'
+[[ -n $applets ]] || fail 'staged RAM BusyBox returned no applets'
+while IFS= read -r cmd; do
+ case "$cmd" in ''|'['|'[[') continue ;; esac
  [[ -e $work/ramfs/bin/$cmd ]] || ln -s busybox "$work/ramfs/bin/$cmd"
+done <<<"$applets"
+# Fail in the original OS instead of discovering a missing PID 1 interpreter
+# only after committing to systemd kexec.
+for cmd in sh mount mkdir cat sleep reboot; do
+ [[ -x "$work/ramfs/bin/$cmd" ]] || fail "RAM initramfs missing essential applet: $cmd"
 done
 # Preserve the executable and all ELF shared objects; these are read from
 # the running installation *before* it is dismantled by systemd kexec.

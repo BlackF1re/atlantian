@@ -47,5 +47,32 @@ assert 'mount --bind /debs' in a and 'signed-public-sums' in a
 assert 'oldmajor" != "$newmajor' in a
 assert 'apt-sources-before-' in a
 assert 'atlantian-major-upgrade-authorized' in a
+# Exercise the exact staging fragment, not merely its shell syntax. A binary
+# installed as ram-upgrade-busybox rejects --list unless its argv[0] is busybox.
+import os, tempfile
+from pathlib import Path
+with tempfile.TemporaryDirectory() as temp:
+    work = Path(temp)
+    bb = work / 'ramfs/bin/busybox'
+    bb.parent.mkdir(parents=True)
+    bb.write_text('''#!/bin/sh
+[ "${0##*/}" = busybox ] && [ "${1:-}" = --list ] || exit 127
+[ "${STUB_APPLETS_EMPTY:-0}" = 1 ] && exit 0
+printf 'sh\\nmount\\nmkdir\\ncat\\nsleep\\nreboot\\n'
+''')
+    bb.chmod(0o755)
+    start = s.index('applets=$("$work/ramfs/bin/busybox" --list)')
+    end = s.index('\n# Preserve the executable', start)
+    snippet = s[start:end]
+    script = 'fail() { printf "%s\\n" "$*" >&2; exit 9; }\n' + snippet
+    env = dict(os.environ, work=str(work))
+    subprocess.run(['bash', '-euo', 'pipefail', '-c', script], env=env, check=True)
+    for applet in ('sh', 'mount', 'mkdir', 'cat', 'sleep', 'reboot'):
+        link = work / 'ramfs/bin' / applet
+        assert link.is_symlink() and link.resolve() == bb, f'missing applet {applet}'
+    env['STUB_APPLETS_EMPTY'] = '1'
+    assert subprocess.run(['bash', '-euo', 'pipefail', '-c', script], env=env,
+                          capture_output=True).returncode != 0, 'empty --list was accepted'
+
 print('RAM-only SD/NAND updater and cross-major fail-closed source contracts passed')
 PY
