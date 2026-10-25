@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Host-side contract for the board-specific D3 update indicator and SD updater lifecycle.
+# D3 update indicator contracts for the installed unified RAM updater.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SOURCE=$ROOT/scripts/atlantian-update-leds.sh
-UPGRADER=$ROOT/scripts/atlantian-sysupgrade-sd.sh
-sh -n "$SOURCE"; sh -n "$UPGRADER"
+UPGRADER=$ROOT/scripts/atlantian-ram-upgrade.sh
+sh -n "$SOURCE"; bash -n "$UPGRADER"
 grep -qx "PATTERN='red red red green green green'" "$SOURCE"
 grep -qx 'ON_SECONDS=0.05' "$SOURCE"
 grep -qx 'OFF_SECONDS=0.05' "$SOURCE"
@@ -13,12 +13,18 @@ grep -Fqx 'RESTART_SERVICES=${ATLANTIAN_UPDATE_RESTART_SERVICES:-1}' "$SOURCE"
 grep -Fq 'systemctl stop $SERVICES >/dev/null 2>&1 || true' "$SOURCE"
 ! grep -qi 'recovery' "$SOURCE"
 
-grep -Fq 'ATLANTIAN_UPDATE_RESTART_SERVICES=0 "$LED_HELPER" &' "$UPGRADER"
-grep -Fq 'trap restore_update_leds EXIT' "$UPGRADER"
-grep -Fq 'trap - EXIT INT TERM HUP' "$UPGRADER"
-grep -Fq 'wait "$ledpid" || true' "$UPGRADER"
-# The indicator must start before any release payload download begins. Match the
-# actual call sequence rather than source line numbers/formatting.
-grep -Fq 'start_update_leds; download_and_verify' "$UPGRADER"
+grep -Fq 'start_update_leds() {' "$UPGRADER"
+grep -Fq 'stop_update_leds() {' "$UPGRADER"
+grep -Fq 'ATLANTIAN_UPDATE_RESTART_SERVICES=0 /usr/local/sbin/atlantian-update-leds' "$UPGRADER"
+grep -Fq 'stop_update_leds' "$UPGRADER"
+grep -Fq 'systemctl start atlantian-status-leds.service atlantian-fpga-status-leds.service' "$UPGRADER"
+# Indicator starts during preparation, before authenticated artifact downloads.
+python3 - "$UPGRADER" <<'PY'
+from pathlib import Path
+import sys
+s = Path(sys.argv[1]).read_text()
+assert s.index('start_update_leds\n. /etc/atlantian/releases.conf') < s.index("fetch SHA256SUMS 'release checksums'")
+assert s.index('stop_update_leds\n') < s.index('mount -t tmpfs')
+PY
 
-echo 'update LED contract passed'
+echo 'RAM-only system-update LED contract passed'
