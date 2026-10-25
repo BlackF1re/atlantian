@@ -1,6 +1,6 @@
 # Install AtlANTian to NAND
 
-AtlANTian can install the current release from its normal microSD image to the stock 256 MiB raw NAND on the Antminer S9 control board. The same microSD becomes the paired recovery medium used by later NAND base upgrades.
+AtlANTian can install the current release from its normal microSD image to the stock 256 MiB raw NAND on the Antminer S9 control board. The microSD remains useful for manual recovery and can be paired as an external writable layer. Later system upgrades use autonomous RAM Linux, not a recovery-SD boot.
 
 ## Supported NAND boundary
 
@@ -64,7 +64,7 @@ atlantian-nand-install --no-backup
 
 ### Command summary
 
-- `atlantian-nand-install` — normal fresh installation from the currently booted, release-matched recovery SD.
+- `atlantian-nand-install` — normal fresh installation from the currently booted, release-matched SD.
 - `atlantian-nand-install --backup DIR` — use a different backup directory.
 - `atlantian-nand-install --no-backup` — install without preserving the original NAND dump.
 - `atlantian-nand-install --resume` — manually continue an interrupted verified transaction after the SD U-Boot stage.
@@ -101,7 +101,7 @@ The inspection copy is optional and is not required by the installer or recovery
 
 ## Interrupted installation
 
-The SD system has a marker-gated auto-resume service. If the board returns to SD Linux with a pending verified transaction, it resumes the UBI stage automatically.
+The SD system has a marker-gated auto-resume service for **initial NAND installation**. If the board returns to SD Linux with a pending verified fresh-install transaction, it resumes the UBI stage automatically.
 
 Manual recovery commands are:
 
