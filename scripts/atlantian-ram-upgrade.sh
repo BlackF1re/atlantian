@@ -24,14 +24,14 @@ for bin in curl jq kexec cpio zstd tar sha256sum systemctl ldd dropbearconvert \
 case "$(tr -d '\000' </proc/device-tree/model)" in *Antminer*S9*) ;; *) fail 'unsupported board' ;; esac
 mem=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
 [[ $mem =~ ^[0-9]+$ && $mem -ge 700000 ]] || fail 'insufficient RAM'
-/usr/local/sbin/atlantian-release-check --refresh
+/usr/local/sbin/atlantian-release-check --refresh >/dev/null
 [[ -s /var/lib/atlantian/update/available.env ]] || { echo 'No newer compatible release.'; exit 0; }
 target=$(get version); tag=$(get tag); current=$(cat /usr/lib/atlantian/version)
 [[ $target =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]] || fail 'unsafe target version'
 [[ $tag == "v$target" ]] || fail 'release tag differs from target'
 oldmajor=$(major "$current"); newmajor=$(major "$target")
 (( newmajor == oldmajor || newmajor == oldmajor + 1 )) || fail 'adjacent Debian major required'
-echo "AtlANTian $edition: $current -> $target"
+printf 'Update available: %s -> %s (%s)\n' "$current" "$target" "$edition"
 if [[ $mode == --notes ]]; then cat /var/lib/atlantian/update/available-notes.txt; exit 0; fi
 [[ $mode != --check ]] || exit 0
 if [[ $mode != --yes ]]; then
@@ -73,9 +73,10 @@ api=${ATLANTIAN_RELEASE_API:-https://api.github.com}
 release=$(curl -fsSL --retry 3 "$api/repos/$repo/releases/tags/$tag")
 asset_url() { jq -r --arg n "$1" '.assets[] | select(.name==$n) | .browser_download_url' <<<"$release" | head -n1; }
 fetch() {
- local n=$1 u
+ local n=$1 label=$2 u
  u=$(asset_url "$n")
  [[ $u == https://* ]] || fail "release asset absent: $n"
+ printf '\nDownloading %s: %s\n' "$label" "$n"
  curl -fL --retry 3 --progress-bar -o "$work/$n.new" "$u"
  mv -f "$work/$n.new" "$work/$n"
 }
@@ -86,16 +87,21 @@ check_public_hash() {
  actual=$(sha256sum "$work/$n" | awk '{print $1}')
  [[ $actual == "$expected" ]] || fail "hash mismatch: $n"
 }
-fetch SHA256SUMS
-fetch SHA256SUMS.sigstore.json
+fetch SHA256SUMS 'release checksums'
+fetch SHA256SUMS.sigstore.json 'release signature'
+printf '\nVerifying release signature...\n'
 ATLANTIAN_COSIGN_CACHE_DIR="$work/trust" \
  /usr/local/sbin/atlantian-verify-release "$work/SHA256SUMS" "$work/SHA256SUMS.sigstore.json"
 archive="atlantian-nand-$target.tar.zst"
-fetch "$archive"
+fetch "$archive" 'NAND system bundle'
 check_public_hash "$archive"
 # Only the signed NAND payload is used by the RAM NAND writer and kexec.
 tar --zstd -xf "$work/$archive" -C "$work/payload"
-(cd "$work/payload" && sha256sum -c SHA256SUMS) || fail 'invalid NAND payload'
+if ! (cd "$work/payload" && sha256sum -c SHA256SUMS >"$work/bundle-check.log" 2>&1); then
+ cat "$work/bundle-check.log" >&2
+ fail 'NAND bundle checksum verification failed'
+fi
+echo 'System bundle verified.'
 [[ $(jq -r .release "$work/payload/NAND-MANIFEST.json") == "$target" ]] || fail 'bundle identity mismatch'
 [[ $(od -An -tx1 -N4 "$work/payload/uImage" | tr -d ' \n') == 27051956 ]] || fail 'invalid legacy uImage'
 if [[ $edition == sd ]]; then
@@ -103,7 +109,7 @@ if [[ $edition == sd ]]; then
  for kind in platform kernel release; do
    name=$(get "${kind}_name")
    [[ $name =~ ^atlantian-(platform|kernel|release)_[a-zA-Z0-9.+~-]+_(all|armhf)\.deb$ ]] || fail 'unsafe package filename'
-   fetch "$name"
+   fetch "$name" "$kind package"
    check_public_hash "$name"
    [[ $(dpkg-deb -f "$work/$name" Package) == "atlantian-$kind" ]] ||
      fail "Debian package identity mismatch: $name"
@@ -124,6 +130,7 @@ if [[ $edition == sd ]]; then
     mv "$work/$name" "$work/debs/$name"
   done
 fi
+echo 'Preparing isolated RAM maintenance system...'
 # The entire authenticated release must persist inside the new initramfs.
 rm -rf "$work/trust" "$work/$archive"
 mkdir -p "$work/ramfs"/{bin,sbin,usr/bin,usr/sbin,etc/dropbear,dev,dev/pts,proc,sys,run,tmp,state,root,payload,debs}
@@ -272,6 +279,6 @@ remaining=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
 (( remaining >= 130000 + image_kib * 2 )) || fail 'insufficient kexec headroom'
 kexec --load --type=zImage --initrd="$work/initramfs.cpio.gz" --dtb="$work/live.dtb" \
  --command-line='console=ttyPS0,115200n8 mtdparts=pl35x-nand-controller:16m(atlantian-boot),-(atlantian-ubi) rdinit=/init panic=10' "$work/zImage"
-echo 'Authenticated image resident in RAM. Starting systemd kexec...'
+echo 'Update ready. Switching to RAM maintenance (SSH will disconnect)...'
 trap - EXIT
 systemctl kexec || { kexec -u || true; fail 'systemd kexec failed'; }
