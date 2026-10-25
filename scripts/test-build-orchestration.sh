@@ -89,6 +89,13 @@ for dead in scripts/atlantian-nand-install-launcher.sh scripts/atlantian-nand-up
 grep -Fq 'pending bundle/release identity mismatch' scripts/atlantian-nand-install.sh || fail 'install lost pending bundle identity verification'
 grep -Fq 'prepared payload is' scripts/atlantian-nand-upgrade.sh || fail 'upgrade lost prepared bundle identity verification'
 
+# Prevent copied release-inventory test tails from passing source CI but failing
+# only after a full release build. Metadata validation must run exactly once.
+inventory=scripts/test-release-artifacts.sh
+[[ $(grep -Fc 'python3 - "$IMAGE" "$METADATA"' "$inventory") -eq 1 ]] || fail 'release inventory runs the metadata validator more than once'
+inventory_success="echo 'release inventory, package guards, SD image/storage metadata, NAND metadata and public identity passed'"
+[[ $(grep -Fxc "$inventory_success" "$inventory") -eq 1 ]] || fail 'release inventory success marker is duplicated'
+[[ $(tail -n 1 "$inventory") == "$inventory_success" ]] || fail 'release inventory contains code after its final success marker'
 # Integration gates remain independent production stages.
 grep -Fq 'scripts/test-release-upgrade.sh "$ATLANTIAN_CANDIDATE_DIR"' .github/workflows/build-release.yml || fail 'SD cross-release gate is missing'
 grep -Fq 'scripts/test-nand-rebase.sh "$ATLANTIAN_NAND_REBASE_ROOT"' .github/workflows/build-release.yml || fail 'NAND rebase gate is missing'
