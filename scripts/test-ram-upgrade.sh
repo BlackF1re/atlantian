@@ -39,6 +39,17 @@ for tool in ('mountpoint', 'rsync', 'chroot', 'sort', 'comm', 'awk',
     assert tool in tool_block.split(), f'RAM rebase tool not staged: {tool}'
 assert 'copy_elf "$(command -v "$tool")"' in s
 assert 'chroot "$work/ramfs" /bin/sh -c' in s
+# The staging tmpfs is nodev. An older preflight redirected to /dev/null
+# *inside* chroot before the device node existed, creating a regular file.
+# The subsequent mknod failed before kexec. Ensure both nodes are prepared
+# first and all probe output goes through the host's /dev/null instead.
+assert s.count('mknod -m 0666 "$work/ramfs/dev/null" c 1 3') == 1
+assert s.count('mknod -m 0600 "$work/ramfs/dev/console" c 5 1') == 1
+assert s.index('mknod -m 0666 "$work/ramfs/dev/null"') < s.index('chroot "$work/ramfs" /bin/sh -c')
+assert s.index('mknod -m 0600 "$work/ramfs/dev/console"') < s.index('chroot "$work/ramfs" /bin/sh -c')
+preflight = s.split('chroot "$work/ramfs" /bin/sh -c \'', 1)[1].split("\\' >/dev/null || fail", 1)[0]
+assert '>/dev/null' not in preflight, 'the chroot must not redirect into staging nodev /dev/null'
+assert "\\' >/dev/null || fail 'sealed RAM initramfs userspace preflight failed'" in s
 assert s.index('chroot "$work/ramfs" /bin/sh -c') < s.index('kexec --load')
 assert s.index('mountpoint --help') < s.index('kexec --load')
 assert 'overlay_mode=$(cat /run/atlantian/overlay-mode)' in s
