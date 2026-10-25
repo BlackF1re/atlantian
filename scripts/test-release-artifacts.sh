@@ -46,6 +46,7 @@ release_deb=$(find "$DIR" -maxdepth 1 -name 'atlantian-release_*.deb' -type f -p
 dpkg-deb -c "$kernel_deb" >"$work/kernel.list"
 ! grep -qE ' ./boot/' "$work/kernel.list" || fail 'kernel package owns live /boot paths'
 for path in atlantian.itb atlantian-boot-abi boot.scr; do grep -q "usr/lib/atlantian/boot/$path" "$work/kernel.list" || fail "kernel package is missing $path"; done
+grep -q 'usr/lib/atlantian/ram-upgrade-busybox' "$work/kernel.list" || fail 'kernel package is missing the static RAM-upgrade BusyBox'
 for path in BOOT.bin u-boot.img; do ! grep -q "usr/lib/atlantian/boot/$path" "$work/kernel.list" || fail "kernel package carries factory-only $path"; done
 dpkg-deb -e "$kernel_deb" "$work/kernel-control"
 grep -Fq '/usr/lib/atlantian/boot' "$work/kernel-control/postinst" || fail 'kernel postinst does not implement SD FIT transaction'
@@ -54,11 +55,12 @@ dpkg-deb -c "$platform_deb" >"$work/platform.list"
 for path in \
   usr/local/sbin/atlantian-sysupgrade \
   usr/local/sbin/atlantian-nand-install \
-  usr/local/sbin/atlantian-nand-upgrade \
   usr/local/sbin/atlantian-storage \
   usr/local/sbin/atlantian-nand-rebase \
-  usr/lib/atlantian/atlantian-sysupgrade-sd \
-  usr/lib/atlantian/atlantian-sysupgrade-nand \
+  usr/local/sbin/atlantian-verify-release \
+  usr/lib/atlantian/ram-upgrade \
+  usr/lib/atlantian/ram-upgrade-apply \
+  usr/lib/atlantian/release-trust.env \
   usr/lib/atlantian/version \
   usr/lib/atlantian/package-version \
   usr/lib/atlantian/debian-snapshot \
@@ -72,7 +74,80 @@ for path in \
   usr/lib/tmpfiles.d/atlantian-apt.conf; do
   grep -q "$path" "$work/platform.list" || fail "platform package is missing $path"
 done
+# Obsolete SD/NAND update backends must not be packaged.
+for path in \
+  usr/local/sbin/atlantian-nand-upgrade \
+  usr/lib/atlantian/atlantian-sysupgrade-sd \
+  usr/lib/atlantian/atlantian-sysupgrade-nand; do
+  ! grep -Fq "./$path" "$work/platform.list" || fail "legacy update backend is packaged: $path"
+done
+! grep -Fq './usr/lib/atlantian/ram-upgrade-busybox' "$work/platform.list" || fail 'RAM BusyBox must be owned by the kernel package'
 ! grep -qE ' ./usr/lib/atlantian/storage-edition$' "$work/platform.list" || fail 'platform package must not overwrite storage edition identity'
+! grep -qE 'etc/systemd/system/atlantian-.*\.(service|timer)' "$work/platform.list" || fail 'vendor systemd units leaked into /etc'
+
+dpkg-deb -x "$platform_deb" "$work/platform-root"
+cmp -s "$ROOT/scripts/atlantian-sysupgrade.sh" "$work/platform-root/usr/local/sbin/atlantian-sysupgrade" || fail 'packaged sysupgrade entry point differs from source'
+cmp -s "$ROOT/scripts/atlantian-ram-upgrade.sh" "$work/platform-root/usr/lib/atlantian/ram-upgrade" || fail 'packaged RAM staging updater differs from source'
+cmp -s "$ROOT/scripts/atlantian-ram-upgrade-apply.sh" "$work/platform-root/usr/lib/atlantian/ram-upgrade-apply" || fail 'packaged RAM apply updater differs from source'
+cmp -s "$ROOT/config/apt-volatile.conf" "$work/platform-root/etc/apt/apt.conf.d/10atlantian-volatile" || fail 'packaged APT runtime policy differs from source'
+cmp -s "$ROOT/systemd/run-apt.mount" "$work/platform-root/usr/lib/systemd/system/run-apt.mount" || fail 'packaged APT tmpfs mount differs from source'
+cmp -s "$ROOT/systemd/atlantian-apt-tmpfiles.conf" "$work/platform-root/usr/lib/tmpfiles.d/atlantian-apt.conf" || fail 'packaged APT tmpfiles policy differs from source'
+[[ $(cat "$work/platform-root/usr/lib/atlantian/version") == "$ATLANTIAN_VERSION" ]] || fail 'packaged semantic version mismatch'
+[[ $(cat "$work/platform-root/usr/lib/atlantian/package-version") == "$ATLANTIAN_DEB_VERSION" ]] || fail 'packaged Debian version mismatch'
+[[ $(cat "$work/platform-root/usr/lib/atlantian/debian-snapshot") == "$DEBIAN_SNAPSHOT_TIMESTAMP" ]] || fail 'packaged snapshot mismatch'
+[[ $(cat "$work/platform-root/usr/lib/atlantian/release-repo") == "$ATLANTIAN_GITHUB_REPO" ]] || fail 'packaged repository identity mismatch'
+grep -qx 'ID=debian' "$work/platform-root/usr/lib/atlantian/os-release" || fail 'packaged OS ID is not Debian-compatible'
+grep -qx 'VARIANT_ID=atlantian' "$work/platform-root/usr/lib/atlantian/os-release" || fail 'packaged AtlANTian variant identity is missing'
+
+export ATLANTIAN_VERSION ATLANTIAN_RELEASE_ID ATLANTIAN_DEB_VERSION DEBIAN_SNAPSHOT_TIMESTAMP
+python3 - "$IMAGE" "$METADATA" "${IMAGE%.img}.packages.tsv" "$ATLANTIAN_BOOT_MIB" <<'PY'
+import json, os, subprocess, sys
+image, metadata_path, package_manifest, expected_boot_mib = sys.argv[1:]
+expected_boot_mib = int(expected_boot_mib)
+with open(metadata_path, encoding='utf-8') as f:
+    m = json.load(f)
+with open(package_manifest, encoding='utf-8') as f:
+    package_count = sum(1 for line in f if line.strip())
+ptable = json.loads(subprocess.check_output(['sfdisk', '--json', image], text=True))['partitiontable']
+parts = ptable['partitions']
+assert len(parts) == 2
+sector = int(ptable.get('sectorsize', 512))
+boot_bytes = int(parts[0]['size']) * sector
+root_bytes = int(parts[1]['size']) * sector
+image_bytes = os.path.getsize(image)
+storage = m['storage']; mib = 1024 * 1024
+assert m['schema_version'] == 1
+assert m['release'] == os.environ['ATLANTIAN_VERSION']
+assert m['release_id'] == os.environ['ATLANTIAN_RELEASE_ID']
+assert m['package_version'] == os.environ['ATLANTIAN_DEB_VERSION']
+assert m['debian']['snapshot'] == os.environ['DEBIAN_SNAPSHOT_TIMESTAMP']
+assert m['debian']['package_count'] == package_count > 0
+assert m['platform']['board'] == 'Bitmain Antminer S9'
+assert set(m['products']) == {'sd', 'nand'}
+assert storage['image_bytes'] == image_bytes
+assert storage['boot_bytes'] == boot_bytes
+assert storage['root_bytes'] == root_bytes
+assert storage['boot_plus_root_bytes'] == boot_bytes + root_bytes
+assert storage['layout_overhead_bytes'] == image_bytes - boot_bytes - root_bytes
+assert storage['boot_mib'] == expected_boot_mib == boot_bytes // mib
+for name in ('boot', 'root'):
+    fs = storage['filesystems'][name]
+    assert fs['filesystem'] in {'vfat', 'ext4'}
+    assert fs['partition_bytes'] > 0 and 0 <= fs['used_bytes'] <= fs['total_bytes'] <= fs['partition_bytes']
+nand = m['products']['nand']['installed']
+assert nand['schema_version'] == 1
+assert nand['compression']['rootfs_squashfs'] == 'zstd'
+assert nand['compression']['overlay_ubifs'] == 'lzo'
+assert nand['volumes']['rootfs']['type'] == 'static'
+assert nand['volumes']['rootfs']['filesystem'] == 'squashfs'
+assert nand['volumes']['rootfs']['image_bytes'] <= nand['volumes']['rootfs']['bytes']
+assert nand['volumes']['overlay']['type'] == 'dynamic'
+assert nand['volumes']['overlay']['filesystem'] == 'ubifs'
+assert nand['volumes']['overlay']['minimum_bytes'] > 0
+PY
+
+echo 'release inventory, package guards, SD image/storage metadata, NAND metadata and public identity passed'
+ "$work/platform.list" || fail 'platform package must not overwrite storage edition identity'
 ! grep -qE 'etc/systemd/system/atlantian-.*\.(service|timer)' "$work/platform.list" || fail 'vendor systemd units leaked into /etc'
 
 dpkg-deb -x "$platform_deb" "$work/platform-root"

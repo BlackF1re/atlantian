@@ -60,6 +60,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           WEEKLY_SCHEDULE: ${{ github.event_name == 'schedule' }}
           MANUAL_PUBLICATION: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+          # Temporary hold until RAM-only SD/NAND hardware update tests pass.
+          SCHEDULED_PUBLICATION_PAUSED: 'true'
         run: |
           set -euo pipefail
           . config/release.env
@@ -69,7 +71,10 @@ jobs:
           already_published=false
           reuse_run_id=""
 
-          if [[ "$MANUAL_PUBLICATION" == true ]]; then
+          if [[ "$WEEKLY_SCHEDULE" == true && "$SCHEDULED_PUBLICATION_PAUSED" == true ]]; then
+            build_required=false
+            echo 'Scheduled publication is temporarily paused pending RAM hardware validation.'
+          elif [[ "$MANUAL_PUBLICATION" == true ]]; then
             publish_requested=true
           elif [[ "$WEEKLY_SCHEDULE" == true ]]; then
             release_pending=$(scripts/release-pending.sh "$GITHUB_SHA")
