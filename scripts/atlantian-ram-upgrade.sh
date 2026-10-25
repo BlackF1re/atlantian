@@ -127,6 +127,11 @@ fi
 # The entire authenticated release must persist inside the new initramfs.
 rm -rf "$work/trust" "$work/$archive"
 mkdir -p "$work/ramfs"/{bin,sbin,usr/bin,usr/sbin,etc/dropbear,dev,dev/pts,proc,sys,run,tmp,state,root,payload,debs}
+# Set up /dev BEFORE probing the chroot. Its future init mounts devtmpfs.
+# The staging tmpfs uses nodev, so the chroot probe below must not open
+# these device nodes; redirect probe stdout through the HOST /dev/null.
+mknod -m 0600 "$work/ramfs/dev/console" c 5 1
+mknod -m 0666 "$work/ramfs/dev/null" c 1 3
 cp /usr/lib/atlantian/ram-upgrade-busybox "$work/ramfs/bin/busybox"
 chmod 755 "$work/ramfs/bin/busybox"
 # BusyBox dispatches by argv[0]: invoke the staged copy as "busybox", not
@@ -184,14 +189,14 @@ done
 # only after kexec (possibly after the first NAND erase).
 chroot "$work/ramfs" /bin/sh -c '
   for tool in mountpoint rsync chroot sort comm awk sed grep mktemp find install jq; do
-    command -v "$tool" >/dev/null 2>&1 || {
+    command -v "$tool" || {
       echo "RAM initramfs missing required tool: $tool" >&2; exit 1;
     }
   done
-  rsync --version >/dev/null 2>&1 || exit 1
-  jq --version >/dev/null 2>&1 || exit 1
-  mountpoint --help >/dev/null 2>&1 || exit 1
-' || fail 'sealed RAM initramfs userspace preflight failed'
+  rsync --version || exit 1
+  jq --version || exit 1
+  mountpoint --help || exit 1
+' >/dev/null || fail 'sealed RAM initramfs userspace preflight failed'
 for lib in /lib/arm-linux-gnueabihf/libnss_files.so.2 /usr/lib/arm-linux-gnueabihf/libnss_files.so.2; do
  if [[ -f $lib ]]; then mkdir -p "$work/ramfs$(dirname "$lib")"; cp -L "$lib" "$work/ramfs$lib"; fi
 done
@@ -258,8 +263,6 @@ fi
 while :; do sleep 60; done
 INIT
 chmod 755 "$work/ramfs/init"
-mknod -m 0600 "$work/ramfs/dev/console" c 5 1
-mknod -m 0666 "$work/ramfs/dev/null" c 1 3
 (cd "$work/ramfs" && find . -print0 | cpio --null -o -H newc 2>/dev/null | gzip -1 >"$work/initramfs.cpio.gz")
 dd if="$work/payload/uImage" of="$work/zImage" bs=64 skip=1 status=none
 cat /sys/firmware/fdt >"$work/live.dtb"
