@@ -73,6 +73,21 @@ storage_help=$(scripts/atlantian-storage.sh --help)
 [[ $storage_help != *'\\n'* ]] || fail 'storage help renders literal backslash-n tokens'
 grep -Fq "grep -q '^AtlANTian GNU/Linux '" packaging/platform/postinst ||
   fail 'SD package upgrade does not refresh factory SSH banner'
+# The board remains a general-purpose Zynq Linux development system: user
+# interfaces are available as drivers without claiming unverified PCB routes.
+for config in CONFIG_I2C_CADENCE CONFIG_I2C_CHARDEV CONFIG_SPI_CADENCE CONFIG_SPI_SPIDEV CONFIG_CAN_XILINCCAN CONFIG_GPIO_XILINX CONFIG_FPGA_MGR_ZYNQ_FPGA; do
+  grep -q "^$config=y" config/kernel.fragment || fail "universal Linux hardware interface was removed: $config"
+done
+for file in atlantian-status-leds.bit atlantian-status-leds.hwh atlantian-status-leds.dtso; do
+  [[ -s "fpga/status-leds/$file" ]] || fail "FPGA design/reference artifact absent from repository: $file"
+  ! grep -Fq "fpga/status-leds/$file" scripts/build-rootfs.sh || fail "development FPGA artifact is copied into runtime rootfs: $file"
+done
+grep -Fq 'atlantian-status-leds.bin' scripts/build-rootfs.sh || fail 'FPGA runtime bitstream missing'
+grep -Fq 'atlantian-status-leds.dtbo' scripts/build-rootfs.sh || fail 'FPGA runtime overlay missing'
+grep -Fq 'is-recovery-card' scripts/atlantian-storage.sh || fail 'manual SD recovery interface missing'
+! grep -Fq 'is-upgrade-card' scripts/atlantian-storage.sh || fail 'retired SD-based updater identity check remains'
+! grep -Fq 'mode=upgrade' scripts/atlantian-nand-install.sh || fail 'fresh NAND installer retains legacy NAND upgrade mode'
+
 python3 - <<'PY_UI'
 from pathlib import Path
 stamp = Path('scripts/stamp-release.sh').read_text()
