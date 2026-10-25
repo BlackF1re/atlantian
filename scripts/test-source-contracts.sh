@@ -114,7 +114,7 @@ grep -Fq '| pigz -1' scripts/atlantian-nand-backup.sh || fail 'NAND backup is no
 grep -Fq 'BACKUP_DEFAULT=/var/lib/atlantian/recovery/factory-nand-backup' scripts/atlantian-nand-install.sh || fail 'fresh NAND backup is not anchored on the recovery SD root'
 grep -Fq -- '--no-backup' scripts/atlantian-nand-install.sh || fail 'explicit fresh-install backup opt-out missing'
 grep -Fq 'type INSTALL' scripts/atlantian-nand-install.sh || fail 'fresh NAND destructive confirmation missing'
-grep -Fq 'Type UPGRADE' scripts/atlantian-nand-upgrade.sh || fail 'NAND update destructive confirmation missing'
+grep -Fq 'Type UPGRADE' scripts/atlantian-ram-upgrade.sh || fail 'RAM system update confirmation missing'
 grep -Fq 'atln-stage.done' scripts/atlantian-nand-install.sh || fail 'U-Boot raw-boot verification marker missing'
 grep -Fq 'validate_rebase_snapshot' scripts/atlantian-nand-install.sh || fail 'rebase validation before UBI replacement missing'
 grep -Fq 'atlantian-nand-rebase restore' scripts/atlantian-nand-install.sh || fail 'persistent state restore missing'
@@ -130,13 +130,10 @@ assert "systemctl reboot" not in handoff, "SD->NAND handoff must not use softwar
 for token in ("remove power", "SD to NAND", "power-on reset"):
     assert token in handoff, f"SD->NAND handoff missing {token!r}"
 
-upgrade = Path("scripts/atlantian-sysupgrade-nand.sh").read_text(encoding="utf-8")
-tail = upgrade[upgrade.index("NAND update is staged on the recovery microSD."):]
-assert "Press Enter" not in tail, "NAND->SD handoff must not wait for Enter"
-assert "read -r" not in tail, "NAND->SD handoff must not wait for terminal input"
-assert "systemctl reboot" not in tail, "NAND->SD handoff must not use software reboot"
-for token in ("remove power", "NAND to SD", "power-on reset"):
-    assert token in tail, f"NAND->SD handoff missing {token!r}"
+# System upgrades use a kexec handoff, not a physical boot-source swap.
+ram = Path("scripts/atlantian-ram-upgrade.sh").read_text(encoding="utf-8")
+assert "systemctl kexec" in ram, "RAM maintainer handoff missing"
+assert "Type UPGRADE" in ram, "upgrade confirmation missing"
 PY_NAND_HANDOFF
 
 for file in packaging/platform/preinst packaging/platform/postinst packaging/kernel/preinst packaging/kernel/postinst packaging/release/preinst; do
