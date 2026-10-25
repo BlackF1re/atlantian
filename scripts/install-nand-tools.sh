@@ -26,25 +26,16 @@ for installer in \
     exit 2
   }
 done
-rm -f "$ROOT/usr/local/sbin/atlantian-nand-upgrade"
 install -D -m 0755 "$PROJECT/scripts/atlantian-sysupgrade.sh" "$ROOT/usr/local/sbin/atlantian-sysupgrade"
 install -D -m 0755 "$PROJECT/scripts/atlantian-ram-upgrade.sh" "$ROOT/usr/lib/atlantian/ram-upgrade"
 install -D -m 0755 "$PROJECT/scripts/atlantian-ram-upgrade-apply.sh" "$ROOT/usr/lib/atlantian/ram-upgrade-apply"
 install -D -m 0755 "${ATLANTIAN_BUSYBOX_STATIC:-$PROJECT/out/build-tools/busybox-static-armhf}" "$ROOT/usr/lib/atlantian/ram-upgrade-busybox"
-# The old per-edition sysupgrade backends are no longer installed.
-rm -f "$ROOT/usr/lib/atlantian/atlantian-sysupgrade-sd" "$ROOT/usr/lib/atlantian/atlantian-sysupgrade-nand"
 install -D -m 0755 "$PROJECT/scripts/atlantian-verify-release.sh" "$ROOT/usr/local/sbin/atlantian-verify-release"
 install -D -m 0644 "$PROJECT/config/release-trust.env" "$ROOT/usr/lib/atlantian/release-trust.env"
 install -D -m 0644 "$PROJECT/systemd/atlantian-nand-auto-resume.service" "$ROOT/usr/lib/systemd/system/atlantian-nand-auto-resume.service"
 install -D -m 0644 "$PROJECT/systemd/atlantian-nand-reconcile.service" "$ROOT/usr/lib/systemd/system/atlantian-nand-reconcile.service"
 
 install -d -m 0755 "$ROOT/etc/systemd/system/multi-user.target.wants"
-if [[ $EDITION == nand ]]; then
-  install -D -m 0755 "$PROJECT/scripts/atlantian-nand-ram-probe.sh" "$ROOT/usr/local/sbin/atlantian-nand-ram-probe"
-else
-  rm -f "$ROOT/usr/local/sbin/atlantian-nand-ram-probe"
-fi
-
 if [[ $EDITION == sd ]]; then
   ln -sfn /usr/lib/systemd/system/atlantian-nand-auto-resume.service "$ROOT/etc/systemd/system/multi-user.target.wants/atlantian-nand-auto-resume.service"
   rm -f "$ROOT/etc/systemd/system/multi-user.target.wants/atlantian-nand-reconcile.service"

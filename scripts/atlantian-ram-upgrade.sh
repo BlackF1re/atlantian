@@ -59,7 +59,26 @@ else
 fi
 work=$(mktemp -d /run/atlantian-ram-upgrade.XXXXXX)
 mounted=false
+ledpid=
+start_update_leds() {
+  # An indicator failure must not block an otherwise safe signed upgrade.
+  [[ ! -x /usr/local/sbin/atlantian-update-leds ]] || {
+    ATLANTIAN_UPDATE_RESTART_SERVICES=0 /usr/local/sbin/atlantian-update-leds >/dev/null 2>&1 &
+    ledpid=$!
+  }
+}
+stop_update_leds() {
+  if [[ -n $ledpid ]]; then
+    kill "$ledpid" 2>/dev/null || true
+    wait "$ledpid" 2>/dev/null || true
+    ledpid=
+    # The helper was started with restart disabled. Restore normal D3 owners
+    # if staging fails before systemd can shut down for kexec.
+    systemctl start atlantian-status-leds.service atlantian-fpga-status-leds.service >/dev/null 2>&1 || true
+  fi
+}
 cleanup() {
+  stop_update_leds
   [[ $mounted != true ]] || umount "$work" >/dev/null 2>&1 || true
   rmdir "$work" >/dev/null 2>&1 || true
 }
@@ -67,11 +86,25 @@ trap cleanup EXIT INT TERM HUP
 mount -t tmpfs -o size=650m,mode=0700,nosuid,nodev tmpfs "$work"
 mounted=true
 mkdir -p "$work/payload" "$work/ramfs" "$work/trust" "$work/debs"
+start_update_leds
 . /etc/atlantian/releases.conf
 repo=${ATLANTIAN_GITHUB_REPO:?}
 api=${ATLANTIAN_RELEASE_API:-https://api.github.com}
 release=$(curl -fsSL --retry 3 "$api/repos/$repo/releases/tags/$tag")
 asset_url() { jq -r --arg n "$1" '.assets[] | select(.name==$n) | .browser_download_url' <<<"$release" | head -n1; }
+record_update_download() {
+  # Anonymous best-effort count. Never use the unsigned marker to authorize
+  # an upgrade or block an authenticated transaction.
+  local u marker="$work/atlantian-update.json"
+  u=$(asset_url atlantian-update.json)
+  [[ $u == https://* ]] || return 0
+  if ! curl -fsSL --retry 2 --connect-timeout 10 -o "$marker" "$u" >/dev/null 2>&1; then
+    rm -f "$marker"
+    return 0
+  fi
+  jq -e --arg release "$target" '.schema_version == 1 and .kind == "atlantian-system-update" and .release == $release' "$marker" >/dev/null 2>&1 ||
+    rm -f "$marker"
+}
 fetch() {
  local n=$1 label=$2 u
  u=$(asset_url "$n")
@@ -92,6 +125,7 @@ fetch SHA256SUMS.sigstore.json 'release signature'
 printf '\nVerifying release signature...\n'
 ATLANTIAN_COSIGN_CACHE_DIR="$work/trust" \
  /usr/local/sbin/atlantian-verify-release "$work/SHA256SUMS" "$work/SHA256SUMS.sigstore.json"
+record_update_download
 archive="atlantian-nand-$target.tar.zst"
 fetch "$archive" 'NAND system bundle'
 check_public_hash "$archive"

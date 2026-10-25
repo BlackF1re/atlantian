@@ -11,8 +11,7 @@ metrics=.github/workflows/image-download-metrics.yml
 build=scripts/build-incremental.sh
 upgrade=scripts/test-release-upgrade.sh
 checker=scripts/atlantian-release-check.sh
-sd=scripts/atlantian-sysupgrade-sd.sh
-nand=scripts/atlantian-sysupgrade-nand.sh
+ram=scripts/atlantian-ram-upgrade.sh
 notes=scripts/generate-release-notes.sh
 readme=README.md
 pipeline=docs/PIPELINE.md
@@ -43,10 +42,12 @@ require 'gh run download "$SOURCE_RUN_ID"' "$upgrade"
 require 'atlantian-verified-${source_sha}' "$upgrade"
 reject 'browser_download_url' "$upgrade"
 
-# Anonymous system-update accounting stays best-effort in both storage backends.
+# Anonymous update accounting stays best-effort in the sole RAM updater.
 require 'atlantian-update.json' "$checker"
-require 'record_update_download' "$sd"
-require 'record_update_download' "$nand"
+require 'record_update_download()' "$ram"
+require 'record_update_download' "$ram"
+require 'return 0' "$ram"
+require 'jq -e --arg release "$target"' "$ram"
 require 'atlantian-update.json' scripts/prepare-public-release.sh
 require 'blackf1re.github.io%2Fatlantian%2Fimage-downloads.json' "$readme"
 require 'query=%24.imageDownloads&label=image%20downloads' "$readme"

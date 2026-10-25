@@ -1,6 +1,6 @@
 # NAND architecture
 
-> **Update path (2026-10):** System upgrades use the authenticated RAM kexec maintainer in both SD and NAND modes. No boot-source jumper change and no bootable recovery microSD are required for routine upgrades. The entire verified update and the preserved user-state snapshot reside in RAM; internal-only NAND installations require no SD card. The original SD-U-Boot raw-stage procedure documented below applies to fresh NAND installation or historical releases, **not** to the current atlantian-sysupgrade path. See [UPGRADING.md](UPGRADING.md).
+> **Update path (2026-10):** System upgrades use the authenticated RAM kexec maintainer in both SD and NAND modes. No boot-source jumper change and no bootable recovery microSD are required for routine upgrades. The entire verified update and the preserved user-state snapshot reside in RAM; internal-only NAND installations require no SD card. The SD-U-Boot raw-stage procedure documented below applies **only to fresh NAND installation**, not to `atlantian-sysupgrade`. See [UPGRADING.md](UPGRADING.md).
 
 
 AtlANTian's NAND edition targets the stock Micron `MT29F2G08ABAEAWP` 256 MiB raw NAND used on the supported Antminer S9 control board. Raw-flash code is intentionally board/chip-specific; a part is not considered compatible merely because its capacity and page geometry match.
@@ -62,7 +62,7 @@ The initramfs uses a build-only static BusyBox binary. `busybox-static` is extra
 ## SD recovery and factory installation
 
 A bootable AtlANTian SD image remains useful for first-time NAND installation
-and disaster recovery. The older SD-U-Boot raw-boot programming procedure
+and disaster recovery. The SD-U-Boot raw-boot programming procedure
 described below is for factory installation or historical releases, not the
 current system-upgrade path.
 
@@ -104,8 +104,7 @@ Debian generation. Cross-major compatibility of third-party packages is not
 promised. Downgrades and skipping a major need separate explicit migration.
 
 Power loss during NAND programming can still make the device unbootable; a
-RAM-only snapshot is necessarily volatile. Linux raw-boot writes have not yet
-received their first physical write validation.
+RAM-only snapshot is necessarily volatile. Linux raw-boot writes have passed an initial NAND `beta.2 → beta.3` RAM-only hardware upgrade, followed by a separate card-free cold boot and preserved-state checks. Card-free *updating*, adopted external-upper updates and power-loss recovery are not yet physically verified.
 
 ## Backup
 

@@ -51,7 +51,7 @@ grep -Fqx 'CONFIG_HIGHMEM=y' config/kernel.fragment || fail 'HIGHMEM is disabled
 grep -Fq 'SHA256SUMS.sigstore.json' scripts/atlantian-release-check.sh || fail 'release discovery no longer requires a signature asset'
 grep -Fq 'atlantian-verify-release.sh' scripts/install-nand-tools.sh || fail 'release verifier is not installed into runtime images'
 grep -Fq 'atlantian-validate-recovery-sd atlantian-nand-firstboot' scripts/install-nand-tools.sh || fail 'recovery SD validator is not installed'
-grep -Fq 'atlantian-storage is-upgrade-card' scripts/atlantian-sysupgrade-nand.sh || fail 'NAND update still requires installer identity'
+! grep -Fq 'atlantian-storage is-upgrade-card' scripts/atlantian-ram-upgrade.sh || fail 'RAM updates must not require a recovery SD'
 grep -Fq '.extroot-token' scripts/atlantian-storage.sh || fail 'external overlay token validation disappeared'
 scripts/test-ram-upgrade.sh
 scripts/test-recovery-sd-layout.sh
@@ -59,15 +59,11 @@ grep -Fq 'release-trust.env' scripts/install-nand-tools.sh || fail 'release trus
 grep -Fq 'release-trust.env' scripts/build-atlantian-debs.sh || fail 'platform package does not carry the release trust root'
 python3 - <<'PY_AUTH_ORDER'
 from pathlib import Path
-
-def body(path, start, end):
-    text = Path(path).read_text(encoding="utf-8")
-    return text[text.index(start):text.index(end, text.index(start))]
-
-sd = body("scripts/atlantian-sysupgrade-sd.sh", "download_and_verify() {", "ensure_pending_packages() {")
-assert sd.index("atlantian-verify-release") < sd.index("verify_staged_version"), "SD checksum use precedes signature verification"
-nand = body("scripts/atlantian-sysupgrade-nand.sh", "stage_release() {", "[ \"$(id -u)\" -eq 0 ]")
-assert nand.index("atlantian-verify-release") < nand.index("expected=$(awk"), "NAND checksum use precedes signature verification"
+stage = Path("scripts/atlantian-ram-upgrade.sh").read_text()
+apply = Path("scripts/atlantian-ram-upgrade-apply.sh").read_text()
+assert stage.index('atlantian-verify-release') < stage.index('check_public_hash "$archive"') < stage.index('kexec --load'), "RAM staging must authenticate before accepting content or executing kexec"
+assert apply.index('sha256sum -c /state/signed-internal-sums') < apply.index('ubiformat /dev/mtd1'), "RAM writer must validate payload before altering NAND"
+assert apply.index('read_old_state\n') < apply.index('ubiformat /dev/mtd1'), "RAM writer must save old state before altering NAND"
 PY_AUTH_ORDER
 scripts/test-release-auth.sh
 # User-facing output should be brief, consistently labelled, and accurate.
@@ -75,14 +71,23 @@ storage_help=$(scripts/atlantian-storage.sh --help)
 [[ $storage_help == *'adopt'* && $storage_help == *'manual recovery'* ]] ||
   fail 'storage help does not explain adoption and manual recovery'
 [[ $storage_help != *'\\n'* ]] || fail 'storage help renders literal backslash-n tokens'
-grep -Fq 'Downloading NAND probe image:' scripts/atlantian-nand-ram-probe.sh ||
-  fail 'NAND probe image download has no progress label'
-grep -Fq 'Downloading release checksums:' scripts/atlantian-nand-ram-probe.sh ||
-  fail 'NAND probe checksum download has no progress label'
-grep -Fq 'Downloading release signature:' scripts/atlantian-nand-ram-probe.sh ||
-  fail 'NAND probe signature download has no progress label'
 grep -Fq "grep -q '^AtlANTian GNU/Linux '" packaging/platform/postinst ||
   fail 'SD package upgrade does not refresh factory SSH banner'
+# The board remains a general-purpose Zynq Linux development system: user
+# interfaces are available as drivers without claiming unverified PCB routes.
+for config in CONFIG_I2C_CADENCE CONFIG_I2C_CHARDEV CONFIG_SPI_CADENCE CONFIG_SPI_SPIDEV CONFIG_CAN_XILINXCAN CONFIG_GPIO_XILINX CONFIG_FPGA_MGR_ZYNQ_FPGA; do
+  grep -q "^$config=y" config/kernel.fragment || fail "universal Linux hardware interface was removed: $config"
+done
+for file in atlantian-status-leds.bit atlantian-status-leds.hwh atlantian-status-leds.dtso; do
+  [[ -s "fpga/status-leds/$file" ]] || fail "FPGA design/reference artifact absent from repository: $file"
+  ! grep -Fq "fpga/status-leds/$file" scripts/build-rootfs.sh || fail "development FPGA artifact is copied into runtime rootfs: $file"
+done
+grep -Fq 'atlantian-status-leds.bin' scripts/build-rootfs.sh || fail 'FPGA runtime bitstream missing'
+grep -Fq 'atlantian-status-leds.dtbo' scripts/build-rootfs.sh || fail 'FPGA runtime overlay missing'
+grep -Fq 'is-recovery-card' scripts/atlantian-storage.sh || fail 'manual SD recovery interface missing'
+! grep -Fq 'is-upgrade-card' scripts/atlantian-storage.sh || fail 'retired SD-based updater identity check remains'
+! grep -Fq 'mode=upgrade' scripts/atlantian-nand-install.sh || fail 'fresh NAND installer retains legacy NAND upgrade mode'
+
 python3 - <<'PY_UI'
 from pathlib import Path
 stamp = Path('scripts/stamp-release.sh').read_text()
@@ -95,7 +100,7 @@ assert body.splitlines() == [
 PY_UI
 
 
-# SD online update is strictly A/B FIT. The finished-package test owns the
+# SD RAM update retains A/B FIT boot integrity. The finished-package test owns the
 # stronger assertion that factory-only BOOT.bin/u-boot.img are absent from the kernel package.
 for token in atlantian-A.itb atlantian-B.itb atlantian-slot-B; do grep -Fq "$token" scripts/populate-boot-files.sh || fail "missing SD transaction token: $token"; done
 grep -Fq 'hash-1 { algo = "sha256"; };' scripts/populate-boot-files.sh || fail 'FIT SHA-256 verification disappeared'
@@ -109,10 +114,10 @@ grep -Fq '| pigz -1' scripts/atlantian-nand-backup.sh || fail 'NAND backup is no
 grep -Fq 'BACKUP_DEFAULT=/var/lib/atlantian/recovery/factory-nand-backup' scripts/atlantian-nand-install.sh || fail 'fresh NAND backup is not anchored on the recovery SD root'
 grep -Fq -- '--no-backup' scripts/atlantian-nand-install.sh || fail 'explicit fresh-install backup opt-out missing'
 grep -Fq 'type INSTALL' scripts/atlantian-nand-install.sh || fail 'fresh NAND destructive confirmation missing'
-grep -Fq 'Type UPGRADE' scripts/atlantian-nand-upgrade.sh || fail 'NAND update destructive confirmation missing'
+grep -Fq 'Type UPGRADE' scripts/atlantian-ram-upgrade.sh || fail 'RAM system update confirmation missing'
 grep -Fq 'atln-stage.done' scripts/atlantian-nand-install.sh || fail 'U-Boot raw-boot verification marker missing'
-grep -Fq 'validate_rebase_snapshot' scripts/atlantian-nand-install.sh || fail 'rebase validation before UBI replacement missing'
-grep -Fq 'atlantian-nand-rebase restore' scripts/atlantian-nand-install.sh || fail 'persistent state restore missing'
+grep -Fq 'read_old_state' scripts/atlantian-ram-upgrade-apply.sh || fail 'RAM NAND updater no longer captures old user state'
+grep -Fq '/sbin/atlantian-nand-rebase restore' scripts/atlantian-ram-upgrade-apply.sh || fail 'RAM NAND updater no longer restores persistent state'
 python3 - <<'PY_NAND_HANDOFF'
 from pathlib import Path
 
@@ -125,13 +130,10 @@ assert "systemctl reboot" not in handoff, "SD->NAND handoff must not use softwar
 for token in ("remove power", "SD to NAND", "power-on reset"):
     assert token in handoff, f"SD->NAND handoff missing {token!r}"
 
-upgrade = Path("scripts/atlantian-sysupgrade-nand.sh").read_text(encoding="utf-8")
-tail = upgrade[upgrade.index("NAND update is staged on the recovery microSD."):]
-assert "Press Enter" not in tail, "NAND->SD handoff must not wait for Enter"
-assert "read -r" not in tail, "NAND->SD handoff must not wait for terminal input"
-assert "systemctl reboot" not in tail, "NAND->SD handoff must not use software reboot"
-for token in ("remove power", "NAND to SD", "power-on reset"):
-    assert token in tail, f"NAND->SD handoff missing {token!r}"
+# System upgrades use a kexec handoff, not a physical boot-source swap.
+ram = Path("scripts/atlantian-ram-upgrade.sh").read_text(encoding="utf-8")
+assert "systemctl kexec" in ram, "RAM maintainer handoff missing"
+assert "Type UPGRADE" in ram, "upgrade confirmation missing"
 PY_NAND_HANDOFF
 
 for file in packaging/platform/preinst packaging/platform/postinst packaging/kernel/preinst packaging/kernel/postinst packaging/release/preinst; do

@@ -19,10 +19,9 @@ validate_packages config/packages.base
 grep -qx 'busybox-static' < <(sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' config/packages.base) || fail 'build-only BusyBox source package is missing'
 grep -qx 'kexec-tools' config/packages.base || fail 'missing kexec userspace'
 grep -qx 'cpio' config/packages.base || fail 'missing NAND RAM initramfs packer'
-grep -Fq 'ram-probe-busybox' scripts/build-nand-rootfs.sh || fail 'static NAND RAM maintenance tool is not packaged'
-grep -Fq 'atlantian-nand-ram-probe.sh' scripts/install-nand-tools.sh || fail 'NAND RAM probe command not installed'
-grep -Fq 'scripts/test-nand-ram-probe.sh' scripts/test-build-orchestration.sh || fail 'NAND RAM probe regression test not wired'
-scripts/test-nand-ram-probe.sh
+# One static BusyBox is packaged for authenticated RAM upgrades, not old hardware probes.
+! grep -Fq 'ram-probe-busybox' scripts/build-nand-rootfs.sh || fail 'retired RAM probe BusyBox is still packaged'
+grep -Fq 'ram-upgrade-busybox' scripts/install-nand-tools.sh || fail 'RAM upgrade BusyBox is missing'
 
 scripts/test-release-client.sh
 scripts/test-recovery-sd-layout.sh
@@ -86,8 +85,12 @@ grep -Fq 'ram-upgrade-busybox' scripts/build-atlantian-debs.sh || fail 'armhf pa
 
 # NAND destructive flow stays single-layered: no launcher/core wrappers.
 for dead in scripts/atlantian-nand-install-launcher.sh scripts/atlantian-nand-upgrade-launcher.sh; do [[ ! -e $dead ]] || fail "legacy launcher survived: $dead"; done
-grep -Fq 'pending bundle/release identity mismatch' scripts/atlantian-nand-install.sh || fail 'install lost pending bundle identity verification'
-grep -Fq 'prepared payload is' scripts/atlantian-nand-upgrade.sh || fail 'upgrade lost prepared bundle identity verification'
+grep -Fq 'verify_fresh_bundle_identity; verify_platform' scripts/atlantian-nand-install.sh || fail 'fresh NAND install does not validate release identity on resume'
+grep -Fq 'unsupported pending NAND transaction mode' scripts/atlantian-nand-install.sh || fail 'obsolete NAND update transaction is not refused'
+for obsolete in scripts/atlantian-sysupgrade-sd.sh scripts/atlantian-sysupgrade-nand.sh \
+  scripts/atlantian-nand-upgrade.sh scripts/atlantian-nand-ram-probe.sh scripts/test-nand-ram-probe.sh; do
+  [[ ! -e "$obsolete" ]] || fail "retired update/probe file remains: $obsolete"
+done
 
 # Prevent copied release-inventory test tails from passing source CI but failing
 # only after a full release build. Metadata validation must run exactly once.

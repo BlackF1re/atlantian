@@ -60,11 +60,23 @@ done
 jq -e --arg release "$release" '.schema_version == 1 and .kind == "atlantian-system-update" and .release == $release' \
   "$tmp/atlantian-update.json" >/dev/null || fail 'invalid update marker'
 
-(
-  export ATLANTIAN_SYSUPGRADE_LIBRARY_ONLY=1
-  export ATLANTIAN_UPDATE_STAGE="$tmp"
-  . "$ROOT/scripts/atlantian-sysupgrade-sd.sh"
-  verify_staged_version "$release"
-) || fail 'SD updater rejected the exact current public package/checksum set'
+# The shipping RAM-only updater must use the public asset names produced above,
+# validate their Debian identity and hash against the authenticated manifest,
+# and reject content before initiating kexec.
+python3 - "$ROOT/scripts/atlantian-ram-upgrade.sh" <<'PY_RAM'
+from pathlib import Path
+import sys
+stage = Path(sys.argv[1]).read_text()
+for contract in (
+    'atlantian-verify-release',
+    'check_public_hash "$archive"',
+    'check_public_hash "$name"',
+    'dpkg-deb -f "$work/$name" Package',
+    'dpkg-deb -f "$work/$name" Version',
+    'dpkg-deb -f "$work/$name" Architecture',
+):
+    assert contract in stage, f'missing signed public asset contract: {contract}'
+assert stage.index('atlantian-verify-release') < stage.index('check_public_hash "$archive"') < stage.index('kexec --load')
+PY_RAM
 
 echo 'public filename normalization, package metadata, idempotency and checksum contracts passed'

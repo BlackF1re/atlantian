@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install or finish AtlANTian NAND maintenance from the paired recovery SD.
+# Install or finish a fresh AtlANTian NAND installation from bootable SD.
 # Ordering: verify -> backup -> raw boot program/readback -> UBI write/verify -> handoff.
 set -eu
 
@@ -7,7 +7,6 @@ BUNDLE=${ATLANTIAN_NAND_BUNDLE:-/usr/lib/atlantian/nand}
 STATE=/var/lib/atlantian/nand-install
 PENDING=$STATE/pending
 READY=$STATE/ready-to-handoff
-UPGRADE_SAVE=/var/cache/atlantian/nand-overlay-preserve
 # Fresh NAND installation always runs from /dev/mmcblk0p2, so the default
 # recovery backup lives explicitly on the recovery microSD root filesystem.
 BACKUP_DEFAULT=/var/lib/atlantian/recovery/factory-nand-backup
@@ -29,11 +28,11 @@ EOF_USAGE
 fatal() { echo "atlantian-nand-install: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fatal "missing required command: $1"; }
 step() { printf '\n==> %s\n' "$*"; }
-lock_install() { need flock; mkdir -p /run/lock; exec 9>/run/lock/atlantian-nand-install.lock; flock -n 9 || fatal 'another NAND install/upgrade process is already running'; }
+lock_install() { need flock; mkdir -p /run/lock; exec 9>/run/lock/atlantian-nand-install.lock; flock -n 9 || fatal 'another NAND installation is already running'; }
 verify_host() {
   [ "$(id -u)" -eq 0 ] || fatal 'run as root'
   model=$(tr -d '\000' </proc/device-tree/model 2>/dev/null || true); case "$model" in *Antminer*S9*) ;; *) fatal "unsupported board model: $model" ;; esac
-  case "$(findmnt -n -o SOURCE / 2>/dev/null || true)" in /dev/mmcblk0p2) ;; *) fatal 'NAND maintenance must run from the AtlANTian recovery microSD' ;; esac
+  case "$(findmnt -n -o SOURCE / 2>/dev/null || true)" in /dev/mmcblk0p2) ;; *) fatal 'NAND installation must run from a bootable AtlANTian microSD' ;; esac
 }
 verify_nand_identity() {
   manufacturer=$(printf '%02x' "$((EXPECTED_MANUFACTURER))")
@@ -56,29 +55,20 @@ find_master() {
   MASTER=/dev/$line; [ -c "$MASTER" ] || fatal "missing $MASTER"
 }
 manifest_release() { jq -r '.release // empty' "$BUNDLE/NAND-MANIFEST.json" 2>/dev/null || true; }
-select_pending_bundle() {
-  [ -s "$PENDING" ] || return 0
-  path=$(sed -n 's/^bundle=//p' "$PENDING" | head -n1); [ -n "$path" ] || return 0
-  case "$path" in /var/cache/atlantian/nand-target/*/bundle) ;; *) fatal 'unsafe pending NAND bundle path' ;; esac
-  BUNDLE=$path
-  [ -s "$BUNDLE/NAND-MANIFEST.json" ] || fatal "pending bundle disappeared: $BUNDLE"
-  expected=$(sed -n 's/^release=//p' "$PENDING" | head -n1); actual=$(manifest_release)
-  [ -n "$expected" ] && [ "$actual" = "$expected" ] || fatal 'pending bundle/release identity mismatch'
-}
 verify_fresh_bundle_identity() {
   [ -s "$BUNDLE/NAND-MANIFEST.json" ] || fatal "NAND payload is missing under $BUNDLE"
   running=$(cat /usr/lib/atlantian/version 2>/dev/null || true); target=$(manifest_release)
   [ -n "$running" ] && [ -n "$target" ] || fatal 'cannot determine running/payload release identity'
   [ "$running" = "$target" ] || {
     echo "atlantian-nand-install: embedded NAND payload $target does not match running AtlANTian $running" >&2
-    echo 'Use the matching release image, or stage a NAND base update from NAND with atlantian-sysupgrade.' >&2
+    echo 'Use an SD image with the matching AtlANTian release.' >&2
     exit 78
   }
 }
 verify_platform() {
   verify_host
   verify_nand_identity
-  for c in jq sha256sum pigz mtdpart ubiformat ubiattach ubidetach ubimkvol ubiupdatevol ubiblock nanddump mount umount findmnt rsync atlantian-nand-rebase; do need "$c"; done
+  for c in jq sha256sum pigz mtdpart ubiformat ubiattach ubidetach ubimkvol ubiupdatevol ubiblock nanddump mount umount findmnt ; do need "$c"; done
   [ -s "$BUNDLE/NAND-MANIFEST.json" ] && [ -s "$BUNDLE/SHA256SUMS" ] || fatal "NAND payload is missing under $BUNDLE"
   (cd "$BUNDLE" && sha256sum -c SHA256SUMS >/dev/null) || fatal 'NAND payload checksum verification failed'
   [ "$(jq -r .compression.rootfs_squashfs "$BUNDLE/NAND-MANIFEST.json")" = zstd ] || fatal 'unexpected SquashFS compression policy'
@@ -114,7 +104,7 @@ ensure_backup() {
   echo "Factory backup verified: $backup"; echo 'Keep a copy on another computer if factory recovery matters.'
 }
 stage_raw_boot() {
-  mode=$1; target=$(manifest_release); id=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); [ ${#id} -eq 32 ] || fatal 'cannot create installer identity'
+  target=$(manifest_release); id=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); [ ${#id} -eq 32 ] || fatal 'cannot create installer identity'
   step '[2/4] Staging the verified raw boot transaction'; mountpoint -q "$BOOT" || mount /dev/mmcblk0p1 "$BOOT"
   install -m 0644 "$BUNDLE/spl-redundant.bin" "$BOOT/atln-spl.bin"
   install -m 0644 "$BUNDLE/u-boot.img" "$BOOT/atln-uboot.img"
@@ -123,7 +113,7 @@ stage_raw_boot() {
   install -m 0644 "$BUNDLE/devicetree.dtb" "$BOOT/atln-dtb.bin"
   install -m 0644 "$BUNDLE/nand-stage.scr" "$BOOT/atln-stage.scr"
   printf '%s\n' "$id" >"$BOOT/atln-install.id"; rm -f "$BOOT/atln-stage.done"; mkdir -p "$STATE"
-  printf 'installer_id=%s\nrelease=%s\nmode=%s\n' "$id" "$target" "$mode" >"$PENDING"; rm -f "$READY"; sync
+  printf 'installer_id=%s\nrelease=%s\nmode=fresh\n' "$id" "$target" >"$PENDING"; rm -f "$READY"; sync
   echo 'Rebooting in SD mode. Do not move the boot jumper yet.'; systemctl reboot
 }
 find_ubi_volume() {
@@ -139,24 +129,9 @@ create_ubi_partition() {
   ubi_offset=$(jq -r .nand.ubi_offset_bytes "$BUNDLE/NAND-MANIFEST.json"); ubi_size=$((268435456 - ubi_offset)); mtdpart add "$MASTER" atlantian-ubi "$ubi_offset" "$ubi_size"
   UBI_MTD=$(awk -F: '$2 ~ /"atlantian-ubi"/ {gsub(/[[:space:]]/,"",$1); print "/dev/"$1; found++} END {if(found!=1) exit 1}' /proc/mtd) || fatal 'atlantian-ubi partition did not appear'
 }
-validate_rebase_snapshot() {
-  [ -s "$UPGRADE_SAVE/TRANSACTION" ] || fatal 'preserved upgrade metadata is missing'
-  [ "$(sed -n 's/^rebase_schema=//p' "$UPGRADE_SAVE/TRANSACTION" | head -n1)" = 1 ] || fatal 'unsupported rebase schema'
-  [ -s "$UPGRADE_SAVE/internal/METADATA" ] && [ -d "$UPGRADE_SAVE/internal/delta" ] || fatal 'internal rebase snapshot is incomplete'
-  external_layout=$(sed -n 's/^external_layout=//p' "$UPGRADE_SAVE/TRANSACTION" | head -n1)
-  case "$external_layout" in
-    none|'') ;;
-    recovery-p2)
-      [ -s "$UPGRADE_SAVE/external/METADATA" ] && [ -d "$UPGRADE_SAVE/external/delta" ] || fatal 'external rebase snapshot is incomplete'
-      [ -s "$UPGRADE_SAVE/.extroot-token" ] && [ -s /.atlantian-extroot/token ] || fatal 'external adoption token is missing'
-      [ "$(cat /.atlantian-extroot/token)" = "$(cat "$UPGRADE_SAVE/.extroot-token")" ] || fatal 'external recovery-card token changed during upgrade' ;;
-    *) fatal "unsupported preserved external overlay layout: $external_layout" ;;
-  esac
-}
 write_ubi() {
-  mode=$1 id=$2; root_bytes=$(jq -r .volumes.rootfs.bytes "$BUNDLE/NAND-MANIFEST.json"); root_image_bytes=$(jq -r .volumes.rootfs.image_bytes "$BUNDLE/NAND-MANIFEST.json")
+  id=$1; root_bytes=$(jq -r .volumes.rootfs.bytes "$BUNDLE/NAND-MANIFEST.json"); root_image_bytes=$(jq -r .volumes.rootfs.image_bytes "$BUNDLE/NAND-MANIFEST.json")
   min_overlay=$(jq -r .volumes.overlay.minimum_lebs "$BUNDLE/NAND-MANIFEST.json"); leb=$(jq -r .nand.leb_bytes "$BUNDLE/NAND-MANIFEST.json"); target=$(manifest_release)
-  [ "$mode" != upgrade ] || validate_rebase_snapshot
   step '[3/4] Formatting and writing the UBI data region'; create_ubi_partition; trap cleanup_ubi EXIT INT TERM HUP
   ubidetach -p "$UBI_MTD" >/dev/null 2>&1 || true; ubiformat "$UBI_MTD" -y; ubiattach -p "$UBI_MTD"
   ubimkvol /dev/ubi0 -N rootfs -t static -s "$root_bytes"; root_vol=$(find_ubi_volume rootfs); ubiupdatevol "/dev/$root_vol" "$BUNDLE/rootfs.squashfs"
@@ -170,43 +145,28 @@ write_ubi() {
   mount -t squashfs -o ro,nodev "$root_block" /run/atlantian-install-root
   [ "$(cat /run/atlantian-install-root/usr/lib/atlantian/version 2>/dev/null || true)" = "$target" ] || fatal 'written rootfs release mismatch'
   mount -t ubifs -o rw,noatime,compr=lzo ubi0:overlay /run/atlantian-install-overlay; mkdir -p /run/atlantian-install-overlay/upper /run/atlantian-install-overlay/work
-  if [ "$mode" = upgrade ]; then
-    atlantian-nand-rebase restore "$UPGRADE_SAVE/internal" /run/atlantian-install-root /run/atlantian-install-overlay/upper /run/atlantian-install-overlay/work "$target"
-    [ ! -s "$UPGRADE_SAVE/.extroot-token" ] || cp -a "$UPGRADE_SAVE/.extroot-token" /run/atlantian-install-overlay/.extroot-token
-    external_layout=$(sed -n 's/^external_layout=//p' "$UPGRADE_SAVE/TRANSACTION" | head -n1)
-    case "$external_layout" in
-      none|'') ;;
-      recovery-p2)
-        [ -s /.atlantian-extroot/token ] && [ "$(cat /.atlantian-extroot/token)" = "$(cat "$UPGRADE_SAVE/.extroot-token")" ] || fatal 'external recovery-card token changed during upgrade'
-        rm -rf /.atlantian-extroot/upper /.atlantian-extroot/work; mkdir -p /.atlantian-extroot/upper /.atlantian-extroot/work
-        atlantian-nand-rebase restore "$UPGRADE_SAVE/external" /run/atlantian-install-root /.atlantian-extroot/upper /.atlantian-extroot/work "$target" ;;
-      *) fatal "unsupported preserved external overlay layout: $external_layout" ;;
-    esac
-  else
-    mkdir -p /run/atlantian-install-overlay/upper/var/lib/atlantian/nand
-    printf '%s\n' "$id" >/run/atlantian-install-overlay/upper/var/lib/atlantian/nand/installer-id
-    : >/run/atlantian-install-overlay/upper/var/lib/atlantian/nand/offer-extroot
-  fi
+  mkdir -p /run/atlantian-install-overlay/upper/var/lib/atlantian/nand
+  printf '%s\n' "$id" >/run/atlantian-install-overlay/upper/var/lib/atlantian/nand/installer-id
+  : >/run/atlantian-install-overlay/upper/var/lib/atlantian/nand/offer-extroot
   sync; umount /run/atlantian-install-overlay; umount /run/atlantian-install-root; remove_root_ubiblock; ubidetach -p "$UBI_MTD"; UBI_MTD=; trap - EXIT INT TERM HUP
-  [ "$mode" != upgrade ] || rm -rf "$UPGRADE_SAVE"
   echo "Verified static SquashFS rootfs $target; writable UBIFS overlay bytes: $overlay_bytes"
 }
 finish_resume() {
-  mode=$1 id=$2 target=$3
+  id=$1 target=$2
   rm -f "$BOOT/atln-stage.scr" "$BOOT/atln-stage.done" "$BOOT/atln-spl.bin" "$BOOT/atln-uboot.img" "$BOOT/atln-kernel.img" "$BOOT/atln-initrd.img" "$BOOT/atln-dtb.bin"
-  printf 'installer_id=%s\nrelease=%s\nmode=%s\n' "$id" "$target" "$mode" >"$READY.new"; mv -f "$READY.new" "$READY"; rm -f "$PENDING"
-  [ "$mode" != upgrade ] || rm -f /var/lib/atlantian/nand-target.env; sync; step '[4/4] NAND installation is complete and verified'
+  printf 'installer_id=%s\nrelease=%s\nmode=fresh\n' "$id" "$target" >"$READY.new"; mv -f "$READY.new" "$READY"; rm -f "$PENDING"
+  sync; step '[4/4] NAND installation is complete and verified'
 }
 resume() {
-  auto=${1:-no}; select_pending_bundle; verify_platform
+  auto=${1:-no}; verify_fresh_bundle_identity; verify_platform
   if [ -s "$READY" ] && [ ! -s "$PENDING" ]; then [ "$auto" = yes ] && exit 0; handoff; return; fi
   [ -s "$PENDING" ] || fatal 'no pending NAND transaction exists'; mountpoint -q "$BOOT" || mount /dev/mmcblk0p1 "$BOOT"
   [ -s "$BOOT/atln-stage.done" ] || fatal 'SD U-Boot did not leave a verified NAND-stage marker; keep jumper in SD mode and inspect UART'
   id=$(sed -n 's/^installer_id=//p' "$PENDING" | head -n1); mode=$(sed -n 's/^mode=//p' "$PENDING" | head -n1); target=$(sed -n 's/^release=//p' "$PENDING" | head -n1)
-  case "$mode" in fresh|upgrade) ;; *) fatal "invalid pending NAND mode: $mode" ;; esac
+  [ "$mode" = fresh ] || fatal "unsupported pending NAND transaction mode: $mode"
   [ "$(manifest_release)" = "$target" ] || fatal 'pending NAND bundle/release identity mismatch'
   [ -n "$id" ] && [ -r "$BOOT/atln-install.id" ] && [ "$(cat "$BOOT/atln-install.id")" = "$id" ] || fatal 'installer-card identity mismatch'
-  write_ubi "$mode" "$id"; finish_resume "$mode" "$id" "$target"; [ "$auto" = yes ] && return; handoff
+  write_ubi "$id"; finish_resume "$id" "$target"; [ "$auto" = yes ] && return; handoff
 }
 handoff() {
   verify_host; [ -s "$READY" ] || fatal 'NAND has not completed verified installation yet'
@@ -259,4 +219,4 @@ else
 fi
 printf '\nFINAL DESTRUCTIVE CONFIRMATION: type INSTALL to replace the on-board NAND: '
 IFS= read -r answer; [ "$answer" = INSTALL ] || { echo 'Cancelled; NAND was not modified.'; exit 0; }
-stage_raw_boot fresh
+stage_raw_boot

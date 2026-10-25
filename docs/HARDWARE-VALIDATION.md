@@ -13,7 +13,7 @@ The current source-built SD and NAND paths have been exercised on 512 MiB and 1 
 - NAND installation;
 - NAND cold boot and reboot;
 - writable OverlayFS and normal multi-user services;
-- recovery-SD handoff and same-major NAND base rebase.
+- first-install SD U-Boot raw-boot handoff and signed RAM-only NAND/SD system upgrades (see the tested and untested cases below).
 
 The 1 GiB value in the base DT is only the memory probe ceiling. For memory-sensitive changes, record the actual board population and confirm Linux sees the expected detected bank rather than treating the DT ceiling as evidence of installed RAM.
 
@@ -76,6 +76,14 @@ The repository provides a verified backup tool, not a generic raw-NAND restore c
 
 ## RAM-only SD/NAND upgrade bench matrix (13.1.0-beta.2 baseline)
 
+### Completed Antminer S9 trials (2026-10)
+
+- **NAND internal UBIFS, beta.2 → beta.3:** signed release authentication, kexec RAM maintainer, UBI/SquashFS replacement, raw boot verification, reboot and preservation of three SHA-256 sentinels passed. The *upgrade itself* ran with an **unadopted SD physically inserted**; a later cold boot *without* SD succeeded. An upgrade with SD physically absent remains untested.
+- **SD ext4, beta.2 → beta.3:** signed release authentication, kexec RAM maintainer, APT installation of all three target packages, clean `dpkg --audit`, no failed systemd units and preservation of all three SHA-256 sentinels passed. These runs found and fixed prerequisites in the RAM maintainer and SD chroot package mounts; the signed beta.3 release was built before those fixes.
+- **NAND adopted external upper:** not yet exercised through a full RAM upgrade. **Power loss, FIT failover and bad-block edge cases** remain unverified.
+
+These results establish success-path functionality, **not** atomic rollback or interruption tolerance. The rest of this matrix specifies follow-up tests that must not be inferred from the two completed paths.
+
 All cases require a **strictly newer, complete and signed GitHub Release** as
 the upgrade target. A GitHub Actions artifact or an annotated Git tag alone is
 not discovered by `atlantian-sysupgrade`. Record target release, checksum
@@ -91,18 +99,16 @@ or an update. During an actual upgrade the old SSH session will disconnect at
 `/run/upgrade/status` via RAM recovery SSH **before rebooting or power-cycling**.
 Those RAM-only logs vanish after shutdown.
 
-### NAND, internal UBIFS upper, no SD (first destructive RAM-writer test)
+### NAND, internal UBIFS upper, SD physically absent throughout update
 
 - [ ] Cold boot from NAND with the SD card removed and confirm
       `storage-edition=nand`, `overlay-mode=internal`, and functioning SSH.
-- [ ] Run the read-only `atlantian-nand-ram-probe --check` preflight.
-- [ ] Confirm an independently usable recovery path before first experimental
-      Linux raw-NAND writes. Factory installation from SD is not proof that
-      the new Linux RAM writer is correct.
+- [ ] Run `atlantian-sysupgrade --check` and confirm sufficient memory and a signed eligible target before starting.
+- [ ] Confirm an independently usable recovery path and controlled power-loss plan before any fault-injection test.
 - [ ] Update via `atlantian-sysupgrade` and record the release authenticator,
       kexec boot, old-state snapshot, UBI replacement, slot readback and reboot.
 - [ ] Confirm the new version, preserved markers, internal UBIFS upper,
-      unchanged boot media and an error-free cold boot without an SD card.
+      and an error-free cold boot without an SD card.
 
 ### NAND, adopted external microSD upper
 

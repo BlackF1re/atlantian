@@ -31,6 +31,18 @@ done
 for legacy in zImage uImage devicetree.dtb; do
   [ ! -e "$BOOT/$legacy" ] || { echo "legacy SD boot asset must not be present: $legacy" >&2; exit 3; }
 done
+# Only deployed FPGA firmware, not Vivado/source artifacts, may enter the image.
+for runtime in atlantian-status-leds.bin atlantian-status-leds.dtbo; do
+  [ -s "$ROOT/lib/firmware/atlantian/status-leds/$runtime" ] || {
+    echo "missing runtime FPGA status LED payload: $runtime" >&2; exit 3;
+  }
+done
+for source in atlantian-status-leds.bit atlantian-status-leds.hwh atlantian-status-leds.dtso; do
+  [ ! -e "$ROOT/lib/firmware/atlantian/status-leds/$source" ] || {
+    echo "FPGA development artifact leaked into runtime: $source" >&2; exit 3;
+  }
+done
+
 cmp "$BOOT/atlantian-A.itb" "$BOOT/atlantian-B.itb"
 
 # The image must never cap RAM from the Linux command line. The DT carries the

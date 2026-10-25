@@ -15,8 +15,8 @@ Status meanings: **Ready** = implemented and exercised; **Validation** = impleme
 | stock 256 MiB raw NAND | Ready | Micron `MT29F2G08ABAEAWP`, exact ID `2c:da`, PL35X MTD, on-die BCH 4/512, verified raw+OOB backup |
 | NAND installation/boot | Ready | exact-ID guard + geometry/ECC checks; 16 MiB raw boot + 240 MiB UBI static SquashFS/UBIFS OverlayFS |
 | NAND bad-block edge cases | Validation | bad-block-aware layout/software; broader real bad-block placement coverage remains |
-| interrupted NAND recovery | Validation | marker/resume/refusal paths implemented; controlled power-loss/fault testing remains |
-| recovery-SD external upper | Validation | only the paired install/recovery card can be adopted; token-authorized fallback implemented |
+| interrupted NAND recovery | Validation | fresh-install resume and RAM-maintenance fail-stop paths implemented; power-loss/fault recovery remains untested |
+| recovery-SD external upper | Validation | paired card can be adopted; token-authorized fallback implemented; RAM-upgrade rebase still awaits physical validation |
 | SD/NAND boot jumper | External | physical BootROM source selection |
 | persistent U-Boot environment | Unavailable | deliberately `ENV_IS_NOWHERE` |
 

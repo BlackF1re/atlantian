@@ -15,7 +15,7 @@ AtlANTian is a Debian-based GNU/Linux distribution for the Bitmain Antminer S9 c
 - Linux FPGA Manager/configfs overlays plus the packaged `status-leds` PL profile. Its boot-time loader is best-effort and does not overwrite another administrator-selected active FPGA profile.
 - Transactional SD kernel/DT updates with two SHA-256 FIT slots and fallback.
 - Optional NAND edition for the stock 256 MiB Micron `MT29F2G08ABAEAWP` raw NAND (`Manufacturer ID 0x2c`, `Device ID 0xda`), with raw+OOB backup, fixed raw boot, static SquashFS root and writable UBIFS OverlayFS.
-- Same-Debian-major NAND base upgrades through the paired recovery microSD, including selected persistent-state/package-intent rebase.
+- Authenticated RAM-only kernel handoff for SD and NAND system upgrades, including preservation and rebasing of selected NAND persistent user state.
 - Authenticated AtlANTian system updates: release discovery requires the Sigstore bundle asset, and SD/NAND installation refuses to trust `SHA256SUMS` unless that bundle verifies against the pinned AtlANTian release-signing workflow identity.
 
 The exact readiness and electrical boundaries of individual interfaces are tracked in [docs/hardware-support-matrix.md](docs/hardware-support-matrix.md). Physical/fault-injection requirements are tracked separately in [docs/HARDWARE-VALIDATION.md](docs/HARDWARE-VALIDATION.md).
@@ -43,7 +43,7 @@ The public image contains:
 - a 48 MiB FAT BOOT partition;
 - an ext4 root partition that expands to the remainder of the card on first boot.
 
-Online AtlANTian kernel updates write and verify only the inactive FIT slot before switching the active-slot marker. They do **not** rewrite SD `BOOT.bin` or `u-boot.img`; a boot-ABI incompatibility requires reflashing a current image.
+Authenticated RAM-Linux updates install signed AtlANTian packages and write/verify the inactive A/B FIT slot before switching the active-slot marker. They do **not** rewrite SD `BOOT.bin` or `u-boot.img`; a boot-ABI incompatibility requires reflashing a current image.
 
 ### NAND
 
@@ -54,7 +54,7 @@ The first 16 MiB of NAND are reserved for raw boot payloads. The remaining 240 M
 - a static Zstd SquashFS `rootfs` volume;
 - a dynamic LZO UBIFS `overlay` volume.
 
-A verified raw+OOB backup is mandatory before installation. The SD used for installation becomes the paired recovery/maintenance medium for later NAND base upgrades and can optionally be adopted as the NAND writable upper without destroying its recovery image.
+Fresh installation offers a verified raw+OOB backup by default (the operator can explicitly opt out with `--no-backup`). The installation SD can remain a bootable manual recovery medium and can optionally become the paired external writable upper. Routine NAND updates run entirely through RAM Linux and do not require booting an SD.
 
 See [docs/INSTALLATION.md](docs/INSTALLATION.md), [docs/NAND.md](docs/NAND.md) and [docs/PERSISTENCE.md](docs/PERSISTENCE.md).
 
@@ -68,9 +68,9 @@ atlantian-sysupgrade --notes
 atlantian-sysupgrade
 ```
 
-SD supports compatible same-major releases and an explicit immediate-next-Debian-major transition. NAND advertises same-major base releases only; a Debian-major NAND transition is a clean reinstall from the target SD image.
+SD and NAND both support authenticated same-major and immediately adjacent Debian-major RAM-kexec updates. The target NAND immutable base is replaced and supported user state is rebased; SD updates Debian through APT inside the RAM maintainer.
 
-Stable installations do not automatically opt into alpha/beta/rc versions, regardless of GitHub's display label. Existing alpha installations may upgrade to the public beta line, and beta installations may upgrade to later beta or compatible stable versions. Release discovery prefers a newer release in the currently installed Debian major before offering the immediate next major on SD.
+Stable installations do not automatically opt into alpha/beta/rc versions, regardless of GitHub's display label. Existing alpha installations may upgrade to the public beta line, and beta installations may upgrade to later beta or compatible stable versions. Release discovery prefers a newer release in the currently installed Debian major before offering an eligible next-major release.
 
 Release discovery, signed-manifest verification, recovery behavior and the noninteractive `--yes` option are documented in [docs/UPGRADING.md](docs/UPGRADING.md).
 
@@ -85,9 +85,7 @@ sudo -E scripts/build-incremental.sh all
 
 The rootfs and kernel branches build independently and join before artifact assembly. Production GitHub Actions exposes the same boundary as separate parallel jobs, then fans release validation out into artifact, SD image, NAND bundle, cross-release SD update and NAND rebase gates. Only a fully verified candidate is sealed and eligible for publication.
 
-A non-destructive `atlantian-nand-ram-probe` diagnostic is included in NAND builds to validate a future cardless maintenance route. It is not a cardless flasher; NAND programming still requires verified recovery-SD maintenance. See [Updating AtlANTian](docs/UPGRADING.md) for details.
-
-NAND system upgrades require a bootable maintenance SD. The originally paired card remains supported; an actively adopted external-overlay card is also eligible when its NAND token matches and it retains the AtlANTian SD boot/recovery system. Overlay-only reformatted media cannot carry out the SD-to-NAND maintenance handoff.
+The unified `atlantian-sysupgrade` installs a signed release through autonomous kexec RAM Linux. NAND with an internal UBIFS upper does not need an SD card for updates; if an adopted external writable layer is active, that card must remain inserted. The recovery SD is used only for initial NAND installation or manual disaster recovery. See [Updating AtlANTian](docs/UPGRADING.md).
 
 The SSH update notice is explicitly cached; run `atlantian-sysupgrade --check` for live release discovery. The periodic timer normally refreshes the cache approximately hourly (subject to scheduling jitter).
 
