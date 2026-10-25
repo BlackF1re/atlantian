@@ -77,6 +77,8 @@ done
 # Obsolete SD/NAND update backends must not be packaged.
 for path in \
   usr/local/sbin/atlantian-nand-upgrade \
+  usr/local/sbin/atlantian-nand-ram-probe \
+  usr/lib/atlantian/ram-probe-busybox \
   usr/lib/atlantian/atlantian-sysupgrade-sd \
   usr/lib/atlantian/atlantian-sysupgrade-nand; do
   ! grep -Fq "./$path" "$work/platform.list" || fail "legacy update backend is packaged: $path"
