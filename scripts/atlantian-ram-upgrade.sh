@@ -162,6 +162,36 @@ if [[ $edition == nand ]]; then
  for b in flash_erase nandwrite nanddump ubiformat ubiattach ubidetach \
   ubimkvol ubiupdatevol ubiblock; do copy_elf "$(command -v "$b")"; done
 fi
+# The NAND rebase subprocess needs more than the boot-time BusyBox applets.
+# Debian's static BusyBox does not provide e.g. mountpoint. Include each
+# missing host executable (plus its shared-library closure) *before* kexec.
+# The contract applies to SD as well because both paths share this initramfs.
+ram_tools=(
+ sh mount umount mountpoint rsync chroot sort comm awk sed grep mktemp find install
+ cp rm mkdir rmdir sync cat sha256sum cmp dd df wc mdev cut date sleep reboot
+ head tail tr chmod mv jq od
+)
+for tool in "${ram_tools[@]}"; do
+ if [[ -x $work/ramfs/bin/$tool || -x $work/ramfs/sbin/$tool ||
+       -x $work/ramfs/usr/bin/$tool || -x $work/ramfs/usr/sbin/$tool ]]; then
+   continue
+ fi
+ need "$tool"
+ copy_elf "$(command -v "$tool")"
+done
+# Resolve and execute critical dynamic binaries INSIDE the sealed root.
+# Fail in the original firmware instead of discovering missing toolchains
+# only after kexec (possibly after the first NAND erase).
+chroot "$work/ramfs" /bin/sh -c '
+  for tool in mountpoint rsync chroot sort comm awk sed grep mktemp find install jq; do
+    command -v "$tool" >/dev/null 2>&1 || {
+      echo "RAM initramfs missing required tool: $tool" >&2; exit 1;
+    }
+  done
+  rsync --version >/dev/null 2>&1 || exit 1
+  jq --version >/dev/null 2>&1 || exit 1
+  mountpoint --help >/dev/null 2>&1 || exit 1
+' || fail 'sealed RAM initramfs userspace preflight failed'
 for lib in /lib/arm-linux-gnueabihf/libnss_files.so.2 /usr/lib/arm-linux-gnueabihf/libnss_files.so.2; do
  if [[ -f $lib ]]; then mkdir -p "$work/ramfs$(dirname "$lib")"; cp -L "$lib" "$work/ramfs$lib"; fi
 done
