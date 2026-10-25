@@ -13,10 +13,26 @@ oldmajor=$(cat /state/old-major)
 newmajor=$(cat /state/new-major)
 case "$edition:$overlay_mode" in sd:sd|nand:internal|nand:external) ;; *) fail 'invalid edition/overlay' ;; esac
 cd /payload
-sha256sum -c /state/signed-internal-sums || fail 'RAM payload checksum mismatch'
+if ! sha256sum -c /state/signed-internal-sums >/run/upgrade/payload-check.log 2>&1; then
+  cat /run/upgrade/payload-check.log >&2
+  fail 'RAM payload checksum mismatch'
+fi
 [ "$(jq -r .release NAND-MANIFEST.json)" = "$target" ] || fail 'target mismatch'
 mark() {
-  log "phase=$1"
+  case "$1" in
+    old-state-captured) label='NAND: existing settings saved in RAM' ;;
+    formatting-ubi) label='NAND: writing new filesystem (do not power off)' ;;
+    restoring-internal) label='NAND: restoring internal settings' ;;
+    restoring-external) label='NAND: restoring external settings' ;;
+    upgrading-old-debian) label='SD: updating existing Debian packages' ;;
+    switching-debian-major) label='SD: migrating Debian release' ;;
+    refreshing-sd-repositories) label='SD: refreshing package lists' ;;
+    installing-signed-platform) label='SD: installing authenticated AtlANTian packages' ;;
+    upgrading-debian-packages) label='SD: updating Debian packages' ;;
+    verified) label="Update verified: $target" ;;
+    *) label=$1 ;;
+  esac
+  log "$label"
   printf 'phase=%s\ntarget=%s\n' "$1" "$target" >/run/upgrade/status.new
   mv -f /run/upgrade/status.new /run/upgrade/status
   sync

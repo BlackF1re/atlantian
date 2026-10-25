@@ -5,6 +5,16 @@ if [ -s /usr/lib/atlantian/os-release ]; then
   install -m 0644 /usr/lib/atlantian/os-release /etc/os-release
 fi
 
+# The SD package updater preserves /etc, so refresh the factory SSH banner
+# after installing a new AtlANTian release. Leave unrelated custom banners
+# untouched; never overwrite a banner that does not identify AtlANTian.
+if [ -f /etc/issue.net ] && grep -q '^AtlANTian GNU/Linux ' /etc/issue.net; then
+  release=$(cat /usr/lib/atlantian/version)
+  major=$(cat /usr/lib/atlantian/debian-major)
+  codename=$(cat /usr/lib/atlantian/debian-codename)
+  printf 'AtlANTian GNU/Linux %s\nDebian %s (%s)\n' "$release" "$major" "$codename" >/etc/issue.net
+fi
+
 systemctl daemon-reload || true
 systemctl enable --now run-apt.mount >/dev/null 2>&1 || true
 if command -v systemd-tmpfiles >/dev/null 2>&1; then

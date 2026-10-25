@@ -70,6 +70,30 @@ nand = body("scripts/atlantian-sysupgrade-nand.sh", "stage_release() {", "[ \"$(
 assert nand.index("atlantian-verify-release") < nand.index("expected=$(awk"), "NAND checksum use precedes signature verification"
 PY_AUTH_ORDER
 scripts/test-release-auth.sh
+# User-facing output should be brief, consistently labelled, and accurate.
+storage_help=$(scripts/atlantian-storage.sh --help)
+[[ $storage_help == *'adopt'* && $storage_help == *'manual recovery'* ]] ||
+  fail 'storage help does not explain adoption and manual recovery'
+[[ $storage_help != *'\\n'* ]] || fail 'storage help renders literal backslash-n tokens'
+grep -Fq 'Downloading NAND probe image:' scripts/atlantian-nand-ram-probe.sh ||
+  fail 'NAND probe image download has no progress label'
+grep -Fq 'Downloading release checksums:' scripts/atlantian-nand-ram-probe.sh ||
+  fail 'NAND probe checksum download has no progress label'
+grep -Fq 'Downloading release signature:' scripts/atlantian-nand-ram-probe.sh ||
+  fail 'NAND probe signature download has no progress label'
+grep -Fq "grep -q '^AtlANTian GNU/Linux '" packaging/platform/postinst ||
+  fail 'SD package upgrade does not refresh factory SSH banner'
+python3 - <<'PY_UI'
+from pathlib import Path
+stamp = Path('scripts/stamp-release.sh').read_text()
+start = stamp.index('cat >"$ROOT/etc/issue.net" <<EOF_ISSUE')
+body = stamp[start:].split('\n',1)[1].split('\nEOF_ISSUE',1)[0]
+assert body.splitlines() == [
+    'AtlANTian GNU/Linux $ATLANTIAN_VERSION',
+    'Debian $DEBIAN_MAJOR ($DEBIAN_CODENAME)',
+], 'SSH issue.net template must contain two concise identity lines'
+PY_UI
+
 
 # SD online update is strictly A/B FIT. The finished-package test owns the
 # stronger assertion that factory-only BOOT.bin/u-boot.img are absent from the kernel package.

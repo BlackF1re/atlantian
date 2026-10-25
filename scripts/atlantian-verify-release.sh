@@ -49,6 +49,7 @@ else
     rm -f "$COSIGN"
     tmp=$(mktemp "$CACHE/.cosign.XXXXXX")
     trap 'rm -f "$tmp"' EXIT HUP INT TERM
+    printf 'Downloading signature verifier: Cosign %s\n' "$ATLANTIAN_COSIGN_VERSION"
     curl -fL --retry 3 --connect-timeout 20 --progress-bar -o "$tmp" "$ATLANTIAN_COSIGN_ARM_URL"
     [ "$(stat -c %s "$tmp")" = "$ATLANTIAN_COSIGN_ARM_SIZE" ] || fatal 'pinned Cosign download size mismatch'
     [ "$(sha256sum "$tmp" | awk '{print $1}')" = "$ATLANTIAN_COSIGN_ARM_SHA256" ] || fatal 'pinned Cosign download checksum mismatch'
@@ -63,4 +64,4 @@ fi
   --certificate-identity "$ATLANTIAN_RELEASE_SIGNING_IDENTITY" \
   --certificate-oidc-issuer "$ATLANTIAN_RELEASE_SIGNING_ISSUER" >/dev/null \
   || fatal 'release checksum signature verification failed'
-printf 'Authenticated AtlANTian release manifest: %s\n' "$(sha256sum "$SUMS" | awk '{print $1}')"
+printf 'Release signature verified.\n'

@@ -20,10 +20,12 @@ Usage:
   atlantian-storage is-upgrade-card
   atlantian-storage adopt [ /dev/mmcblk0 ]
 
-`is-upgrade-card` accepts either the original paired recovery card or an\nexternally adopted SD whose token matches NAND, provided it still boots AtlANTian\nmaintenance. An overlay-only reformatted card is not sufficient.\n\n`adopt` keeps the existing AtlANTian recovery microSD intact and creates the
-external OverlayFS writable layer inside its ext4 ROOT partition. The same card
-therefore remains bootable for NAND maintenance. With no adopted card at boot,
-AtlANTian automatically falls back to the internal NAND upper layer.
+`is-upgrade-card` checks whether the card can boot manual recovery tools.
+An adopted card must match the NAND pairing token.
+
+`adopt` keeps the recovery microSD bootable and uses free space on its
+ext4 ROOT partition for the external writable layer. Without the card, NAND
+boots using its internal writable layer.
 EOF_USAGE
 }
 
@@ -136,9 +138,9 @@ status() {
         echo 'External overlay: not adopted'
     fi
     if upgrade_card >/dev/null 2>&1; then
-        echo 'AtlANTian bootable recovery microSD: suitable for NAND upgrades'
+        echo 'Recovery microSD: bootable for manual recovery'
     elif installer_card_id; then
-        echo 'AtlANTian installer microSD: identity matches, but recovery bootability is unverified'
+        echo 'Recovery microSD: paired; bootability not verified'
     fi
 }
 
