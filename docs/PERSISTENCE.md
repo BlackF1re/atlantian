@@ -12,7 +12,7 @@ SD uses a conventional ext4 root filesystem. Ordinary Debian state is persistent
 - installed packages and local package configuration;
 - `/usr/local`, `/opt` and `/srv` when modified by the administrator.
 
-The boot partition is separate FAT storage. Online AtlANTian kernel updates replace only the inactive FIT slot and then commit the active-slot marker; they do not rewrite early SD `BOOT.bin`/`u-boot.img`.
+The boot partition is separate FAT storage. RAM-only AtlANTian system updates replace only the inactive FIT slot and then commit the active-slot marker; they do not rewrite early SD `BOOT.bin`/`u-boot.img`.
 
 ## NAND
 
