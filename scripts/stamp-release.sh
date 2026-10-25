@@ -46,13 +46,9 @@ BUG_REPORT_URL="$ATLANTIAN_REPO_URL/issues"
 EOF_OS
 install -m 0644 "$ROOT/usr/lib/atlantian/os-release" "$ROOT/etc/os-release"
 
+# Keep the pre-auth SSH banner short. The dynamic post-login summary
+# already shows firmware, kernel, storage and update information.
 cat >"$ROOT/etc/issue.net" <<EOF_ISSUE
 AtlANTian GNU/Linux $ATLANTIAN_VERSION
 Debian $DEBIAN_MAJOR ($DEBIAN_CODENAME)
-
-The programs included with Debian are free software; their distribution terms
-are described in the corresponding copyright files under /usr/share/doc.
-
-Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent permitted by
-applicable law.
 EOF_ISSUE
