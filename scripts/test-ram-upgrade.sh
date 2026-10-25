@@ -52,6 +52,28 @@ assert '>/dev/null' not in preflight, 'the chroot must not redirect into staging
 assert "' >/dev/null || fail 'sealed RAM initramfs userspace preflight failed'" in s
 assert s.index('chroot "$work/ramfs" /bin/sh -c') < s.index('kexec --load')
 assert s.index('mountpoint --help') < s.index('kexec --load')
+
+# CLI UX: the old release checker printed its own line before the updater
+# printed another; success also dumped nine checksum lines and bare curl bars.
+assert 'atlantian-release-check --refresh >/dev/null' in s
+assert "printf 'Update available: %s -> %s (%s)" in s
+assert "Downloading %s: %s" in s
+assert "fetch SHA256SUMS 'release checksums'" in s
+assert "fetch SHA256SUMS.sigstore.json 'release signature'" in s
+assert "fetch \"$archive\" 'NAND system bundle'" in s
+assert 'fetch "$name" "$kind package"' in s
+assert s.index("printf '\\nDownloading %s: %s") < s.index('curl -fL --retry 3 --progress-bar')
+assert 'sha256sum -c SHA256SUMS >"$work/bundle-check.log" 2>&1' in s
+assert 'Preparing isolated RAM maintenance system...' in s
+assert 'SSH will disconnect' in s
+# Machine-readable phase files stay stable, but humans see descriptive labels.
+assert "log \"phase=$1\"" not in a
+assert "old-state-captured) label='NAND: existing settings saved in RAM'" in a
+assert "formatting-ubi) label='NAND: writing new filesystem (do not power off)'" in a
+assert "installing-signed-platform) label='SD: installing authenticated AtlANTian packages'" in a
+assert "printf 'phase=%s\\ntarget=%s\\n'" in a
+assert 'sha256sum -c /state/signed-internal-sums >/run/upgrade/payload-check.log' in a
+
 assert 'overlay_mode=$(cat /run/atlantian/overlay-mode)' in s
 assert 'external)' in s and 'internal)' in s
 assert a.index('sha256sum -c /state/signed-internal-sums') < a.index('ubiformat /dev/mtd1')
