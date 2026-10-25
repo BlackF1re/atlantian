@@ -44,8 +44,8 @@ Availability of Debian `N+1` may be reported automatically, but automation never
 
 A transition is explicit because it changes the AtlANTian release line and compatibility boundary.
 
-- **SD:** `atlantian-sysupgrade` supports only `N → N+1`, with source backup, resumable state and controlled replacement of AtlANTian-managed APT sources.
-- **NAND:** cross-major immutable-base rebase is not supported. Boot the target-generation SD image and perform a clean NAND installation.
+- **SD:** `atlantian-sysupgrade` uses autonomous RAM Linux to perform `N → N+1`, preserving source configuration, backing up APT sources and installing the signed target package set.
+- **NAND:** the same RAM-only updater supports `N → N+1` by replacing the immutable base and rebasing supported internal and, when adopted, external writable state. Third-party binary compatibility is not guaranteed.
 
 The updater never skips Debian generations or performs a Debian-major downgrade.
 
