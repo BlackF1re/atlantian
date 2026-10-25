@@ -83,13 +83,16 @@ url=$(jq -r --arg name "$bundle" '.assets[] | select(.name==$name) | .browser_do
 size=$(jq -r --arg name "$bundle" '.assets[] | select(.name==$name) | .size' <<<"$release_json" | head -1)
 [[ -n "$url" && $url != null && $size =~ ^[0-9]+$ ]] || fail 'target NAND archive not available'
 (( size > 0 && size <= 100*1024*1024 )) || fail 'NAND archive exceeds bounded RAM staging allowance'
-curl -fL --retry 3 -o "$work/$bundle" "$url"
+printf '\nDownloading NAND probe image: %s\n' "$bundle"
+curl -fL --retry 3 --progress-bar -o "$work/$bundle" "$url"
 sums_url=$(jq -r '.assets[] | select(.name=="SHA256SUMS") | .browser_download_url' <<<"$release_json" | head -1)
 signature_url=$(jq -r '.assets[] | select(.name=="SHA256SUMS.sigstore.json") | .browser_download_url' <<<"$release_json" | head -1)
 [[ -n "$sums_url" && $sums_url != null && -n "$signature_url" && $signature_url != null ]] ||
   fail 'release signature or checksum manifest is missing'
-curl -fL --retry 3 -o "$work/SHA256SUMS" "$sums_url"
-curl -fL --retry 3 -o "$work/SHA256SUMS.sigstore.json" "$signature_url"
+printf '\nDownloading release checksums: SHA256SUMS\n'
+curl -fL --retry 3 --progress-bar -o "$work/SHA256SUMS" "$sums_url"
+printf '\nDownloading release signature: SHA256SUMS.sigstore.json\n'
+curl -fL --retry 3 --progress-bar -o "$work/SHA256SUMS.sigstore.json" "$signature_url"
 mkdir -p "$work/trust"
 ATLANTIAN_COSIGN_CACHE_DIR="$work/trust" /usr/local/sbin/atlantian-verify-release \
   "$work/SHA256SUMS" "$work/SHA256SUMS.sigstore.json"
@@ -97,7 +100,11 @@ ATLANTIAN_COSIGN_CACHE_DIR="$work/trust" /usr/local/sbin/atlantian-verify-releas
   fail 'the archive is not authenticated by the signed release manifest'
 mkdir -p "$work/payload" "$work/ramfs/bin" "$work/ramfs/dev" "$work/ramfs/proc" "$work/ramfs/sys" "$work/ramfs/state"
 tar --zstd -xf "$work/$bundle" -C "$work/payload"
-(cd "$work/payload" && sha256sum -c SHA256SUMS) || fail 'NAND bundle integrity check failed'
+if ! (cd "$work/payload" && sha256sum -c SHA256SUMS >"$work/bundle-check.log" 2>&1); then
+  cat "$work/bundle-check.log" >&2
+  fail 'NAND bundle integrity check failed'
+fi
+echo 'NAND probe image verified.'
 [[ $(jq -r '.release' "$work/payload/NAND-MANIFEST.json") == "$target" ]] ||
   fail 'NAND bundle identity mismatch'
 [[ $(od -An -tx1 -N4 "$work/payload/uImage" | tr -d ' \n') == 27051956 ]] ||
