@@ -17,6 +17,7 @@ grep -Fq 'start_update_leds() {' "$UPGRADER"
 grep -Fq 'stop_update_leds() {' "$UPGRADER"
 grep -Fq 'ATLANTIAN_UPDATE_RESTART_SERVICES=0 /usr/local/sbin/atlantian-update-leds' "$UPGRADER"
 grep -Fq 'stop_update_leds' "$UPGRADER"
+grep -Fq "systemctl kexec || { kexec -u || true; cleanup; fail 'systemd kexec failed'; }" "$UPGRADER"
 grep -Fq 'systemctl start atlantian-status-leds.service atlantian-fpga-status-leds.service' "$UPGRADER"
 # Indicator starts during preparation, before authenticated artifact downloads.
 python3 - "$UPGRADER" <<'PY'

@@ -315,4 +315,4 @@ kexec --load --type=zImage --initrd="$work/initramfs.cpio.gz" --dtb="$work/live.
  --command-line='console=ttyPS0,115200n8 mtdparts=pl35x-nand-controller:16m(atlantian-boot),-(atlantian-ubi) rdinit=/init panic=10' "$work/zImage"
 echo 'Update ready. Switching to RAM maintenance (SSH will disconnect)...'
 trap - EXIT
-systemctl kexec || { kexec -u || true; fail 'systemd kexec failed'; }
+systemctl kexec || { kexec -u || true; cleanup; fail 'systemd kexec failed'; }
