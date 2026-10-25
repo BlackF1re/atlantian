@@ -236,12 +236,19 @@ sd_apply() {
   mount --bind /run /stage/run || fail 'run bind failed'
   mkdir -p /run/systemd/resolve /run/apt/lists/partial /run/apt/archives/partial /run/atlantian-debs
   cp /run/resolv.conf /run/systemd/resolve/stub-resolv.conf || fail 'DHCP DNS unavailable'
-  mount --bind /debs /run/atlantian-debs || fail 'signed .deb bind mount failed'
+  # /stage/run is a non-recursive bind mount of /run. A nested mount
+  # added later under /run is not guaranteed to appear in /stage/run.
+  # Bind the signed payload directly beneath the chroot-visible target.
+  mount --bind /debs /stage/run/atlantian-debs || fail 'signed .deb bind mount failed'
   set --
   for kind in platform kernel release; do
     name=$(sed -n "s/^$kind=//p" /state/packages.list)
     [ -n "$name" ] && [ -s "/debs/$name" ] || fail "missing signed $kind package"
     public_package_hash "$name"
+    # Fail before apt starts modifying SD if the signed .deb is not visible
+    # through the chroot at the exact filename apt-get will receive.
+    chroot /stage /usr/bin/test -s "/run/atlantian-debs/$name" ||
+      fail "signed $kind package missing inside SD chroot: $name"
     set -- "$@" "/run/atlantian-debs/$name"
     [ "$kind" = platform ] && platform=$name
   done
@@ -279,7 +286,7 @@ sd_apply() {
   [ -z "$(chroot /stage /usr/bin/dpkg --audit)" ] || fail 'SD dpkg audit failed'
   [ "$(cat /stage/usr/lib/atlantian/version)" = "$target" ] || fail 'SD release mismatch'
   sync
-  umount /run/atlantian-debs /stage/run /stage/dev /stage/sys /stage/proc /stage/boot || fail 'SD subordinate unmount failed'
+  umount /stage/run/atlantian-debs /stage/run /stage/dev /stage/sys /stage/proc /stage/boot || fail 'SD subordinate unmount failed'
   umount /stage || fail 'updated SD still mounted'
   mark verified
 }

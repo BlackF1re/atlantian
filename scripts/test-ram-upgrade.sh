@@ -65,6 +65,15 @@ assert a.index('flash_slot UBOOT_MAIN') < a.index('flash_slot "SPL_$copy"')
 assert 'bad boot PEBs unsupported' in a
 assert 'bad UBI PEBs unsupported' in a
 assert 'mount -t ext4 -o rw,noatime /dev/mmcblk0p2 /stage' in a
+# An on-device SD test reached the signed-package step, but apt reported
+# "Unsupported file" for all .debs: the bind mount existed in the RAM /run,
+# not in the chroot-visible /stage/run following a non-recursive /run bind.
+assert 'mount --bind /debs /stage/run/atlantian-debs' in a
+assert 'mount --bind /debs /run/atlantian-debs' not in a
+assert 'chroot /stage /usr/bin/test -s "/run/atlantian-debs/$name"' in a
+assert a.index('chroot /stage /usr/bin/test -s "/run/atlantian-debs/$name"') < a.index('mark installing-signed-platform')
+assert 'umount /stage/run/atlantian-debs /stage/run' in a
+assert 'umount /run/atlantian-debs /stage/run' not in a
 assert 'mount --bind /debs' in a and 'signed-public-sums' in a
 assert 'oldmajor" != "$newmajor' in a
 assert 'apt-sources-before-' in a
