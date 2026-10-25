@@ -82,7 +82,7 @@ for path in \
   ! grep -Fq "./$path" "$work/platform.list" || fail "legacy update backend is packaged: $path"
 done
 ! grep -Fq './usr/lib/atlantian/ram-upgrade-busybox' "$work/platform.list" || fail 'RAM BusyBox must be owned by the kernel package'
-! grep -qE ' ./usr/lib/atlantian/storage-edition "$work/platform.list" || fail 'platform package must not overwrite storage edition identity'
+! grep -qE ' ./usr/lib/atlantian/storage-edition$' "$work/platform.list" || fail 'platform package must not overwrite storage edition identity'
 ! grep -qE 'etc/systemd/system/atlantian-.*\.(service|timer)' "$work/platform.list" || fail 'vendor systemd units leaked into /etc'
 
 dpkg-deb -x "$platform_deb" "$work/platform-root"
