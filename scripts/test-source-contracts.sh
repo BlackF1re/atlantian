@@ -116,8 +116,8 @@ grep -Fq -- '--no-backup' scripts/atlantian-nand-install.sh || fail 'explicit fr
 grep -Fq 'type INSTALL' scripts/atlantian-nand-install.sh || fail 'fresh NAND destructive confirmation missing'
 grep -Fq 'Type UPGRADE' scripts/atlantian-ram-upgrade.sh || fail 'RAM system update confirmation missing'
 grep -Fq 'atln-stage.done' scripts/atlantian-nand-install.sh || fail 'U-Boot raw-boot verification marker missing'
-grep -Fq 'validate_rebase_snapshot' scripts/atlantian-nand-install.sh || fail 'rebase validation before UBI replacement missing'
-grep -Fq 'atlantian-nand-rebase restore' scripts/atlantian-nand-install.sh || fail 'persistent state restore missing'
+grep -Fq 'read_old_state' scripts/atlantian-ram-upgrade-apply.sh || fail 'RAM NAND updater no longer captures old user state'
+grep -Fq '/sbin/atlantian-nand-rebase restore' scripts/atlantian-ram-upgrade-apply.sh || fail 'RAM NAND updater no longer restores persistent state'
 python3 - <<'PY_NAND_HANDOFF'
 from pathlib import Path
 
