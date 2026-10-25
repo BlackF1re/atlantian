@@ -30,6 +30,17 @@ assert 'mtdparts=pl35x-nand-controller:16m(atlantian-boot),-(atlantian-ubi)' in 
 assert 'date -u -s' in init
 assert 'mount -t ext4 -o rw,noatime /dev/mmcblk0p2 /stage' not in init
 assert 'size=650m' in s and 'size=400m' in init
+# The old hardware RAM run failed before NAND erase: missing mountpoint in
+# the sealed initramfs, even though the old rootfs carried the executable.
+# Verify the full rebase dependency set is staged and preflighted before kexec.
+tool_block = s.split('ram_tools=(\n', 1)[1].split('\n)', 1)[0]
+for tool in ('mountpoint', 'rsync', 'chroot', 'sort', 'comm', 'awk',
+             'sed', 'grep', 'mktemp', 'find', 'install'):
+    assert tool in tool_block.split(), f'RAM rebase tool not staged: {tool}'
+assert 'copy_elf "$(command -v "$tool")"' in s
+assert 'chroot "$work/ramfs" /bin/sh -c' in s
+assert s.index('chroot "$work/ramfs" /bin/sh -c') < s.index('kexec --load')
+assert s.index('mountpoint --help') < s.index('kexec --load')
 assert 'overlay_mode=$(cat /run/atlantian/overlay-mode)' in s
 assert 'external)' in s and 'internal)' in s
 assert a.index('sha256sum -c /state/signed-internal-sums') < a.index('ubiformat /dev/mtd1')
