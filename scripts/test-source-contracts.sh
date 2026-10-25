@@ -51,7 +51,7 @@ grep -Fqx 'CONFIG_HIGHMEM=y' config/kernel.fragment || fail 'HIGHMEM is disabled
 grep -Fq 'SHA256SUMS.sigstore.json' scripts/atlantian-release-check.sh || fail 'release discovery no longer requires a signature asset'
 grep -Fq 'atlantian-verify-release.sh' scripts/install-nand-tools.sh || fail 'release verifier is not installed into runtime images'
 grep -Fq 'atlantian-validate-recovery-sd atlantian-nand-firstboot' scripts/install-nand-tools.sh || fail 'recovery SD validator is not installed'
-grep -Fq 'atlantian-storage is-upgrade-card' scripts/atlantian-sysupgrade-nand.sh || fail 'NAND update still requires installer identity'
+! grep -Fq 'atlantian-storage is-upgrade-card' scripts/atlantian-ram-upgrade.sh || fail 'RAM updates must not require a recovery SD'
 grep -Fq '.extroot-token' scripts/atlantian-storage.sh || fail 'external overlay token validation disappeared'
 scripts/test-ram-upgrade.sh
 scripts/test-recovery-sd-layout.sh
@@ -59,15 +59,11 @@ grep -Fq 'release-trust.env' scripts/install-nand-tools.sh || fail 'release trus
 grep -Fq 'release-trust.env' scripts/build-atlantian-debs.sh || fail 'platform package does not carry the release trust root'
 python3 - <<'PY_AUTH_ORDER'
 from pathlib import Path
-
-def body(path, start, end):
-    text = Path(path).read_text(encoding="utf-8")
-    return text[text.index(start):text.index(end, text.index(start))]
-
-sd = body("scripts/atlantian-sysupgrade-sd.sh", "download_and_verify() {", "ensure_pending_packages() {")
-assert sd.index("atlantian-verify-release") < sd.index("verify_staged_version"), "SD checksum use precedes signature verification"
-nand = body("scripts/atlantian-sysupgrade-nand.sh", "stage_release() {", "[ \"$(id -u)\" -eq 0 ]")
-assert nand.index("atlantian-verify-release") < nand.index("expected=$(awk"), "NAND checksum use precedes signature verification"
+stage = Path("scripts/atlantian-ram-upgrade.sh").read_text()
+apply = Path("scripts/atlantian-ram-upgrade-apply.sh").read_text()
+assert stage.index('atlantian-verify-release') < stage.index('check_public_hash "$archive"') < stage.index('kexec --load'), "RAM staging must authenticate before accepting content or executing kexec"
+assert apply.index('sha256sum -c /state/signed-internal-sums') < apply.index('ubiformat /dev/mtd1'), "RAM writer must validate payload before altering NAND"
+assert apply.index('read_old_state\n') < apply.index('ubiformat /dev/mtd1'), "RAM writer must save old state before altering NAND"
 PY_AUTH_ORDER
 scripts/test-release-auth.sh
 # User-facing output should be brief, consistently labelled, and accurate.
@@ -75,12 +71,6 @@ storage_help=$(scripts/atlantian-storage.sh --help)
 [[ $storage_help == *'adopt'* && $storage_help == *'manual recovery'* ]] ||
   fail 'storage help does not explain adoption and manual recovery'
 [[ $storage_help != *'\\n'* ]] || fail 'storage help renders literal backslash-n tokens'
-grep -Fq 'Downloading NAND probe image:' scripts/atlantian-nand-ram-probe.sh ||
-  fail 'NAND probe image download has no progress label'
-grep -Fq 'Downloading release checksums:' scripts/atlantian-nand-ram-probe.sh ||
-  fail 'NAND probe checksum download has no progress label'
-grep -Fq 'Downloading release signature:' scripts/atlantian-nand-ram-probe.sh ||
-  fail 'NAND probe signature download has no progress label'
 grep -Fq "grep -q '^AtlANTian GNU/Linux '" packaging/platform/postinst ||
   fail 'SD package upgrade does not refresh factory SSH banner'
 python3 - <<'PY_UI'
@@ -95,7 +85,7 @@ assert body.splitlines() == [
 PY_UI
 
 
-# SD online update is strictly A/B FIT. The finished-package test owns the
+# SD RAM update retains A/B FIT boot integrity. The finished-package test owns the
 # stronger assertion that factory-only BOOT.bin/u-boot.img are absent from the kernel package.
 for token in atlantian-A.itb atlantian-B.itb atlantian-slot-B; do grep -Fq "$token" scripts/populate-boot-files.sh || fail "missing SD transaction token: $token"; done
 grep -Fq 'hash-1 { algo = "sha256"; };' scripts/populate-boot-files.sh || fail 'FIT SHA-256 verification disappeared'
