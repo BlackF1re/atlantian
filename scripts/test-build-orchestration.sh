@@ -85,7 +85,8 @@ grep -Fq 'ram-upgrade-busybox' scripts/build-atlantian-debs.sh || fail 'armhf pa
 
 # NAND destructive flow stays single-layered: no launcher/core wrappers.
 for dead in scripts/atlantian-nand-install-launcher.sh scripts/atlantian-nand-upgrade-launcher.sh; do [[ ! -e $dead ]] || fail "legacy launcher survived: $dead"; done
-grep -Fq 'pending bundle/release identity mismatch' scripts/atlantian-nand-install.sh || fail 'install lost pending bundle identity verification'
+grep -Fq 'verify_fresh_bundle_identity; verify_platform' scripts/atlantian-nand-install.sh || fail 'fresh NAND install does not validate release identity on resume'
+grep -Fq 'unsupported pending NAND transaction mode' scripts/atlantian-nand-install.sh || fail 'obsolete NAND update transaction is not refused'
 for obsolete in scripts/atlantian-sysupgrade-sd.sh scripts/atlantian-sysupgrade-nand.sh \
   scripts/atlantian-nand-upgrade.sh scripts/atlantian-nand-ram-probe.sh scripts/test-nand-ram-probe.sh; do
   [[ ! -e "$obsolete" ]] || fail "retired update/probe file remains: $obsolete"
