@@ -13,12 +13,6 @@ rm -rf "$ROOT"; mkdir -p "$ROOT"
 rsync -aHAX --numeric-ids "$BASE_ROOT/" "$ROOT/"
 install -d -m 0755 "$ROOT/usr/lib/atlantian"
 printf 'nand\n' >"$ROOT/usr/lib/atlantian/storage-edition"
-# Ship the build-extracted static BusyBox only to NAND maintenance tooling.
-# It runs independently of an overlay or live Debian shared libraries.
-BUSYBOX="$PROJECT/out/build-tools/busybox-static-armhf"
-[[ -x $BUSYBOX ]] || { echo "missing build-only static BusyBox for NAND RAM maintenance: $BUSYBOX" >&2; exit 2; }
-install -m 0755 "$BUSYBOX" "$ROOT/usr/lib/atlantian/ram-probe-busybox"
-
 cat >"$ROOT/etc/fstab" <<'EOF_FSTAB'
 # / is assembled by initramfs from SquashFS + OverlayFS.
 tmpfs /tmp tmpfs rw,nosuid,nodev,noatime,mode=1777,size=64M 0 0
