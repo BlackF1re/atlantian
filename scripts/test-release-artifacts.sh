@@ -84,6 +84,11 @@ for path in \
   ! grep -Fq "./$path" "$work/platform.list" || fail "legacy update backend is packaged: $path"
 done
 ! grep -Fq './usr/lib/atlantian/ram-upgrade-busybox' "$work/platform.list" || fail 'RAM BusyBox must be owned by the kernel package'
+# FPGA reference artifacts must remain in Git only, never in runtime packages.
+for source in atlantian-status-leds.bit atlantian-status-leds.hwh atlantian-status-leds.dtso; do
+  ! grep -Fq "$source" "$work/platform.list" || fail "FPGA development artifact leaked into platform package: $source"
+  ! grep -Fq "$source" "$work/kernel.list" || fail "FPGA development artifact leaked into kernel package: $source"
+done
 ! grep -qE ' ./usr/lib/atlantian/storage-edition$' "$work/platform.list" || fail 'platform package must not overwrite storage edition identity'
 ! grep -qE 'etc/systemd/system/atlantian-.*\.(service|timer)' "$work/platform.list" || fail 'vendor systemd units leaked into /etc'
 
