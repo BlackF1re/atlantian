@@ -13,7 +13,7 @@ The current source-built SD and NAND paths have been exercised on 512 MiB and 1 
 - NAND installation;
 - NAND cold boot and reboot;
 - writable OverlayFS and normal multi-user services;
-- recovery-SD handoff and same-major NAND base rebase.
+- first-install SD U-Boot raw-boot handoff and signed RAM-only NAND/SD system upgrades (see the tested and untested cases below).
 
 The 1 GiB value in the base DT is only the memory probe ceiling. For memory-sensitive changes, record the actual board population and confirm Linux sees the expected detected bank rather than treating the DT ceiling as evidence of installed RAM.
 
