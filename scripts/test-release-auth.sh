@@ -17,8 +17,10 @@ EOF_COSIGN
 chmod +x "$tmp/cosign"
 
 args="$tmp/args"
-ATLANTIAN_RELEASE_TRUST_CONFIG="$TRUST" ATLANTIAN_COSIGN_BIN="$tmp/cosign" ATLANTIAN_TEST_COSIGN_ARGS="$args" \
-  "$VERIFY" "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sigstore.json" >/dev/null
+verification_message=$(ATLANTIAN_RELEASE_TRUST_CONFIG="$TRUST" ATLANTIAN_COSIGN_BIN="$tmp/cosign" ATLANTIAN_TEST_COSIGN_ARGS="$args" \
+  "$VERIFY" "$tmp/SHA256SUMS" "$tmp/SHA256SUMS.sigstore.json")
+[[ $verification_message == 'Release signature verified.' ]] || fail 'unexpected success output from signature verifier'
+grep -Fq 'Downloading signature verifier: Cosign' "$VERIFY" || fail 'verifier download progress has no label'
 . "$TRUST"
 grep -Fq 'verify-blob' "$args" || fail 'Cosign verify-blob was not requested'
 grep -Fq "$tmp/SHA256SUMS" "$args" || fail 'checksum manifest was not bound to verification'
