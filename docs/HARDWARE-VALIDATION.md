@@ -74,6 +74,66 @@ The following cases still require destructive or fault-injection bench work:
 
 The repository provides a verified backup tool, not a generic raw-NAND restore command. Do not substitute `dd` for a raw-NAND restore procedure.
 
+## RAM-only SD/NAND upgrade bench matrix (13.1.0-beta.2 baseline)
+
+All cases require a **strictly newer, complete and signed GitHub Release** as
+the upgrade target. A GitHub Actions artifact or an annotated Git tag alone is
+not discovered by `atlantian-sysupgrade`. Record target release, checksum
+manifest authentication, actual board RAM, SSH/UART recovery access and results
+of a power-off cold boot. No storage mode is certified by the others' success.
+
+Before each run, create distinct persistence markers in `/etc`, `/root`,
+and `/var/lib/atlantian/test`. Record their exact contents before the run.
+Use `atlantian-sysupgrade --check` and `--notes` to confirm the target
+version; a successful check is only discovery, **not** a signature verification
+or an update. During an actual upgrade the old SSH session will disconnect at
+`kexec`; on error, inspect `/run/upgrade/upgrade.log` and
+`/run/upgrade/status` via RAM recovery SSH **before rebooting or power-cycling**.
+Those RAM-only logs vanish after shutdown.
+
+### NAND, internal UBIFS upper, no SD (first destructive RAM-writer test)
+
+- [ ] Cold boot from NAND with the SD card removed and confirm
+      `storage-edition=nand`, `overlay-mode=internal`, and functioning SSH.
+- [ ] Run the read-only `atlantian-nand-ram-probe --check` preflight.
+- [ ] Confirm an independently usable recovery path before first experimental
+      Linux raw-NAND writes. Factory installation from SD is not proof that
+      the new Linux RAM writer is correct.
+- [ ] Update via `atlantian-sysupgrade` and record the release authenticator,
+      kexec boot, old-state snapshot, UBI replacement, slot readback and reboot.
+- [ ] Confirm the new version, preserved markers, internal UBIFS upper,
+      unchanged boot media and an error-free cold boot without an SD card.
+
+### NAND, adopted external microSD upper
+
+- [ ] Begin with a known source NAND release and the *paired* installer card.
+      Save a distinct internal-state marker **before** adopting the SD.
+- [ ] Run `atlantian-storage adopt`, reboot, and confirm
+      `overlay-mode=external`. Change the marker's value in the external view.
+- [ ] Confirm that the external adoption token matches the internal token,
+      and that the SD ext4 partition remains available throughout the upgrade.
+- [ ] Upgrade to a strictly newer signed release. Verify both internal fallback
+      capture/restore and external-state capture/restore in the RAM log.
+- [ ] With the adopted SD inserted, confirm the new release and the external
+      marker. Power off, remove the card, cold boot and confirm the internal
+      marker; power off, reinsert the card and confirm the external marker again.
+      Never hot-remove the active external upper.
+
+### Native SD ext4 root and FAT A/B FIT boot
+
+- [ ] Boot a source-version SD with both FIT slots and the correct boot ABI;
+      record the running release and persistence markers.
+- [ ] Update through the same authenticated RAM-kexec path; inspect the
+      signed Debian packages, chroot APT upgrade and A/B FIT transaction.
+- [ ] Confirm the target release, preserved files and SSH keys, functioning
+      network, successful `dpkg --audit`, both boot files, and cold reboot.
+
+For comparable results use the same source and target versions in all three
+tests; reinstall the baseline from the saved SD image between destructive NAND
+runs if necessary. Alternatively, use separate strictly increasing releases
+for the later scenarios. A same-version reinstall does **not** exercise the
+release-discovery/updater path.
+
 ## FPGA/profile validation
 
 For any shipped or proposed PL profile, record the exact bitstream/DT-overlay pair and verify:
