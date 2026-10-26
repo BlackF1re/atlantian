@@ -63,8 +63,7 @@ The initramfs uses a build-only static BusyBox binary. `busybox-static` is extra
 
 A bootable AtlANTian SD image remains useful for first-time NAND installation
 and disaster recovery. The SD-U-Boot raw-boot programming procedure
-described below is for factory installation or historical releases, not the
-current system-upgrade path.
+described below is only for initial NAND installation, not for system updates.
 
 Routine firmware updates stage signed files and user snapshots in RAM. They
 require no bootable recovery card, no working SD FAT partition, and no inserted
@@ -81,7 +80,7 @@ The supported destructive path is deliberately split:
 4. SD U-Boot programs and read-back verifies raw boot.
 5. Only after the U-Boot verification marker exists does SD Linux replace the UBI region.
 6. The new static root is read back through `ubiblock` and its AtlANTian release identity is checked.
-7. A fresh writable upper is created (or preserved state is rebased during an upgrade).
+7. A fresh writable UBIFS upper is created. State migration for later releases is handled exclusively by the RAM updater.
 8. Only after the complete transaction verifies does the operator fully remove power, switch the boot-source jumper to NAND and restore power.
 
 This ordering keeps the old UBI untouched until raw boot is known-good and keeps the board on recovery SD until the new UBI is known-good. It does not make the raw boot update power-loss atomic; those physical fault cases remain part of [HARDWARE-VALIDATION.md](HARDWARE-VALIDATION.md).

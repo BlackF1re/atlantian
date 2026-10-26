@@ -87,6 +87,15 @@ grep -Fq 'atlantian-status-leds.dtbo' scripts/build-rootfs.sh || fail 'FPGA runt
 grep -Fq 'is-recovery-card' scripts/atlantian-storage.sh || fail 'manual SD recovery interface missing'
 ! grep -Fq 'is-upgrade-card' scripts/atlantian-storage.sh || fail 'retired SD-based updater identity check remains'
 ! grep -Fq 'mode=upgrade' scripts/atlantian-nand-install.sh || fail 'fresh NAND installer retains legacy NAND upgrade mode'
+# Documentation must keep recovery-SD factory installation separate from the
+# sole supported RAM-only system-upgrade mechanism.
+grep -Fq 'only for initial NAND installation, not for system updates' docs/NAND.md ||
+  fail 'NAND documentation mixes recovery-SD installation and system updates'
+grep -Fq 'State migration for later releases is handled exclusively by the RAM updater.' docs/NAND.md ||
+  fail 'NAND documentation still describes retired recovery-SD state rebase'
+grep -Fq 'signed, offline kexec RAM-maintenance system' docs/UPGRADING.md ||
+  fail 'operator update documentation lost the authenticated RAM-only path'
+
 
 python3 - <<'PY_UI'
 from pathlib import Path
